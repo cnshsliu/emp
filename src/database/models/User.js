@@ -1,0 +1,26 @@
+"use strict";
+const Mongoose = require("mongoose");
+const Schema = Mongoose.Schema;
+
+const UserSchema = new Schema({
+  site: String,
+  tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+  username: { type: String, unique: false, required: true },
+  password: { type: String, unique: false, required: true },
+  email: { type: String, trim: true, lowercase: true, unique: true, required: true },
+  emailVerified: { type: Boolean, default: false },
+  ew: { type: Boolean, default: false }, //Send email on new work
+  ps: { type: Number, default: 20 }, // Page size
+  config: {
+    keepinput: { type: Boolean, defalt: false },
+    keeptemp: { type: Boolean, defalt: true },
+  },
+  group: {
+    type: String,
+    enum: ["DOER", "OBSERVER", "ADMIN", "SALES", "BD", "BA", "CS", "LEADER", "NOQUOTA", "NONE"],
+    default: "ADMIN",
+  },
+  avatar: { type: Mongoose.Schema.Types.String },
+});
+
+module.exports = Mongoose.model("User", UserSchema);

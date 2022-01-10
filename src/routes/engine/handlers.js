@@ -1,0 +1,2547 @@
+const Boom = require("boom");
+const { Parser } = require("../../lib/Parser");
+const moment = require("moment");
+const Tenant = require("../../database/models/Tenant");
+const Joi = require("joi");
+const TimeZone = require("../../lib/timezone");
+const Template = require("../../database/models/Template");
+const Crypto = require("../../lib/Crypto");
+const Workflow = require("../../database/models/Workflow");
+const User = require("../../database/models/User");
+const Todo = require("../../database/models/Todo");
+const List = require("../../database/models/List");
+const Comment = require("../../database/models/Comment");
+const CbPoint = require("../../database/models/CbPoint");
+const Team = require("../../database/models/Team");
+const OrgChart = require("../../database/models/OrgChart");
+const replyHelper = require("../../lib/helpers");
+const Tools = require("../../tools/tools.js");
+const { Engine, Client } = require("../../lib/Engine");
+const OrgChartHelper = require("../../lib/OrgChartHelper");
+const PermController = require("../../lib/PermController");
+const { EmpError } = require("../../lib/EmpError");
+const lodash = require("lodash");
+const Fs = require("fs");
+const Cache = require("../../lib/Cache");
+
+const EmailSchema = Joi.string().email();
+
+// async function initServer(){
+//   await Engine.serverInit();
+//   Engine.serverWatcher();
+// }
+// async function initClient(){
+//   await Client.clientInit();
+//   Client.clientWatcher();
+// }
+// initServer();
+// initClient();
+/**
+ * # general/handlers.js
+ *
+ * Simple display of status and the environment we're running in
+ *
+ */
+
+const TemplateCreate = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create template");
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    let author = myEmail;
+    let authorName = req.auth.credentials.username;
+    let tplid = req.payload.tplid;
+    let desc = req.payload.desc;
+    let doc = `
+<div class='template' id='${tplid}'>
+    <div class='node START' id='start' style='left:200px; top:200px;'><p>START</p></div>
+    <div class='node ACTION' id='hellohyperflow' style='left:300px; top:300px;'><p>Hello, HyperFlow</p><div class="kvars">e30=</div></div>
+    <div class='node END' id='end' style='left:400px; top:400px;'><p>END</p> </div>
+    <div class='link' from='start' to='hellohyperflow'></div>
+    <div class='link' from='hellohyperflow' to='end'></div>
+</div>
+    `;
+    let tmp = Parser.splitStringToArray(req.payload.tags);
+    let theTags = tmp.map((x) => {
+      return { owner: author, text: x, group: myGroup };
+    });
+    theTags.unshift({ owner: myEmail, text: "mine", group: myGroup });
+    //let bdoc = await Tools.zipit(doc, {});
+    let obj = new Template({
+      tenant: tenant,
+      tplid: tplid,
+      author: author,
+      authorName: authorName,
+      doc: doc,
+      //bdoc: bdoc,
+      desc: desc ? desc : "",
+      tags: theTags,
+    });
+    obj = await obj.save();
+    return h.response(obj);
+  } catch (err) {
+    console.log(err);
+    if (err.message.indexOf("duplicate key") > -1) {
+      err = new EmpError("TPL_ALREADY_EXIST", "Template already exists", { tplid });
+      return h.response(replyHelper.constructErrorResponse(err)).code(500);
+    }
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateDesc = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to update template");
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    let author = myEmail;
+    let authorName = req.auth.credentials.username;
+    let tplid = req.payload.tplid;
+    let desc = req.payload.desc;
+    let obj = await Template.findOneAndUpdate(
+      {
+        tenant: tenant,
+        tplid: tplid,
+        author: myEmail,
+      },
+      { $set: { desc: desc ? desc : "" } },
+      { new: true, upsert: false }
+    );
+    return h.response(obj.desc);
+  } catch (err) {
+    console.log(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateBasic = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    let tplid = req.payload.tplid;
+    let tpl = await Template.findOne(
+      {
+        tenant: tenant,
+        tplid: tplid,
+      },
+      { doc: 0 }
+    );
+    return h.response(tpl);
+  } catch (err) {
+    console.log(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const SeeItWork = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create template");
+    let tenant = req.auth.credentials.tenant._id;
+    let author = req.auth.credentials.email;
+    let authorName = req.auth.credentials.username;
+    let doc = `
+<div class="template" id="Metatocome Learning Guide"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left: 360px; top: 200px; z-index: 0;" role="DEFAULT"><p>LG-Step1: Get familiar with metatocome</p><div class="kvars">e30=</div><div class="instruct">PGgxPkdldCBmYW1pbGlhciB3aXRoIHd3dy5tZXRhdG9jb21lLmNvbTwvaDE+Cjxici8+Ck1ldGF0b2NvbWUgcHJvdmlkZSAKPGgyPmhhaGFoYTwvaDI+CjxhIGhyZWY9Ii9kb2NzLyNpbnRyb2R1Y3Rpb24iPk1ldGF0b2NvbWUgSW50cm9kdWN0aW9uPC9hPgo8YSBocmVmPSIvZG9jcy8jdGhlc2l0ZSI+d3d3Lm1ldGF0b2NvbWUuY29tIGludHJvZHVjdGlvbjwvYT4=</div></div><div class="node END" id="end" style="left: 1240px; top: 920px; z-index: 0;"><p>END</p> </div><div id="71k3oibjJ4FQUFkva62tJo" class="node ACTION" style="top: 340px; left: 360px; z-index: 4;" role="DEFAULT"><p>LG-Step2: The site</p><div class="kvars">e30=</div><div class="instruct">PGEgaHJlZj0iL2RvY3MjdGhlc2l0ZSIgdGFyZ2V0PSJfYmxhbmsiPlRoZSBzaXRlPC9hPg==</div></div><div id="u3zuqQEruTzGGaq4PvpTsH" class="node ACTION" style="top: 440px; left: 360px; z-index: 5;" role="DEFAULT"><p>LG-step3: Key concept</p><div class="kvars">e30=</div><div class="instruct">PGEgaHJlZj0iL2RvY3Mja2V5Y29uZWNwdHMiPktleSBDb25jZXB0PC9hPg==</div></div><div id="rKvK4i2b2aKCKnp4nDBmxa" class="node ACTION" style="top: 540px; left: 360px; z-index: 6;" role="DEFAULT"><p>LG-step4: Workflow Template</p><div class="kvars">e30=</div><div class="instruct">QSB0ZW1wbGF0ZSBpcyAuLi4KCjxhIGhyZWY9Ii9kb2NzI3RlbXBsYXRlIj5TZWUgZGV0YWlscyAuLi48L2E+</div></div><div id="iVq2QorpGf2kFXq4YyTxfW" class="node ACTION" style="top: 640px; left: 360px; z-index: 7;" role="DEFAULT"><p>LG-step5: Workflow Process</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4iTURhFXJnnUTSyorQuEKE" class="node ACTION" style="top: 740px; left: 360px; z-index: 8;" role="DEFAULT"><p>LG-step6: Works</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="3XfczPQZCXHQAQ1RTEzuSG" class="node ACTION" style="top: 800px; left: 200px; z-index: 9;" role="DEFAULT"><p>LG_step7: Work Form</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="gd42tjiXY1WSn3V67B5bGf" class="node ACTION" style="top: 940px; left: 200px; z-index: 10;" role="DEFAULT"><p>LG-step8：User Choice</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4CcpXjn9e1o3wMrdBC36HV" class="node ACTION" style="top: 860px; left: 400px; z-index: 11;" role="DEFAULT"><p>LG-Step91： Approve</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="i1MnFC4Xrhub8XMR7zRTjL" class="node ACTION" style="top: 1020px; left: 400px; z-index: 13;" role="DEFAULT"><p>LG-Step92： Reject</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="w5mrnmJSGkGZ7tBgiPFhcT" class="node ACTION" style="top: 920px; left: 540px; z-index: 14;" role="DEFAULT"><p>LG-Step10: User Input</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="9t5jUp7VTCqTnq7Lx4EMEa" class="node SCRIPT" style="top: 920px; left: 700px; z-index: 15;"><p>Script</p></div><div id="ud8F2jXbKkwRPhpg6Wa7pK" class="node ACTION" style="top: 700px; left: 860px; z-index: 16;" role="DEFAULT"><p>A1</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="fKnv9oJFSmYQWnSEXSEZgu" class="node ACTION" style="top: 780px; left: 860px; z-index: 17;" role="DEFAULT"><p>A2</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4N7FVVX3KM449au8B4hUJn" class="node ACTION" style="top: 880px; left: 860px; z-index: 18;" role="DEFAULT"><p>A3</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="rjFWZpL1mbUS37ThUYSQn5" class="node ACTION" style="top: 960px; left: 860px; z-index: 19;" role="DEFAULT"><p>B1</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="n77n7D6ihMwcsMw7Jpj2N5" class="node ACTION" style="top: 1040px; left: 860px; z-index: 20;" role="DEFAULT"><p>B2</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4JRPNS5uZfkJ3Tk8zorABj" class="node ACTION" style="top: 1160px; left: 860px; z-index: 21;" role="DEFAULT"><p>B3</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="wqF5XEzdA9RgVLvgJxx6wF" class="node OR" style="top: 920px; left: 1120px; z-index: 22;"><p>OR</p></div><div id="bMi2AwsMDEssqujs39WnUE" class="node ACTION" style="top: 1260px; left: 860px; z-index: 22;" role="DEFAULT"><p>DEFAULT</p><div class="kvars">e30=</div><div class="instruct"></div></div><div class="link" from="start" to="hellohyperflow"></div><div class="link" from="hellohyperflow" to="71k3oibjJ4FQUFkva62tJo"></div><div class="link" from="71k3oibjJ4FQUFkva62tJo" to="u3zuqQEruTzGGaq4PvpTsH"></div><div class="link" from="u3zuqQEruTzGGaq4PvpTsH" to="rKvK4i2b2aKCKnp4nDBmxa"></div><div class="link" from="rKvK4i2b2aKCKnp4nDBmxa" to="iVq2QorpGf2kFXq4YyTxfW"></div><div class="link" from="iVq2QorpGf2kFXq4YyTxfW" to="4iTURhFXJnnUTSyorQuEKE"></div><div class="link" from="4iTURhFXJnnUTSyorQuEKE" to="3XfczPQZCXHQAQ1RTEzuSG"></div><div class="link" from="3XfczPQZCXHQAQ1RTEzuSG" to="gd42tjiXY1WSn3V67B5bGf"></div><div class="link" from="gd42tjiXY1WSn3V67B5bGf" to="4CcpXjn9e1o3wMrdBC36HV" case="Approve"></div><div class="link" from="gd42tjiXY1WSn3V67B5bGf" to="i1MnFC4Xrhub8XMR7zRTjL" case="Reject"></div><div class="link" from="4CcpXjn9e1o3wMrdBC36HV" to="w5mrnmJSGkGZ7tBgiPFhcT"></div><div class="link" from="i1MnFC4Xrhub8XMR7zRTjL" to="w5mrnmJSGkGZ7tBgiPFhcT"></div><div class="link" from="w5mrnmJSGkGZ7tBgiPFhcT" to="9t5jUp7VTCqTnq7Lx4EMEa"></div><div class="link" from="ud8F2jXbKkwRPhpg6Wa7pK" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="fKnv9oJFSmYQWnSEXSEZgu" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="4N7FVVX3KM449au8B4hUJn" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="rjFWZpL1mbUS37ThUYSQn5" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="n77n7D6ihMwcsMw7Jpj2N5" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="4JRPNS5uZfkJ3Tk8zorABj" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="ud8F2jXbKkwRPhpg6Wa7pK" case="A1"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="fKnv9oJFSmYQWnSEXSEZgu" case="A2"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="4N7FVVX3KM449au8B4hUJn" case="A3"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="rjFWZpL1mbUS37ThUYSQn5" case="B1"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="n77n7D6ihMwcsMw7Jpj2N5" case="B2"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="4JRPNS5uZfkJ3Tk8zorABj" case="B3"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="bMi2AwsMDEssqujs39WnUE" case="DEFAULT"></div><div class="link" from="bMi2AwsMDEssqujs39WnUE" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="wqF5XEzdA9RgVLvgJxx6wF" to="end"></div></div>
+    `;
+    let tplid = "Metatocome Learning Guide";
+    let filter = { tenant: tenant, tplid: tplid },
+      update = {
+        $set: { author: author, authorName: await Cache.getUserName(author), doc: doc, ins: false },
+      },
+      options = { upsert: true, new: true };
+    obj = await Template.findOneAndUpdate(filter, update, options);
+    let wfDoc = await Engine.startWorkflow(
+      false,
+      tenant,
+      tplid,
+      author,
+      "https://www.metatocome.com/docs",
+      "",
+      null,
+      "Metaflow Learning Guide",
+      "",
+      "",
+      {}
+    );
+
+    return h.response(wfDoc);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplatePut = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create template");
+    let tenant = req.auth.credentials.tenant._id;
+    let author = req.auth.credentials.email;
+    let authorName = req.auth.credentials.username;
+    if (Tools.isEmpty(req.payload.doc)) {
+      throw new EmpError("NO_CONTENT", "Template content can not be empty");
+    }
+    let tplid = req.payload.tplid;
+    if (Tools.isEmpty(tplid)) {
+      throw new EmpError("NO_TPLID", "Template id can not be empty");
+    }
+    //let bdoc = await Tools.zipit(req.payload.doc, {});
+    let filter = { tenant: tenant, tplid: tplid },
+      update = {
+        $set: {
+          author: author,
+          authorName: await Cache.getUserName(author),
+          doc: req.payload.doc,
+          //bdoc: bdoc,
+        },
+      },
+      options = { upsert: false, new: true };
+    let obj = await Template.findOneAndUpdate(filter, update, options);
+    return h.response({ _id: obj._id, tplid: obj.tplid });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * Rename Template from tplid: fromid to tplid: tplid
+ */
+const TemplateRename = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, tplid: req.payload.fromid };
+    let tpl = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to rename this template");
+    tpl.tplid = req.payload.tplid;
+    if (Tools.isEmpty(tpl.authorName)) {
+      tpl.authorName = await Cache.getUserName(tpl.author);
+    }
+    tpl = await tpl.save();
+
+    return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplateRenameWithIid = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, _id: req.payload._id };
+    let tpl = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to rename this template");
+    tpl.tplid = req.payload.tplid;
+    tpl = await tpl.save();
+
+    return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateMakeCopyOf = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    let me = await User.findOne({ _id: req.auth.credentials._id });
+    let filter = { tenant: tenant, _id: req.payload._id };
+    let oldTpl = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create template");
+    let newObj = new Template({
+      tenant: oldTpl.tenant,
+      tplid: oldTpl.tplid + "_copy",
+      author: me.email,
+      authorName: me.username,
+      doc: oldTpl.doc,
+      tags: [{ owner: myEmail, text: "mine", group: myGroup }],
+    });
+    newObj = await newObj.save();
+
+    return h.response(newObj);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateCopyto = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create template");
+    let me = await User.findOne({ _id: req.auth.credentials._id });
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, tplid: req.payload.fromid };
+    let new_tplid = req.payload.tplid;
+    let oldTpl = await Template.findOne(filter);
+    let newObj = new Template({
+      tenant: oldTpl.tenant,
+      tplid: new_tplid,
+      author: me.email,
+      authorName: me.username,
+      doc: oldTpl.doc,
+      ins: oldTpl.ins,
+      tags: oldTpl.tags,
+    });
+    newObj = await newObj.save();
+
+    return h.response(newObj);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateDelete = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, _id: req.payload._id };
+    let ret = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", ret, "delete")))
+      throw new EmpError("NO_PERM", "You don't have permission to delete this template");
+    ret = await Template.deleteOne(filter);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateDeleteByName = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, tplid: req.payload.tplid };
+    let ret = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", ret, "delete")))
+      throw new EmpError("NO_PERM", "You don't have permission to delete this template");
+    ret = await Template.deleteOne(filter);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowRead = async function (req, h) {
+  try {
+    let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    let wf = await Workflow.findOne(filter).lean();
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    wf.beginat = wf.createdAt;
+    wf.history = await Engine.getWfHistory(req.auth.credentials.tenant._id, req.payload.wfid, wf);
+    return wf;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowDumpInstemplate = async function (req, h) {
+  try {
+    let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    let wf = await Workflow.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    let wfIO = await Parser.parse(wf.doc);
+    let tpRoot = wfIO(".template");
+    let tplid = req.payload.wfid + "_instemplate";
+    let theTemplateDoc = `<div class="template" >${tpRoot.html()}</div>`;
+
+    (filter = {
+      tenant: req.auth.credentials.tenant._id,
+      tplid: tplid,
+    }),
+      (update = {
+        $set: {
+          tenant: req.auth.credentials.tenant._id,
+          tplid: tplid,
+          author: req.auth.credentials.email,
+          authorName: await Cache.getUserName(req.auth.credentials.email),
+          doc: theTemplateDoc,
+          ins: true,
+        },
+      }),
+      (options = { upsert: true, new: true });
+
+    let obj = await Template.findOneAndUpdate(filter, update, options);
+
+    return h.response({ _id: obj._id, tplid: obj.tplid });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowStart = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let starter = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+    let wfid = req.payload.wfid;
+    let wftitle = req.payload.wftitle;
+    let teamid = req.payload.teamid;
+    let rehearsal = req.payload.rehearsal;
+    let pbo = req.payload.pbo;
+    let kvars = req.payload.kvars;
+
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
+
+    pbo = pbo ? pbo : "";
+    let wfDoc = await Engine.startWorkflow(
+      rehearsal,
+      tenant,
+      tplid,
+      starter,
+      pbo,
+      teamid,
+      wfid,
+      wftitle,
+      "",
+      "",
+      kvars
+    );
+
+    return wfDoc;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowSetPbo = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let pbo = req.payload.pbo;
+
+    pbo = await Engine.setWorkflowPbo(email, tenant, wfid, pbo);
+    return pbo;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowGetPbo = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+
+    let pbo = await Engine.getWorkflowPbo(email, tenant, wfid);
+
+    return pbo;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowPause = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let status = await Engine.pauseWorkflow(email, tenant, wfid);
+    return { wfid: wfid, status: status };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowResume = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let status = await Engine.resumeWorkflow(email, tenant, wfid);
+    return { wfid: wfid, status: status };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowStop = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let status = await Engine.stopWorkflow(email, tenant, wfid);
+    return { wfid: wfid, status: status };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowRestart = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let status = await Engine.restartWorkflow(email, tenant, wfid);
+    return { wfid: wfid, status: status };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowDestroy = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let ret = await Engine.destroyWorkflow(email, tenant, wfid);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowOP = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let ret = {};
+    switch (req.payload.op) {
+      case "pause":
+        ret = { wfid: wfid, status: await Engine.pauseWorkflow(email, tenant, wfid) };
+        break;
+      case "resume":
+        ret = { wfid: wfid, status: await Engine.resumeWorkflow(email, tenant, wfid) };
+        break;
+      case "stop":
+        ret = { wfid: wfid, status: await Engine.stopWorkflow(email, tenant, wfid) };
+        break;
+      case "restart":
+        ret = { wfid: wfid, status: await Engine.restartWorkflow(email, tenant, wfid) };
+        break;
+      case "destroy":
+        ret = await Engine.destroyWorkflow(email, tenant, wfid);
+        break;
+      default:
+        throw new EmpError(
+          "WORKFLOW_OP_UNSUPPORTED",
+          "Unsupported workflow operation",
+          req.payload
+        );
+    }
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowList = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let filter = req.payload.filter;
+    let sortDef = req.payload.sortdef;
+    return await Engine.workflowGetList(email, tenant, filter, sortDef);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const __GetTSpanMomentOperators = function (tspan) {
+  let ret = null;
+  if (Tools.isEmpty(tspan)) tspan = "1w";
+  if (Tools.isEmpty(tspan.trim())) tspan = "1w";
+  let res = tspan.match(/^(\d+)([hdwMQy])$/);
+  if (!res) {
+    tspan = "1w";
+    res = tspan.match(/^(\d+)([hdwMQy])$/);
+  }
+  return [res[1], res[2]];
+};
+
+const __GetTagsFilter = async function (tagsForFilter, myEmail) {
+  let ret = null;
+  if (
+    tagsForFilter &&
+    Array.isArray(tagsForFilter) &&
+    tagsForFilter.length > 0 &&
+    tagsForFilter[0].trim() !== ""
+  ) {
+    let tagsMatchArr = [];
+    for (let i = 0; i < tagsForFilter.length; i++) {
+      tagsMatchArr.push({
+        $elemMatch: {
+          $or: [{ owner: myEmail }, { group: "ADMIN" }],
+          text: tagsForFilter[i],
+        },
+      });
+    }
+    let tpl_filter = {
+      tags: {
+        $all: tagsMatchArr,
+      },
+    };
+    let taggedTpls = await Template.find(tpl_filter, { tplid: 1, _id: 0 }).lean();
+    let taggedTplIds = taggedTpls.map((x) => x.tplid);
+
+    ret = { $in: taggedTplIds };
+  }
+  return ret;
+};
+
+const WorkflowSearch = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read workflow");
+    let mappedField = req.payload.sort_field === "name" ? "wftitle" : req.payload.sort_field;
+    let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+    let filter = { tenant: req.auth.credentials.tenant._id };
+    let skip = 0;
+    if (req.payload.skip) skip = req.payload.skip;
+    let limit = 10000;
+    if (req.payload.limit) limit = req.payload.limit;
+    if (req.payload.pattern) {
+      filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
+    }
+    if (Tools.hasValue(req.payload.starter)) {
+      filter["starter"] = req.payload.starter;
+    }
+    if (Tools.hasValue(req.payload.status)) {
+      filter["status"] = req.payload.status;
+    }
+    //如果制定了tplid,则使用所制定的tplid
+    if (Tools.hasValue(req.payload.tplid)) {
+      filter["tplid"] = req.payload.tplid;
+    } else {
+      let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
+      if (tagsFilter) filter["tplid"] = tagsFilter;
+    }
+    if (req.payload.wfid) {
+      filter["wfid"] = req.payload.wfid;
+    }
+
+    if (Tools.isEmpty(filter.tplid)) delete filter.tplid;
+    if (["ST_RUN", "ST_PAUSE", "ST_DONE", "ST_STOP"].includes(filter.status) === false) {
+      delete filter.status;
+    }
+
+    if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
+      let cb = req.payload.calendar_begin;
+      let ce = req.payload.calendar_end;
+      let tz = await Cache.getOrgTimeZone(tenant);
+      let tzdiff = TimeZone.getDiff(tz);
+      cb = `${cb}T00:00:00${tzdiff}`;
+      ce = `${ce}T00:00:00${tzdiff}`;
+      filter.createdAt = { $gte: new Date(moment(cb)), $lt: new Date(moment(ce).add(24, "h")) };
+    } else {
+      let tspan = req.payload.tspan;
+      if (tspan !== "any") {
+        let tmp11 = __GetTSpanMomentOperators(tspan);
+        filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1])) };
+      }
+    }
+
+    let fields = { doc: 0 };
+    if (req.payload.fields) fields = req.payload.fields;
+    console.log(
+      `[Workflow Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
+    );
+    let total = await Workflow.find(filter).countDocuments();
+    let ret = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit);
+    return { total, objs: ret };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowGetLatest = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let filter = req.payload.filter;
+    return await Engine.workflowGetLatest(email, tenant, filter);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * 要么myEmail用户是ADMIN，并且doerEmail在同一个Org中
+ * 要么myEmail用户被doerEmail用户委托
+ */
+const WorkList = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    //如果有wfid，则找只属于这个wfid工作流的workitems
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    let filter = {
+      tenant: req.auth.credentials.tenant._id,
+    };
+    filter["$or"] = [
+      { rehearsal: false, doer: req.payload.doer },
+      { rehearsal: true, wfstarter: myEmail },
+    ];
+
+    let hasPermForWork = await Engine.__hasPermForWork(
+      req.auth.credentials.tenant._id,
+      req.auth.credentials.email,
+      req.payload.doer
+    );
+    if (hasPermForWork === false) {
+      return { total: 0, objs: [] };
+    }
+    let mappedField = req.payload.sort_field === "name" ? "title" : req.payload.sort_field;
+    let sortByJson = {};
+    sortByJson[mappedField] = req.payload.sort_order;
+    let skip = 0;
+    if (req.payload.skip) skip = req.payload.skip;
+    let limit = 10000;
+    if (req.payload.limit) limit = req.payload.limit;
+    if (req.payload.pattern) {
+      if (req.payload.pattern.startsWith("wf:")) {
+        let wfid =
+          req.payload.pattern.indexOf(" ") > 0
+            ? req.payload.pattern.substring(3, req.payload.pattern.indexOf(" "))
+            : req.payload.pattern.substring(3);
+        let pattern =
+          req.payload.pattern.indexOf(" ") > 0
+            ? req.payload.pattern.substring(req.payload.pattern.indexOf(" ") + 1)
+            : "";
+        filter.wfid = wfid;
+        filter["title"] = { $regex: `.*${pattern}.*` };
+      } else {
+        filter["title"] = { $regex: `.*${req.payload.pattern}.*` };
+      }
+    }
+    if (Tools.hasValue(req.payload.tplid)) filter.tplid = req.payload.tplid;
+    else {
+      if (
+        req.payload.tagsForFilter &&
+        Array.isArray(req.payload.tagsForFilter) &&
+        req.payload.tagsForFilter.length > 0 &&
+        req.payload.tagsForFilter[0].trim() !== ""
+      ) {
+        let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
+
+        if (tagsFilter) filter.tplid = tagsFilter;
+      }
+    }
+    if (Tools.hasValue(req.payload.wfid)) filter.wfid = req.payload.wfid;
+    if (Tools.hasValue(req.payload.nodeid)) filter.nodeid = req.payload.nodeid;
+    if (Tools.hasValue(req.payload.workid)) filter.workid = req.payload.workid;
+    if (Tools.hasValue(req.payload.status)) filter.status = req.payload.status;
+    if (["ST_RUN", "ST_PAUSE", "ST_DONE"].includes(filter.status) === false) {
+      delete filter.status;
+    }
+    if (Tools.hasValue(req.payload.wfstatus)) filter.wfstatus = req.payload.wfstatus;
+    if (["ST_RUN", "ST_PAUSE", "ST_DONE", "ST_STOP"].includes(filter.wfstatus) === false) {
+      delete filter.wfstatus;
+    }
+    if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
+      let cb = req.payload.calendar_begin;
+      let ce = req.payload.calendar_end;
+      let tz = await Cache.getOrgTimeZone(tenant);
+      let tzdiff = TimeZone.getDiff(tz);
+      cb = `${cb}T00:00:00${tzdiff}`;
+      ce = `${ce}T00:00:00${tzdiff}`;
+      filter.createdAt = { $gte: new Date(moment(cb)), $lt: new Date(moment(ce).add(24, "h")) };
+    } else {
+      let tspan = req.payload.tspan;
+      if (tspan !== "any") {
+        let tmp11 = __GetTSpanMomentOperators(tspan);
+        filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1])) };
+      }
+    }
+
+    let fields = { doc: 0 };
+    if (req.payload.fields) fields = req.payload.fields;
+
+    console.log(
+      `[Work List] filter: ${JSON.stringify(filter)} sortBy: ${sortByJson} limit: ${limit}`
+    );
+    let total = await Todo.find(filter).countDocuments();
+    let ret = await Todo.aggregate([
+      { $match: filter },
+      {
+        //lastdays， 当前活动已经持续了多少天，如果是ST_RUN或者ST_PAUSE，跟当前时间相比；
+        //否则，用updatedAt - createdAt
+        $addFields: {
+          lastdays: {
+            $cond: {
+              if: {
+                $or: [{ $eq: ["$status", "ST_RUN"] }, { $eq: ["$status", "ST_PAUSE"] }],
+              },
+              then: {
+                $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" },
+              },
+              else: {
+                $dateDiff: { startDate: "$createdAt", endDate: "$updatedAt", unit: "day" },
+              },
+            },
+          },
+        },
+      },
+      { $sort: sortByJson },
+      { $skip: skip },
+      { $limit: limit },
+    ]);
+    return { total, objs: ret };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkInfo = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    //如果有wfid，则找只属于这个wfid工作流的workitems
+    let workitem = await Engine.getWorkInfo(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.todoid
+    );
+    return workitem;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const CheckCoworker = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let whom = req.payload.whom;
+    let coWorkerEmail = whom;
+    const value = EmailSchema.validate(whom);
+    if (value.error) {
+      coWorkerEmail = whom + myEmail.substring(myEmail.indexOf("@"));
+    }
+    let user = await User.findOne(
+      { tenant: tenant, email: coWorkerEmail },
+      { email: 1, username: 1, _id: 0 }
+    );
+
+    return user;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TransferWork = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let whom = req.payload.whom;
+    let workid = req.payload.workid;
+
+    return Engine.transferWork(tenant, whom, myEmail, workid);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkGetHtml = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    //如果有wfid，则找只属于这个wfid工作流的workitems
+    let workitem = await Engine.getWorkInfo(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.workid
+    );
+    let html = "<div class='container'>";
+    html += "Work:" + workitem.title;
+    html += "KVars:" + JSON.stringify(workitem.kvars);
+    html += "</div>";
+    return { html };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkDo = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    return await Engine.doWork(
+      email,
+      req.payload.todoid,
+      req.auth.credentials.tenant._id,
+      req.payload.doer,
+      req.payload.wfid,
+      req.payload.nodeid,
+      req.payload.route,
+      req.payload.kvars,
+      req.payload.comment
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowStatus = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    let ret = await Engine.getWorkflowOrNodeStatus(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid
+    );
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkStatus = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    return await Engine.getWorkflowOrNodeStatus(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid,
+      req.payload.workid
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkRevoke = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    return await Engine.revokeWork(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid,
+      req.payload.todoid,
+      req.payload.comment
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkExplainPds = async function (req, h) {
+  try {
+    return h.response(
+      await Engine.explainPds({
+        tenant: req.auth.credentials.tenant._id,
+        wfid: req.payload.wfid,
+        rds: req.payload.rds,
+      })
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkAddAdhoc = async function (req, h) {
+  try {
+    return h.response(
+      await Engine.addAdhoc({
+        tenant: req.auth.credentials.tenant._id,
+        wfid: req.payload.wfid,
+        todoid: req.payload.todoid,
+        rehearsal: req.payload.rehearsal,
+        title: req.payload.title,
+        doer: req.payload.doer,
+        comment: req.payload.comment,
+      })
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkSendback = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    return await Engine.sendback(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid,
+      req.payload.todoid,
+      req.payload.doer,
+      req.payload.kvars,
+      req.payload.comment
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * Engine.getTrack = async() 返回work的执行轨迹，倒着往回找
+ */
+const WorkGetTrack = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    return await Engine.getTrack(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid,
+      req.payload.workid
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateList = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read template");
+    let ret = await Template.find({ tenant: req.auth.credentials.tenant._id }, { doc: 0 }).sort(
+      "-updatedAt"
+    );
+    return ret;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplateIdList = async function (req, h) {
+  try {
+    let filter = { tenant: req.auth.credentials.tenant._id, ins: false };
+    let myEmail = req.auth.credentials.email;
+    if (
+      req.payload.tagsForFilter &&
+      Array.isArray(req.payload.tagsForFilter) &&
+      req.payload.tagsForFilter.length > 0 &&
+      req.payload.tagsForFilter[0].trim() !== ""
+    ) {
+      //filter["tags.text"] = { $all: req.payload.tagsForFilter };
+      //filter["tags.owner"] = myEmail;
+      //filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
+      let tagsMatchArr = [];
+      for (let i = 0; i < req.payload.tagsForFilter.length; i++) {
+        tagsMatchArr.push({
+          $elemMatch: {
+            $or: [{ owner: myEmail }, { group: "ADMIN" }],
+            text: req.payload.tagsForFilter[i],
+          },
+        });
+      }
+      filter["tags"] = {
+        $all: tagsMatchArr,
+      };
+    }
+    let ret = await Template.find(filter, { tplid: 1, _id: 0 }).sort("tplid");
+    return ret;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateSearch = async function (req, h) {
+  try {
+    let myEmail = req.auth.credentials.email;
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+      throw new EmpError("NO_PERM", "no permission to read template");
+
+    let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
+    let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+    let filter = { tenant: req.auth.credentials.tenant._id, ins: false };
+    let skip = 0;
+    if (req.payload.skip) skip = req.payload.skip;
+    let limit = 10000;
+    if (req.payload.limit) limit = req.payload.limit;
+    if (req.payload.pattern) {
+      filter["tplid"] = { $regex: `.*${req.payload.pattern}.*` };
+    }
+    if (req.payload.tplid) {
+      //如果制定了tplid，则使用指定tplid搜索
+      filter["tplid"] = req.payload.tplid;
+      limit = 1;
+    }
+    if (
+      req.payload.tagsForFilter &&
+      Array.isArray(req.payload.tagsForFilter) &&
+      req.payload.tagsForFilter.length > 0 &&
+      req.payload.tagsForFilter[0].length > 0
+    ) {
+      //filter["tags.text"] = { $all: req.payload.tagsForFilter };
+      //filter["tags.owner"] = myEmail;
+      //filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
+      let tagsMatchArr = [];
+      for (let i = 0; i < req.payload.tagsForFilter.length; i++) {
+        tagsMatchArr.push({
+          $elemMatch: {
+            $or: [{ owner: myEmail }, { group: "ADMIN" }],
+            text: req.payload.tagsForFilter[i],
+          },
+        });
+      }
+      filter["tags"] = {
+        $all: tagsMatchArr,
+      };
+    }
+
+    if (Tools.hasValue(req.payload.author)) {
+      filter["author"] = req.payload.author;
+    }
+
+    //let tspan = req.payload.tspan;
+    let tspan = "any";
+    if (tspan !== "any") {
+      let tmp11 = __GetTSpanMomentOperators(tspan);
+      filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1])) };
+    }
+
+    console.log(
+      `[Template Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
+    );
+    let fields = { doc: 0 };
+    if (req.payload.fields) fields = req.payload.fields;
+
+    let total = await Template.find(filter).countDocuments();
+    let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit);
+    return { total, objs: ret };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateRead = async function (req, h) {
+  try {
+    let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
+    let tpl = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    return tpl;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateImport = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create template");
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let author = myEmail;
+    let authorName = req.auth.credentials.username;
+    let fileInfo = req.payload.file;
+    let doc = Fs.readFileSync(fileInfo.path, "utf8");
+    let myGroup = await Cache.getMyGroup(myEmail);
+
+    let tplid = req.payload.tplid;
+    if (Tools.isEmpty(tplid)) {
+      throw new EmpError("NO_TPLID", "Template id can not be empty");
+    }
+    let obj = new Template({
+      tenant: tenant,
+      tplid: tplid,
+      author: author,
+      authorName: authorName,
+      ins: false,
+      doc: doc,
+      tags: [{ owner: myEmail, text: "mine", group: myGroup }],
+    });
+    let filter = { tenant: tenant, tplid: tplid },
+      update = {
+        $set: { author: author, authorName: await Cache.getUserName(author), ins: false, doc: doc },
+      },
+      options = { upsert: true, new: true };
+    obj = await Template.findOneAndUpdate(filter, update, options);
+    Fs.unlink(fileInfo.path, () => {
+      console.log("Unlinked temp file:", fileInfo.path);
+    });
+    return h.response(obj);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplateDownload = async function (req, h) {
+  try {
+    let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
+    //console.log(filter);
+    let tpl = await Template.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    //console.log(tpl.doc);
+    //const response = h.response(tpl.doc);
+    return (
+      h
+        .response(tpl.doc)
+        .header("cache-control", "no-cache")
+        .header("Pragma", "no-cache")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Content-Type", "application/xml")
+        //.header('Content-Disposition', `attachment;filename="${req.payload.tplid}.xml";filename*=utf-8''${req.payload.tplid}.xml`)
+        .header("Content-Disposition", `attachment;filename=${req.payload.tplid}.xml`)
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowDownload = async function (req, h) {
+  try {
+    let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    let wf = await Workflow.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
+    return wf;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowGetKVars = async function (req, h) {
+  try {
+    let email = req.auth.credentials.email;
+    let kvars = Engine.getKVars(
+      email,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid,
+      req.payload.workid
+    );
+    return kvars;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const GetDelayTimers = async function (req, h) {
+  try {
+    let timers = Engine.getDelayTimers(req.auth.credentials.tenant._id, req.payload.wfid);
+    return timers;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const GetActiveDelayTimers = async function (req, h) {
+  try {
+    let timers = Engine.getActiveDelayTimers(req.auth.credentials.tenant._id, req.payload.wfid);
+    return timers;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamPutDemo = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let author = req.payload.author;
+    let teamid = req.payload.teamid;
+
+    let team = new Team({
+      tenant: tenant,
+      author: author,
+      teamid: teamid,
+      tmap: { director: "steve", manager: "lucas" },
+    });
+    team = await team.save();
+    return team.teamid;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamFullInfoGet = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let team = await Team.findOne({ tenant: tenant, teamid: req.params.teamid });
+    if (!team) {
+      return Boom.notFound(`${req.params.teamid} not found`);
+    }
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this team");
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamRead = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let team = await Team.findOne({ tenant: tenant, teamid: req.payload.teamid });
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this team");
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamUpload = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let author = req.auth.credentials.email;
+    let teamid = req.payload.teamid;
+    let tmap = req.payload.tmap;
+
+    let teamFilter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(teamFilter);
+    if (team) {
+      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+        throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    } else {
+      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+        throw new EmpError("NO_PERM", "You don't have permission to create team");
+    }
+    team = await Team.findOneAndUpdate(
+      teamFilter,
+      { $set: { tenant: tenant, author: author, teamid: teamid, tmap: tmap } },
+      { upsert: true, new: true }
+    );
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamImport = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let author = req.auth.credentials.email;
+    let fileInfo = req.payload.file;
+    const csv = Fs.readFileSync(fileInfo.path, "utf8");
+
+    let tmap = {};
+    let lines = csv.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      let fields = lines[i].split(",");
+      if (fields && fields.length !== 3) {
+        continue;
+      }
+      if (tmap[fields[0]]) {
+        tmap[fields[0]].push({ uid: fields[1], cn: fields[2] });
+      } else {
+        tmap[fields[0]] = [{ uid: fields[1], cn: fields[2] }];
+      }
+    }
+    let teamid = req.payload.teamid;
+    let teamFilter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(teamFilter);
+    if (team) {
+      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+        throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    } else {
+      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+        throw new EmpError("NO_PERM", "You don't have permission to create team");
+    }
+    team = await Team.findOneAndUpdate(
+      teamFilter,
+      { $set: { tenant: tenant, author: author, teamid: teamid, tmap: tmap } },
+      { upsert: true, new: true }
+    );
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TeamDownload = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let teamid = req.payload.teamid;
+    let filename = req.payload.filename;
+    let teamFilter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(teamFilter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this team");
+    if (!filename) {
+      filename = teamid;
+    }
+    let csvContent = "";
+    for (const [role, members] of Object.entries(team.tmap)) {
+      for (let i = 0; i < members.length; i++) {
+        csvContent += `${role},${members[i].uid},${members[i].cn}\n`;
+      }
+    }
+
+    return (
+      h
+        .response(csvContent)
+        .header("cache-control", "no-cache")
+        .header("Pragma", "no-cache")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Content-Type", "text/csv")
+        //.header('Content-Disposition', `attachment;filename="${req.payload.tplid}.xml";filename*=utf-8''${req.payload.tplid}.xml`)
+        .header("Content-Disposition", `attachment;filename=${filename}.csv`)
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamDeleteRoleMembers = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let teamid = req.payload.teamid;
+    let filter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(filter);
+    if (!team) {
+      throw `Team ${teamid} not found`;
+    }
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to change this team");
+    let tmap = team.tmap;
+    let role = req.payload.role;
+    let members = req.payload.members;
+
+    let touched = false;
+    if (tmap[role]) {
+      tmap[role] = tmap[role].filter((aMember) => {
+        let tobeDelete = false;
+        for (let i = 0; i < members.length; i++) {
+          if (members[i]["uid"] === aMember.uid) {
+            tobeDelete = true;
+            break;
+          }
+        }
+        if (tobeDelete) {
+          touched = true;
+          return false;
+        } else {
+          return true;
+        }
+      });
+    }
+    if (touched) {
+      team.tmap = tmap;
+      team.markModified("tmap");
+      team = await team.save();
+    }
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamAddRoleMembers = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let teamid = req.payload.teamid;
+    let filter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(filter);
+    if (!team) {
+      throw `Team ${teamid} not found`;
+    }
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    let tmap = team.tmap;
+    let role = req.payload.role;
+    let members = req.payload.members;
+
+    if (tmap[role]) {
+      let oldMembers = tmap[role];
+      for (let m = 0; m < members.length; m++) {
+        let user_existing = false;
+        for (let i = 0; i < oldMembers.length; i++) {
+          if (oldMembers[i]["uid"] === members[m]["uid"]) {
+            user_existing = true;
+            oldMembers[i]["cn"] = members[m]["cn"];
+            break;
+          }
+        }
+        if (user_existing === false) {
+          oldMembers.push(members[m]);
+        }
+      }
+      tmap[role] = oldMembers;
+    } else {
+      tmap[role] = members;
+    }
+    team.tmap = tmap;
+    /*
+    team = await Team.findOneAndUpdate(
+      filter,
+      { $set: { tmap: team.tmap } },
+      { upsert: false, new: true }
+    );
+    */
+    team.markModified(`tmap`);
+    team = await team.save();
+
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamCopyRole = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let teamid = req.payload.teamid;
+    let filter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(filter);
+    if (!team) {
+      throw `Team ${teamid} not found`;
+    }
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    let role = req.payload.role;
+    let newrole = req.payload.newrole;
+
+    team.tmap[newrole] = team.tmap[role];
+
+    team.markModified(`tmap`);
+    team = await team.save();
+
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamSetRole = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let teamid = req.payload.teamid;
+    let filter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(filter);
+    if (!team) {
+      throw `Team ${teamid} not found`;
+    }
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    let role = req.payload.role.trim();
+    let members = req.payload.members;
+
+    team.tmap[role] = members;
+    //Object类型的字段，需要标注为modified，在save时才会被更新
+    //基础数据类型的字段无须标注已更改
+    team.markModified("tmap");
+    team = await team.save();
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TeamDeleteRole = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    let teamid = req.payload.teamid;
+    let filter = { tenant: tenant, teamid: teamid };
+    let team = await Team.findOne(filter);
+    if (!team) {
+      throw `Team ${teamid} not found`;
+    }
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    let role = req.payload.role;
+
+    delete team.tmap[role];
+    team.markModified("tmap");
+    team = await team.save();
+    return team;
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamDelete = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let teamid = req.payload.teamid;
+    let team = await Team.findOne({ tenant: tenant, teamid: teamid });
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "delete")))
+      throw new EmpError("NO_PERM", "You don't have permission to delete this team");
+
+    let ret = await Team.deleteOne({ tenant: tenant, teamid: teamid });
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamSearch = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read teams");
+
+    let mappedField = req.payload.sort_field === "name" ? "teamid" : req.payload.sort_field;
+    let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+    let filter = { tenant: req.auth.credentials.tenant._id };
+    let skip = 0;
+    if (req.payload.skip) skip = req.payload.skip;
+    let limit = 10000;
+    if (req.payload.limit) limit = req.payload.limit;
+    if (req.payload.pattern) {
+      filter["teamid"] = { $regex: req.payload.pattern };
+    }
+    let total = await Team.find(filter).countDocuments();
+    let ret = await Team.find(filter).sort(sortBy).skip(skip).limit(limit);
+    return { total, objs: ret };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamCopyto = async function (req, h) {
+  try {
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+      throw new EmpError("NO_PERM", "You don't have permission to create team");
+
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, teamid: req.payload.fromid };
+    let new_objid = req.payload.teamid;
+    let oldObj = await Team.findOne(filter);
+    let newObj = new Team({
+      tenant: oldObj.tenant,
+      teamid: new_objid,
+      author: req.auth.credentials.email,
+      tmap: oldObj.tmap,
+    });
+    newObj = await newObj.save();
+
+    return h.response(newObj);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TeamRename = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant, teamid: req.payload.fromid };
+    let team = await Team.findOne(filter);
+    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      throw new EmpError("NO_PERM", "You don't have permission to update this team");
+    team.teamid = req.payload.teamid;
+    team = await team.save();
+
+    return h.response(team);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const AutoRegisterOrgChartUser = async function (administrator, staffs, myDomain, defaultPassword) {
+  //TODO:  email去重, orgchart不用去重，但register user时需要去重
+  for (let i = 0; i < staffs.length; i++) {
+    let staff_email = staffs[i].uid;
+    let staff_cn = staffs[i].cn;
+    //If user already registered, if yes, send invitation, if not, register this user and add this user to my current org automatically.
+    let existing_staff_user = await User.findOne({ email: staff_email });
+    //If this email is already registered, send enter org invitation
+    if (
+      existing_staff_user &&
+      existing_staff_user.tenant.toString() !== administrator.tenant._id.toString()
+    ) {
+      //如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
+      await Tools.sendInvitationEmail_for_joinOrgChart(
+        administrator.username,
+        administrator.email,
+        user.email
+      );
+    } else if (!existing_staff_user) {
+      //If this email is not registered, auto register and auto enter org
+      //1. Create personal tenant.
+      let staffTenant = new Tenant({
+        site: administrator.site,
+        name: staff_cn + " Personal Org",
+        orgmode: false,
+        owner: staff_email,
+        css: "",
+        timezone: administrator.tenant.timezone,
+      });
+      try {
+        staffTenant = await staffTenant.save();
+      } catch (e) {
+        console.error(e);
+      }
+      try {
+        let staffUser = new User({
+          site: administrator.site,
+          username: staff_cn,
+          tenant: administrator.tenant._id,
+          password: Crypto.encrypt(defaultPassword),
+          email: staff_email,
+          emailVerified: true,
+          group: "DOER",
+          avatar: "",
+          ew: true,
+          ps: 20,
+        });
+        staffUser = await staffUser.save();
+      } catch (e) {
+        staffTenant.delete();
+      }
+    }
+  } //for
+};
+
+const OrgChartImport = async function (req, h) {
+  try {
+    if ((await Cache.setOnNonExist("admin_" + req.auth.credentials.email, "a", 10)) === false) {
+      throw new EmpError("NO_BRUTE", "Please wait for 10 seconds");
+    }
+    let admin = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    if (Crypto.decrypt(admin.password) != req.payload.password) {
+      throw new EmpError("wrong_password", "You are using a wrong password");
+    }
+    if ((admin.email === admin.tenant.owner && admin.tenant.orgmode === true) === false) {
+      throw new EmpError("NOT_ORG_ADMIN", "Not org admin or not in orgmode");
+    }
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let filePath = req.payload.file.path;
+    let default_user_password = req.payload.default_user_password;
+    let admin_password = req.payload.password;
+
+    let myDomain = Tools.getEmailDomain(myemail);
+    /* let test_tenant = Mongoose.Types.ObjectId("61aca9f500c96d4c54ccd7aa");
+
+    let tenant = test_tenant; */
+    //filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
+    const csv = Fs.readFileSync(filePath, "utf8");
+
+    let lines = csv.split("\n");
+    let orgChartArr = [];
+    let currentOU = "";
+    let currentPOU = "";
+    let currentCN = "";
+    let isOU = false;
+    for (let i = 0; i < lines.length; i++) {
+      let fields = lines[i].split(",");
+      if (!Tools.isArray(fields)) continue;
+      if (fields.length < 2) {
+        continue;
+      }
+      if (fields[0].toLowerCase() === "root") {
+        isOU = true;
+        currentOU = "root";
+        currentCN = fields[1];
+        orgChartArr.push({
+          tenant: tenant,
+          ou: currentOU,
+          cn: currentCN,
+          uid: "OU---",
+          position: [],
+        });
+      } else {
+        //第一列是编号
+        //编号要么为空，要么是五个的整数倍
+        if (fields[0].length > 0 && fields[0].length % 5 !== 0) continue;
+        //若果非空，是五个的整数倍,应作为OU
+        if (fields[0].length > 0) {
+          currentOU = fields[0];
+          isOU = true;
+        } else {
+          isOU = false;
+        }
+        currentCN = fields[1];
+        if (isOU === false && Tools.getEmailDomain(fields[2]) !== myDomain) {
+          // 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
+          console.log(`Bypass ${fields[2]} not my same domain  ${myDomain}`);
+          continue;
+        }
+        orgChartArr.push({
+          tenant: tenant,
+          ou: currentOU,
+          cn: currentCN,
+          //如果不是OU， 则fields[2]为邮箱名
+          uid: isOU ? "OU---" : fields[2],
+          //如果isOU，则position为空[]即可
+          //如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
+          position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
+        });
+      }
+    }
+
+    //先清空Orgchart
+    await OrgChart.deleteMany({ tenant: tenant });
+    //再把所有用户重新插入Orgchart
+    await OrgChart.insertMany(orgChartArr);
+    let uniqued_orgchart_staffs = [];
+    let uniqued_emails = [];
+    for (let i = 0; i < orgChartArr.length; i++) {
+      if (
+        orgChartArr[i].uid.startsWith("OU-") ||
+        uniqued_emails.indexOf(orgChartArr[i].uid) > -1 ||
+        myDomain !== Tools.getEmailDomain(orgChartArr[i].uid)
+      )
+        continue;
+      uniqued_emails.push(orgChartArr[i].uid);
+      uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
+    }
+    await AutoRegisterOrgChartUser(admin, uniqued_orgchart_staffs, myDomain, default_user_password);
+    return h.response({ ret: "ok" });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const OrgChartGetLeader = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let uid = req.payload.uid;
+    let leader = req.payload.leader;
+    let ret = await OrgChartHelper.getUpperOrPeerByPosition(tenant, uid, leader);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const ActionGetDoers = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let rds = req.payload.role;
+    let try_with_teamid = req.payload.try_with_teamid;
+    let try_with_email = req.payload.try_with_email;
+    //Use try_with_teamid, ignore team in RDS, because it is specified
+    let ret = await Engine.getDoer(tenant, try_with_teamid, rds, try_with_email);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * 根据querystring查询出对应的人员
+ * querystring格式为：
+ *  ouReg1/pos1:pos2&ouReg2/pos3:pos4
+ *  ouReg是ou的regexp字符串，因此支持单部门、多部门
+ *  pos1:pos2为用：分割的岗位名称
+ *  & 表示可以多个查询合并使用
+ */
+const OrgChartGetStaff = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myUid = req.auth.credentials.email;
+    let qstr = req.payload.qstr;
+    let ret = await OrgChartHelper.getOrgStaff(tenant, myUid, qstr);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const OrgChartList = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let ret = await OrgChart.find({ tenant: tenant });
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const OrgChartExpand = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let ou = req.payload.ou;
+    let include = req.payload.include;
+    let ret = [];
+    if (include) {
+      ret.push(await OrgChart.findOne({ tenant: tenant, ou: ou }));
+    }
+
+    //先放人
+    let childrenStaffFilter = { tenant: tenant };
+    childrenStaffFilter["uid"] = { $ne: "OU---" };
+    childrenStaffFilter["ou"] = ou;
+    let tmp = await OrgChart.find(childrenStaffFilter);
+    ret = ret.concat(tmp);
+
+    //再放下级组织
+    let childrenOuFilter = { tenant: tenant };
+    childrenOuFilter["uid"] = "OU---";
+    childrenOuFilter["ou"] = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
+
+    tmp = await OrgChart.find(childrenOuFilter);
+    ret = ret.concat(tmp);
+
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const GetCallbackPoints = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant };
+    filter = lodash.merge(filter, req.payload);
+    return await CbPoint.find(filter, {
+      _id: 0,
+      tenant: 1,
+      tplid: 1,
+      wfid: 1,
+      nodeid: 1,
+      workid: 1,
+    });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const GetLatestCallbackPoint = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant };
+    filter = lodash.merge(filter, req.payload);
+    let ret = await CbPoint.find(filter, {
+      _id: 0,
+      tenant: 1,
+      tplid: 1,
+      wfid: 1,
+      nodeid: 1,
+      workid: 1,
+    });
+    if (ret.length === 0) {
+      return [];
+    } else {
+      return ret[ret.length - 1];
+    }
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const DoCallback = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant };
+
+    if (req.payload.cbp.tplid) filter.tplid = req.payload.cbp.tplid;
+    if (req.payload.cbp.wfid) filter.wfid = req.payload.cbp.wfid;
+    if (req.payload.cbp.nodeid) filter.nodeid = req.payload.cbp.nodeid;
+    if (req.payload.cbp.workid) filter.workid = req.payload.cbp.workid;
+    let cbp = await CbPoint.findOne(filter, { tenant: 1, tplid: 1, wfid: 1, nodeid: 1, workid: 1 });
+    let options = {};
+    options.route = req.payload.route ? req.payload.route : "DEFAULT";
+    if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
+    if (lodash.isEmpty(req.payload.atts) === false) options.atts = req.payload.atts;
+    let ret = await Engine.doCallback(cbp, options);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const MyPerm = async function (req, h) {
+  try {
+    let instance = null;
+    if (req.payload.instance_id) {
+      switch (req.payload.what) {
+        case "template":
+          instance = await Template.findOne({ _id: req.payload.instance_id });
+          break;
+        case "work":
+          instance = await Todo.findOne({ _id: req.payload.instance_id });
+          break;
+        case "workflow":
+          instance = await Workflow.findOne({ _id: req.payload.instance_id });
+          break;
+        case "team":
+          instance = await Team.findOne({ _id: req.payload.instance_id });
+          break;
+        default:
+          throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
+      }
+    }
+    let perm = await PermController.hasPerm(
+      req.auth.credentials.email,
+      req.payload.what,
+      req.payload.instance_id ? instance : null,
+      req.payload.op
+    );
+
+    return h.response(perm);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * Get member's permission
+ */
+const MemberPerm = async function (req, h) {
+  try {
+    let instance = null;
+    let member_email = req.payload.member_email;
+    let tenant = req.auth.credentials.tenant._id;
+    let member = await User.findOne({ email: member_email, tenant: tenant });
+    if (!member) {
+      throw new EmpError("MEMBER_NOT_FOUND", `member ${member.email} not found in current org`);
+    }
+    let me = await User.findOne({ _id: req.auth.credentials._id });
+    if (me.group !== "ADMIN") {
+      throw new EmpError("NO_PERM", "You don't have permission to check this member's permission");
+    }
+    if (req.payload.instance_id) {
+      switch (req.payload.what) {
+        case "template":
+          instance = await Template.findOne({ _id: req.payload.instance_id });
+          break;
+        case "work":
+          instance = await Todo.findOne({ _id: req.payload.instance_id });
+          break;
+        case "workflow":
+          instance = await Workflow.findOne({ _id: req.payload.instance_id });
+          break;
+        case "team":
+          instance = await Team.findOne({ _id: req.payload.instance_id });
+          break;
+        default:
+          throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
+      }
+    }
+    let perm = await PermController.hasPerm(
+      member_email,
+      req.payload.what,
+      req.payload.instance_id ? instance : null,
+      req.payload.op
+    );
+
+    return h.response(perm);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const CommentList = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let uid = email.substring(0, email.indexOf("@"));
+    let filter = { tenant: tenant, toWhom: uid };
+    let comments = await Comment.find(filter, { toWhom: 0 }).sort("-createdAt").lean();
+    for (let i = 0; i < comments.length; i++) {
+      comments[i].cn = await Cache.getUserName(comments[i].who);
+    }
+
+    return h.response(comments);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const CommentDelete = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let commentid = req.payload.commentid;
+    let filter = { tenant: tenant, _id: commentid };
+    await Comment.deleteOne(filter);
+
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const CommentDeleteBeforeDays = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let uid = email.substring(0, email.indexOf("@"));
+    let beforeDays = req.payload.beforeDays;
+    let filter = {
+      tenant: tenant,
+      toWhom: uid,
+      createdAt: {
+        $lte: new Date(new Date().getTime() - beforeDays * 60 * 60 * 1000).toISOString(),
+      },
+    };
+    await Comment.deleteMany(filter);
+
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TagDel = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let objtype = req.payload.objtype;
+    let objid = req.payload.objid;
+    let text = req.payload.text.trim();
+
+    let tagToDel = { owner: myEmail, text: text };
+
+    let existingTags = [];
+    if (objtype === "template") {
+      let filter = { tenant: tenant, tplid: objid };
+      let tmp = await Template.findOneAndUpdate(
+        filter,
+        {
+          $pull: {
+            tags: {
+              owner: myEmail,
+              text: text,
+            },
+          },
+        },
+        { upsert: false, new: true }
+      );
+      existingTags = tmp.tags;
+      existingTags = existingTags.filter((x) => {
+        return x.owner === myEmail;
+      });
+    }
+
+    return h.response(existingTags);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TagAdd = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    let objtype = req.payload.objtype;
+    let objid = req.payload.objid;
+    let text = req.payload.text;
+
+    //用于返回
+    let existingTags = [];
+    //先把text拆开
+    let tmp = Parser.splitStringToArray(text);
+    let existingText = [];
+    //获得当前用户已经做过的tag和text
+    if (objtype === "template") {
+      let filter = { tenant: tenant, tplid: objid };
+      let obj = await Template.findOne(filter);
+      existingTags = obj.tags;
+      //清理exitingTags中可能存在的空字符串
+      let tmp = existingTags.filter((x) => {
+        return x.text.trim().length > 0;
+      });
+      if (tmp.length < existingTags.length) {
+        obj.tags = tmp;
+        obj = await obj.save();
+        existingTags = obj.tags;
+      }
+      //过滤出当前用户的数据
+      existingTags = existingTags.filter((x) => {
+        return x.owner === myEmail;
+      });
+      existingText = existingTags.map((x) => x.text);
+    }
+    //从用户新录入的tag文本中去除已经存在的
+    tmp = lodash.difference(tmp, existingText);
+    //转换为tag对象
+    let tagsToAdd = tmp.map((x) => {
+      return { owner: myEmail, text: x, group: myGroup };
+    });
+
+    if (objtype === "template" && tagsToAdd.length > 0) {
+      let filter = { tenant: tenant, tplid: objid };
+      //将新添加的放进数组
+      let obj = await Template.findOneAndUpdate(
+        filter,
+        { $addToSet: { tags: { $each: tagsToAdd } } },
+        { upsert: false, new: true }
+      );
+      existingTags = obj.tags;
+      //过滤当前用户的tag
+      existingTags = existingTags.filter((x) => {
+        return x.owner === myEmail;
+      });
+    }
+
+    //返回当前用户的tags
+    return h.response(existingTags);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TagList = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let objtype = req.payload.objtype;
+    let objid = req.payload.objid;
+
+    let ret = [];
+    if (objtype === "template") {
+      let filter = { tenant: tenant };
+      if (Tools.hasValue(objid)) {
+        filter = { tenant: tenant, tplid: objid, "tags:owner": myEmail };
+      } else {
+        filter = { tenant: tenant, "tags.owner": myEmail };
+      }
+      let objs = await Template.find(filter);
+      for (let i = 0; i < objs.length; i++) {
+        let tmp = objs[i].tags
+          .filter((x) => {
+            return x.owner === myEmail;
+          })
+          .map((x) => {
+            return x.text;
+          });
+
+        ret = lodash.union(ret, tmp);
+      }
+    }
+
+    ret = lodash.sortedUniq(ret);
+
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+//Org level tags are set in setting page
+const TagListOrg = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+
+    let ret = (await Cache.getOrgTags(tenant)).split(";");
+
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const GetTodosByWorkid = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    return h.response(
+      await Engine.__getTodosByWorkid(tenant, req.payload.workid, req.payload.full)
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const ListSet = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let payloadItems = req.payload.items;
+    payloadItems = payloadItems.replace("；", ",");
+    payloadItems = payloadItems.replace("，", ";");
+    payloadItems = Parser.splitStringToArray(payloadItems).join(";");
+    let filter = { tenant: tenant, name: req.payload.name };
+    let list = await List.findOne(filter);
+    if (list && list.author !== myEmail) {
+      throw new EmpError("NO_PERM", "List exists but it's not your owned list");
+    } else if (!list) {
+      list = new List({
+        tenant: tenant,
+        author: myEmail,
+        name: req.payload.name,
+        entries: [
+          {
+            key: req.payload.key,
+            items: payloadItems,
+          },
+        ],
+      });
+      list = await list.save();
+    } else {
+      let theKey = req.payload.key;
+      let theEntry = {};
+      let allKeys = list.entries.map((x) => x.key);
+      //如果Default不存在
+      if (allKeys.includes("Default") === false) {
+        theKey = "Default";
+        theEntry = {
+          $each: [{ key: theKey, items: payloadItems }],
+          $position: 0, //把Default插入到第一个位置
+        };
+        filter = { tenant: tenant, name: req.payload.name, author: myEmail };
+        list = await List.findOneAndUpdate(filter, {
+          $push: {
+            entries: theEntry,
+          },
+        });
+      } else if (allKeys.includes(theKey) === false) {
+        //如果key不存在
+        theEntry = { key: theKey, items: payloadItems };
+        filter = { tenant: tenant, name: req.payload.name, author: myEmail };
+        list = await List.findOneAndUpdate(filter, {
+          //则推出这个Key
+          $push: {
+            entries: theEntry,
+          },
+        });
+      } else {
+        //否则,这个Key存在
+        filter = { tenant: tenant, name: req.payload.name, author: myEmail, "entries.key": theKey };
+        //则修改它的items值
+        list = await List.findOneAndUpdate(filter, {
+          $set: {
+            "entries.$.items": payloadItems,
+          },
+        });
+      }
+    }
+    return h.response(list);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const ListChangeName = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let newName = req.payload.newName;
+    let filter = { tenant: tenant, name: req.payload.name, author: myEmail };
+    await List.findOneAndUpdate(filter, { $set: { name: newName } });
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const ListList = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+
+    return h.response(await List.find({ tenant: tenant }).lean());
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const ListDelListOrKey = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let filter = {};
+    if (req.payload.key) {
+      filter = { tenant: tenant, author: myEmail, name: req.payload.name };
+      await List.findOneAndUpdate(filter, { $pull: { entries: { key: req.payload.key } } });
+    } else {
+      fitler = { tenant: tenant, author: myEmail, name: req.payload.name };
+      await List.deleteOne(filter);
+    }
+
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const ListGetItems = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let key = "Default";
+    if (Tools.isEmpty(req.payload.key)) {
+      key = "Default";
+    } else {
+      key = req.payload.key;
+    }
+    let filter = {
+      tenant: tenant,
+      name: req.payload.name,
+      entries: { $elemMatch: { key: key } },
+    };
+
+    let ret = await List.findOne(filter, { "entries.$": 1 }).lean();
+    let items = "";
+    if (ret && ret.entries) {
+      items = ret.entries[0].items;
+    }
+
+    return h.response(Parser.splitStringToArray(items));
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const CodeTry = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let retMsg = { message: "" };
+    let code = req.payload.code;
+    retMsg.message = await Client.runCode(tenant, "codetry", {}, code, true);
+
+    return h.response(retMsg);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const DemoAPI = async function (req, h) {
+  let tenant = req.auth.credentials.tenant._id;
+  return {
+    tenant: tenant,
+    intv: 100,
+    stringv: "hello",
+  };
+};
+
+module.exports = {
+  TemplateCreate,
+  TemplateDesc,
+  TemplateBasic,
+  TemplatePut,
+  TemplateRename,
+  TemplateRenameWithIid,
+  TemplateMakeCopyOf,
+  TemplateCopyto,
+  TemplateDelete,
+  TemplateDeleteByName,
+  TemplateList,
+  TemplateIdList,
+  TemplateSearch,
+  TemplateRead,
+  TemplateDownload,
+  TemplateImport,
+  WorkflowRead,
+  WorkflowDumpInstemplate,
+  WorkflowStart,
+  WorkflowPause,
+  WorkflowResume,
+  WorkflowStop,
+  WorkflowRestart,
+  WorkflowDestroy,
+  WorkflowStatus,
+  WorkflowDownload,
+  WorkflowGetKVars,
+  WorkflowList,
+  WorkflowSearch,
+  WorkflowGetLatest,
+  WorkflowSetPbo,
+  WorkflowGetPbo,
+  WorkflowOP,
+  WorkList,
+  WorkInfo,
+  WorkGetHtml,
+  WorkDo,
+  WorkStatus,
+  WorkRevoke,
+  WorkSendback,
+  WorkGetTrack,
+  WorkAddAdhoc,
+  WorkExplainPds,
+  GetDelayTimers,
+  GetActiveDelayTimers,
+  TeamPutDemo,
+  TeamImport,
+  TeamDownload,
+  TeamUpload,
+  TeamSetRole,
+  TeamCopyRole,
+  TeamDeleteRole,
+  TeamAddRoleMembers,
+  TeamDeleteRoleMembers,
+  TeamDelete,
+  TeamFullInfoGet,
+  TeamRead,
+  TeamRename,
+  TeamCopyto,
+  TeamSearch,
+  CheckCoworker,
+  TransferWork,
+  OrgChartImport,
+  OrgChartGetLeader,
+  OrgChartGetStaff,
+  OrgChartList,
+  OrgChartExpand,
+  CommentList,
+  CommentDelete,
+  CommentDeleteBeforeDays,
+  TagAdd,
+  TagDel,
+  TagList,
+  TagListOrg,
+  ActionGetDoers,
+  GetCallbackPoints,
+  GetLatestCallbackPoint,
+  GetTodosByWorkid,
+  ListSet,
+  ListList,
+  ListDelListOrKey,
+  ListChangeName,
+  ListGetItems,
+  DoCallback,
+  CodeTry,
+  MyPerm,
+  MemberPerm,
+  DemoAPI,
+  SeeItWork,
+};

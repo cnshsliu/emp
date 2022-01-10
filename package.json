@@ -1,0 +1,79 @@
+{
+  "name": "emp",
+  "version": "0.0.1",
+  "description": "Enterprise Middle Platform",
+  "keywords": [
+    "EMP"
+  ],
+  "author": {
+    "name": "Emp Master"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/lucas3506345550/raindrop"
+  },
+  "engines": {
+    "node": ">=8.7.0",
+    "npm": ">=5.4.2"
+  },
+  "scripts": {
+    "test": "lab --assert @hapi/code",
+    "start": "shx cp ./README.md src/docs && node server.js",
+    "debug": "node --inspect server.js",
+    "docs": "./node_modules/docker/docker -w -I -x node_modules -s yes -o ../raindrop-pages "
+  },
+  "dependencies": {
+    "@hapi/accept": "^5.0.1",
+    "@hapi/basic": "^6.0.0",
+    "@hapi/boom": "^9.1.0",
+    "@hapi/code": "^8.0.2",
+    "@hapi/good": "^9.0.1",
+    "@hapi/good-console": "^9.0.1",
+    "@hapi/good-squeeze": "^6.0.0",
+    "@hapi/hapi": "^20.1.5",
+    "@hapi/hoek": "^9.1.0",
+    "@hapi/inert": "^6.0.4",
+    "@hapi/lab": "^24.3.2",
+    "@hapi/sntp": "^4.0.0",
+    "@hapi/vision": "^6.1.0",
+    "@hapi/wreck": "^17.1.0",
+    "async-redis": "^1.1.7",
+    "axios": "^0.22.0",
+    "axios-better-stacktrace": "^2.1.1",
+    "bufferutil": "^4.0.2",
+    "cheerio": "^1.0.0-rc.3",
+    "code": "^5.2.4",
+    "core-js": "^3.18.1",
+    "handlebars": "^4.7.7",
+    "hapi-auth-jwt2": "^8.8.0",
+    "hapi-plugin-websocket": "^2.3.1",
+    "hapi-swagger": "^14.2.4",
+    "jimp": "^0.16.1",
+    "joi": "^17.4.2",
+    "marked": "^0.7.0",
+    "metaflow": "^1.0.1",
+    "moment": "^2.29.1",
+    "mongoose": "^5.10.18",
+    "mongoose-unique-validator": "^2.0.3",
+    "mutex-promise": "^0.1.0",
+    "nodemailer": "^6.4.16",
+    "nzh": "^1.0.4",
+    "path": "^0.12.7",
+    "redis": "^3.0.2",
+    "sanitize-html": "^2.6.0",
+    "saslprep": "^1.0.3",
+    "short-uuid": "^4.1.0",
+    "shx": "^0.3.3",
+    "typescript": "^4.1.2",
+    "underscore": "^1.12.0",
+    "utf-8-validate": "^5.0.3",
+    "uuid": "^8.3.2",
+    "zeromq": "^5.2.8"
+  },
+  "devDependencies": {
+    "docker": "^1.0.0"
+  },
+  "bundleDependencies": [],
+  "private": true,
+  "main": "server.js"
+}
