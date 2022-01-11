@@ -199,7 +199,7 @@ const TemplatePut = async function (req, h) {
           //bdoc: bdoc,
         },
       },
-      options = { upsert: false, new: true };
+      options = { upsert: true, new: true };
     let obj = await Template.findOneAndUpdate(filter, update, options);
     return h.response({ _id: obj._id, tplid: obj.tplid });
   } catch (err) {

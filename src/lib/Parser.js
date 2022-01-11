@@ -167,22 +167,6 @@ Parser.getVarsHistory = function (elem) {
   return ret;
 };
 
-Parser.getPbo = function (elem) {
-  return elem.find(".pbo").text();
-};
-Parser.setPbo = function (elem, pbo) {
-  let pboChild = null;
-  if (typeof pbo !== "string") {
-    pbo = JSON.stringify(pbo);
-  }
-  let tmp = elem.children(".pbo");
-  if (tmp.length > 0) {
-    tmp.text(pbo);
-  } else {
-    elem.append(`<div class="pbo">${pbo}</div>`);
-  }
-};
-
 //Parser.kvarsToArray = function (kvars, workid) {
 Parser.kvarsToArray = function (kvars) {
   let kvarsArr = [];

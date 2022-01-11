@@ -1,0 +1,8 @@
+run.sh
+config.json
+node_modules
+src/config/emp.js
+.DS_Store
+.tern-port
+modefiles/
+team_csv/orgchart.csv

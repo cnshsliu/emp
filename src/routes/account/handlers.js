@@ -29,6 +29,7 @@ const Site = require("../../database/models/Site");
 const User = require("../../database/models/User");
 const Todo = require("../../database/models/Todo");
 const Tenant = require("../../database/models/Tenant");
+const Delegation = require("../../database/models/Delegation");
 const JoinApplication = require("../../database/models/JoinApplication");
 const TimeZone = require("../../lib/timezone");
 const Tools = require("../../tools/tools");

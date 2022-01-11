@@ -10,6 +10,7 @@ const CbPoint = require("../database/models/CbPoint");
 const Comment = require("../database/models/Comment");
 const Team = require("../database/models/Team");
 const Delegation = require("../database/models/Delegation");
+const WfPbo = require("../database/models/WfPbo");
 const DelayTimer = require("../database/models/DelayTimer");
 const OrgChartHelper = require("./OrgChartHelper");
 const lodash = require("lodash");
@@ -1307,7 +1308,7 @@ Client.yarkNode = async function (obj) {
     );
   } else if (tpNode.hasClass("SUB")) {
     let parent_vars = Parser.getVars(wfRoot);
-    let pbo = Parser.getPbo(wfRoot);
+    let pbo = await Engine.getPbo(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
     if (isStandalone) {
@@ -2090,15 +2091,13 @@ Engine.startWorkflow = async function (
   let startDoc =
     `<div class="process">` +
     tpl.doc +
-    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"><div class="kvars" doer="EMP_PARENT">${base64_parent_kvars}</div><div class="pbo">${
-      pbo ? pbo : "NO_PBO"
-    }</div></div>` +
+    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"><div class="kvars" doer="EMP_PARENT">${base64_parent_kvars}</div></div>` +
     "</div>";
   //TODO: where to put attachments on workflow start?  in workflow object or in START work node?
   let wf = new Workflow({
+    tenant: tenant,
     wfid: wfid,
     wftitle: wftitle,
-    tenant: tenant,
     teamid: teamid,
     tplid: tplid,
     starter: starter,
@@ -2107,6 +2106,7 @@ Engine.startWorkflow = async function (
     rehearsal: rehearsal,
   });
   wf = await wf.save();
+  await Engine.setPbo(tenant, wfid, pbo);
   await Engine.PUB.send([
     "EMP",
     JSON.stringify({
@@ -2169,14 +2169,14 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
   starter = Tools.defaultValue(starter, old_wf.starter);
   teamid = Tools.defaultValue(teamid, old_wf.teamid);
   wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
-  pbo = Tools.defaultValue(pbo, Parser.getPbo(old_wfRoot));
+  pbo = Tools.defaultValue(pbo, await Engine.getPbo(tenant, wfid));
   let base64_string = old_wfRoot.find(".kvars").first().text();
   let tplDoc = Cheerio.html(old_wfIO(".template").first());
   let tplid = old_wf.tplid;
   let startDoc =
     `<div class="process">` +
     tplDoc +
-    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${old_pwfid}" pworkid="${old_pworkid}"><div class="kvars" doer="EMP_PARENT">${base64_string}</div><div class="pbo">${pbo}</div></div>` +
+    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${old_pwfid}" pworkid="${old_pworkid}"><div class="kvars" doer="EMP_PARENT">${base64_string}</div></div>` +
     "</div>";
   let wf = new Workflow({
     wfid: wfid,
@@ -2190,6 +2190,7 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
     rehearsal: old_wf.rehearsal,
   });
   wf = await wf.save();
+  await Engine.setPbo(tenant, wfid, pbo);
   await Engine.PUB.send([
     "EMP",
     JSON.stringify({
@@ -2223,22 +2224,41 @@ Engine.setWorkflowPbo = async function (email, tenant, wfid, pbo) {
   let wf = await Workflow.findOne(filter);
   if (!PermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
-  let wfIO = await Parser.parse(wf.doc);
-  let wfRoot = wfIO(".workflow");
-  Parser.setPbo(wfRoot, pbo);
-  wf.doc = wfIO.html();
-  wf = await wf.save();
+  await Engine.setPbo(tenant, wfid, pbo);
   return pbo;
 };
+Engine.setPbo = async function (tenant, wfid, pbo) {
+  let pboArray = [];
+  if (Array.isArray(pbo)) {
+    pboArray = pbo;
+  } else {
+    pboArray = [pbo];
+  }
+  await WfPbo.deleteOne({
+    tenant: tenant,
+    wfid: wfid,
+  });
+  let newPbo = new WfPbo({
+    tenant: tenant,
+    wfid: wfid,
+    pbo: pboArray,
+  });
+  return await newPbo.save();
+};
+
+Engine.getPbo = async function (tenant, wfid) {
+  let ret = await WfPbo.findOne({
+    tenant: tenant,
+    wfid: wfid,
+  }).lean();
+  if (ret) {
+    return ret.pbo;
+  } else {
+    return [];
+  }
+};
 Engine.getWorkflowPbo = async function (email, tenant, wfid) {
-  let filter = { tenant: tenant, wfid: wfid };
-  let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "read"))
-    throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
-  let wfIO = await Parser.parse(wf.doc);
-  let wfRoot = wfIO(".workflow");
-  let pbo = Parser.getPbo(wfRoot);
-  return pbo;
+  return await Engine.getPbo(tenant, wfid);
 };
 
 Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
@@ -2380,7 +2400,7 @@ Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid)
   ret.wf.wftitle = wfRoot.attr("wftitle");
   ret.wf.pwfid = wfRoot.attr("pwfid");
   ret.wf.pworkid = wfRoot.attr("pworkid");
-  ret.wf.pbo = Parser.getPbo(wfRoot);
+  ret.wf.pbo = await Engine.getPbo(tenant, wfid);
   ret.wf.status = Common.getWorkflowStatus(wfRoot);
   ret.wf.beginat = wfRoot.attr("at");
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
