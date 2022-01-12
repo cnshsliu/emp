@@ -79,6 +79,16 @@ const Tools = {
     return input instanceof Array || Object.prototype.toString.call(input) === "[object Array]";
   },
 
+  /**
+   * 全角转半角
+   */
+  qtb: function (str) {
+    str = str.replace(/；/g, ";");
+    str = str.replace(/：/g, ":");
+    str = str.replace(/，/g, ",");
+    return str;
+  },
+
   isObject: function (input) {
     // IE8 will treat undefined and null as object if it wasn't for
     // input != null
