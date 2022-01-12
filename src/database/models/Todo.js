@@ -29,6 +29,7 @@ var TodoSchema = new Schema(
     title: { type: String, required: true },
     comment: { type: String },
     role: { type: String },
+    route: { type: String },
     status: { type: String, required: true, index: true },
     wfstatus: { type: String, required: true, index: true },
     wfstarter: { type: String, required: false, index: false },

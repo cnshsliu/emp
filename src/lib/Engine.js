@@ -601,7 +601,11 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     /* if (comment) {
       worknode.append(`<div class="comment">${parser.codetobase64(comment)}</div>`);
     } */
-    route && workNode.attr("route", route);
+    if (route) {
+      //workNode.attr("route", route);
+      //Move route from attr to mongo
+      todo.route = route;
+    }
     Parser.setVars(workNode, kvars, doer);
 
     wf.doc = wfIO.html();
@@ -872,6 +876,9 @@ Engine.explainPds = async function (payload) {
   let wf = await Workflow.findOne(filter);
 
   let doers = await Common.getDoer(payload.tenant, wf.teamid, payload.rds, wf.starter); //
+  console.log("Return ", doers);
+  doers = doers.filter((x) => x.cn !== "USER_NOT_FOUND");
+  console.log("Return ", doers);
 
   return doers;
 };
@@ -1575,8 +1582,16 @@ Common.getRoutingOptions = function (tpRoot, nodeid) {
   tpRoot.find(linkSelector).each(function (i, el) {
     let route = Cheerio(el).attr("case");
     route = Tools.isEmpty(route) ? "DEFAULT" : route;
-    if (route !== "DEFAULT" && routings.indexOf(route) < 0) routings.push(route);
+    //if (route !== "DEFAULT" && routings.indexOf(route) < 0) routings.push(route);
+    if (routings.indexOf(route) < 0) routings.push(route);
   });
+  //前端会自动判断如果routings数组为空，则自动显示为一个按钮DONE
+  //但前面一个注释掉的语句，不能放开注释
+  //因为当除了DEFAULT以外，还有一个选项时，DEFAULT是需要出现的
+  //这种情况发生在，在建模时，一个节点的后面有多个链接，但有一个或多个链接没有设置routing值
+  if (routings.length === 1 && routings[0] === "DEFAULT") {
+    routings = [];
+  }
   return routings;
 };
 Common.getInstruct = function (tpRoot, nodeid) {
@@ -2492,7 +2507,9 @@ Engine.__getWorkflowWorksHistory = async function (tenant, tpRoot, wfRoot, wfid)
               splitted: splitComment(works[i].comment.trim()),
             },
           ];
-    if (workNode.attr("route")) historyEntry.route = workNode.attr("route");
+    //if (workNode.attr("route")) historyEntry.route = workNode.attr("route");
+    //Move route from node attr to mongo
+    if (works[i].route) historyEntry.route = works[i].route;
     /* historyEntry.kvars = Parser.getVars(workNode);
     historyEntry.kvarsArr = Parser.kvarsToArray(historyEntry.kvars, workid); */
     let kvars = Parser.getVars(workNode);
@@ -2926,7 +2943,8 @@ Common.getDoer = async function (tenant, teamid, rds, starter, wf) {
     } else if (rdsPart.startsWith("@")) {
       let email = `${rdsPart.substring(1)}${starterEmailSuffix}`;
       let cn = await Cache.getUserName(email);
-      tmp = [{ uid: `${email}`, cn: cn }];
+      if (cn === "USER_NOT_FOUND") tmp = [];
+      else tmp = [{ uid: `${email}`, cn: cn }];
     } else if (rdsPart.startsWith("T:")) {
       tmp = []; //Bypass Team Difinition
     } else {
