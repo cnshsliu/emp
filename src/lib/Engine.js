@@ -871,14 +871,29 @@ Engine.addAdhoc = async function (payload) {
   await wf.save();
   return todoObj;
 };
-Engine.explainPds = async function (payload) {
-  let filter = { tenant: payload.tenant, wfid: payload.wfid };
-  let wf = await Workflow.findOne(filter);
 
-  let doers = await Common.getDoer(payload.tenant, wf.teamid, payload.rds, wf.starter); //
-  console.log("Return ", doers);
+/**
+ * Engine.explainPds = async() Explain RDS
+ *
+ * @param {...} payload: {tenant, wfid, rds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user email
+ *
+ * @return {...}
+ */
+Engine.explainPds = async function (payload) {
+  let theTeamid = null;
+  let theUser = "";
+  if (payload.wfid) {
+    let filter = { tenant: payload.tenant, wfid: payload.wfid };
+    let wf = await Workflow.findOne(filter);
+    theTeamid = wf.teamid;
+    theUser = wf.starter;
+  } else {
+    theTeamid = "";
+    theUser = payload.email;
+  }
+
+  let doers = await Common.getDoer(payload.tenant, theTeamid, payload.rds, theUser); //
   doers = doers.filter((x) => x.cn !== "USER_NOT_FOUND");
-  console.log("Return ", doers);
 
   return doers;
 };
@@ -2914,11 +2929,11 @@ Common.getTeamInRDS = function (rds) {
  * @param {...} teamid -
  * @param {...} rds -
  * @param {...} starter -
- * @param {...} wf -
+ * @param {...} wf - can be null
  *
  * @return {...}
  */
-Common.getDoer = async function (tenant, teamid, rds, starter, wf) {
+Common.getDoer = async function (tenant, teamid, rds, starter, wf = null) {
   //If there is team definition in RDS, use it.
   //if RDS is empty, always use starter
   if (Tools.isEmpty(rds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];

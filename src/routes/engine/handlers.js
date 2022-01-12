@@ -957,8 +957,9 @@ const WorkExplainPds = async function (req, h) {
     return h.response(
       await Engine.explainPds({
         tenant: req.auth.credentials.tenant._id,
+        email: req.auth.credentials.email,
         wfid: req.payload.wfid,
-        rds: req.payload.rds,
+        rds: Tools.qtb(req.payload.rds),
       })
     );
   } catch (err) {
@@ -1187,6 +1188,32 @@ const TemplateImport = async function (req, h) {
       console.log("Unlinked temp file:", fileInfo.path);
     });
     return h.response(obj);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateSetVisi = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let author = myEmail;
+
+    let tpl = await Template.findOneAndUpdate(
+      { tenant: tenant, author: author, tplid: req.payload.tplid },
+      { $set: { visi: req.payload.visi } },
+      { upsert: false, new: true }
+    );
+    if (!tpl) {
+      throw new EmpError("NO_TPL", "No owned template found");
+    }
+    tpl = await Template.findOne(
+      { tenant: tenant, author: author, tplid: req.payload.tplid },
+      { doc: 0 }
+    );
+
+    return h.response(tpl);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1851,7 +1878,7 @@ const OrgChartGetLeader = async function (req, h) {
 const ActionGetDoers = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let rds = req.payload.role;
+    let rds = Tools.qtb(req.payload.role);
     let try_with_teamid = req.payload.try_with_teamid;
     let try_with_email = req.payload.try_with_email;
     //Use try_with_teamid, ignore team in RDS, because it is specified
@@ -2479,6 +2506,7 @@ module.exports = {
   TemplateRead,
   TemplateDownload,
   TemplateImport,
+  TemplateSetVisi,
   WorkflowRead,
   WorkflowDumpInstemplate,
   WorkflowStart,

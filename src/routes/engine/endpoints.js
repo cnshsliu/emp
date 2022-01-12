@@ -329,6 +329,26 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/template/setvisi",
+    handler: Handlers.TemplateSetVisi,
+    config: {
+      description: "set template visibility",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+          visi: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/template/download",
     handler: Handlers.TemplateDownload,
     config: {
@@ -792,7 +812,7 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          wfid: Joi.string().required(),
+          wfid: Joi.string().optional(),
           rds: Joi.string().required(),
         },
         validator: Joi,

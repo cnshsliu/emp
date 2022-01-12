@@ -8,6 +8,7 @@ var TemplateSchema = new Schema(
     tplid: { type: String, required: [true, "不能为空"], index: true },
     author: { type: String, required: [true, "不能为空"], index: true },
     authorName: { type: String, required: [true, "不能为空"], index: false },
+    visi: { type: String },
     desc: { type: String, required: false, index: false },
     doc: { type: String, required: true },
     //bdoc: { type: Buffer, required: true },
