@@ -18,7 +18,7 @@ const replyHelper = require("../../lib/helpers");
 const Tools = require("../../tools/tools.js");
 const { Engine, Client } = require("../../lib/Engine");
 const OrgChartHelper = require("../../lib/OrgChartHelper");
-const PermController = require("../../lib/PermController");
+const SystemPermController = require("../../lib/SystemPermController");
 const { EmpError } = require("../../lib/EmpError");
 const lodash = require("lodash");
 const Fs = require("fs");
@@ -45,7 +45,7 @@ const EmailSchema = Joi.string().email();
 
 const TemplateCreate = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -93,7 +93,7 @@ const TemplateCreate = async function (req, h) {
 
 const TemplateDesc = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "update")))
       throw new EmpError("NO_PERM", "You don't have permission to update template");
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -140,7 +140,7 @@ const TemplateBasic = async function (req, h) {
 
 const SeeItWork = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
     let author = req.auth.credentials.email;
@@ -177,7 +177,7 @@ const SeeItWork = async function (req, h) {
 };
 const TemplatePut = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
     let author = req.auth.credentials.email;
@@ -216,7 +216,9 @@ const TemplateRename = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, tplid: req.payload.fromid };
     let tpl = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "update")))
+    if (
+      !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "update"))
+    )
       throw new EmpError("NO_PERM", "You don't have permission to rename this template");
     tpl.tplid = req.payload.tplid;
     if (Tools.isEmpty(tpl.authorName)) {
@@ -235,7 +237,9 @@ const TemplateRenameWithIid = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, _id: req.payload._id };
     let tpl = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "update")))
+    if (
+      !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "update"))
+    )
       throw new EmpError("NO_PERM", "You don't have permission to rename this template");
     tpl.tplid = req.payload.tplid;
     tpl = await tpl.save();
@@ -255,7 +259,7 @@ const TemplateMakeCopyOf = async function (req, h) {
     let me = await User.findOne({ _id: req.auth.credentials._id });
     let filter = { tenant: tenant, _id: req.payload._id };
     let oldTpl = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let newObj = new Template({
       tenant: oldTpl.tenant,
@@ -276,7 +280,7 @@ const TemplateMakeCopyOf = async function (req, h) {
 
 const TemplateCopyto = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let me = await User.findOne({ _id: req.auth.credentials._id });
     let tenant = req.auth.credentials.tenant._id;
@@ -306,7 +310,9 @@ const TemplateDelete = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, _id: req.payload._id };
     let ret = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", ret, "delete")))
+    if (
+      !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", ret, "delete"))
+    )
       throw new EmpError("NO_PERM", "You don't have permission to delete this template");
     ret = await Template.deleteOne(filter);
     return h.response(ret);
@@ -321,7 +327,9 @@ const TemplateDeleteByName = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, tplid: req.payload.tplid };
     let ret = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", ret, "delete")))
+    if (
+      !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", ret, "delete"))
+    )
       throw new EmpError("NO_PERM", "You don't have permission to delete this template");
     ret = await Template.deleteOne(filter);
     return h.response(ret);
@@ -335,7 +343,7 @@ const WorkflowRead = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
     let wf = await Workflow.findOne(filter).lean();
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
     wf.beginat = wf.createdAt;
     wf.history = await Engine.getWfHistory(req.auth.credentials.tenant._id, req.payload.wfid, wf);
@@ -350,7 +358,7 @@ const WorkflowDumpInstemplate = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
     let wf = await Workflow.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
     let wfIO = await Parser.parse(wf.doc);
     let tpRoot = wfIO(".template");
@@ -394,7 +402,7 @@ const WorkflowStart = async function (req, h) {
     let pbo = req.payload.pbo;
     let kvars = req.payload.kvars;
 
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
 
     pbo = pbo ? pbo : "";
@@ -604,7 +612,7 @@ const WorkflowSearch = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read workflow");
     let mappedField = req.payload.sort_field === "name" ? "wftitle" : req.payload.sort_field;
     let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
@@ -1016,7 +1024,7 @@ const WorkGetTrack = async function (req, h) {
 
 const TemplateList = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read template");
     let ret = await Template.find({ tenant: req.auth.credentials.tenant._id }, { doc: 0 }).sort(
       "-updatedAt"
@@ -1064,7 +1072,7 @@ const TemplateIdList = async function (req, h) {
 const TemplateSearch = async function (req, h) {
   try {
     let myEmail = req.auth.credentials.email;
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "no permission to read template");
 
     let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
@@ -1135,7 +1143,7 @@ const TemplateRead = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
     let tpl = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
     return tpl;
   } catch (err) {
@@ -1146,7 +1154,7 @@ const TemplateRead = async function (req, h) {
 
 const TemplateImport = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -1189,7 +1197,7 @@ const TemplateDownload = async function (req, h) {
     let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
     //console.log(filter);
     let tpl = await Template.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
     //console.log(tpl.doc);
     //const response = h.response(tpl.doc);
@@ -1213,7 +1221,7 @@ const WorkflowDownload = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
     let wf = await Workflow.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
     return wf;
   } catch (err) {
@@ -1285,7 +1293,7 @@ const TeamFullInfoGet = async function (req, h) {
     if (!team) {
       return Boom.notFound(`${req.params.teamid} not found`);
     }
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this team");
     return team;
   } catch (err) {
@@ -1299,7 +1307,7 @@ const TeamRead = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
 
     let team = await Team.findOne({ tenant: tenant, teamid: req.payload.teamid });
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this team");
     return team;
   } catch (err) {
@@ -1318,10 +1326,10 @@ const TeamUpload = async function (req, h) {
     let teamFilter = { tenant: tenant, teamid: teamid };
     let team = await Team.findOne(teamFilter);
     if (team) {
-      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
         throw new EmpError("NO_PERM", "You don't have permission to update this team");
     } else {
-      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+      if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
         throw new EmpError("NO_PERM", "You don't have permission to create team");
     }
     team = await Team.findOneAndUpdate(
@@ -1360,10 +1368,10 @@ const TeamImport = async function (req, h) {
     let teamFilter = { tenant: tenant, teamid: teamid };
     let team = await Team.findOne(teamFilter);
     if (team) {
-      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+      if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
         throw new EmpError("NO_PERM", "You don't have permission to update this team");
     } else {
-      if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+      if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
         throw new EmpError("NO_PERM", "You don't have permission to create team");
     }
     team = await Team.findOneAndUpdate(
@@ -1384,7 +1392,7 @@ const TeamDownload = async function (req, h) {
     let filename = req.payload.filename;
     let teamFilter = { tenant: tenant, teamid: teamid };
     let team = await Team.findOne(teamFilter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this team");
     if (!filename) {
       filename = teamid;
@@ -1422,7 +1430,7 @@ const TeamDeleteRoleMembers = async function (req, h) {
     if (!team) {
       throw `Team ${teamid} not found`;
     }
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
       throw new EmpError("NO_PERM", "You don't have permission to change this team");
     let tmap = team.tmap;
     let role = req.payload.role;
@@ -1468,7 +1476,7 @@ const TeamAddRoleMembers = async function (req, h) {
     if (!team) {
       throw `Team ${teamid} not found`;
     }
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
       throw new EmpError("NO_PERM", "You don't have permission to update this team");
     let tmap = team.tmap;
     let role = req.payload.role;
@@ -1521,7 +1529,7 @@ const TeamCopyRole = async function (req, h) {
     if (!team) {
       throw `Team ${teamid} not found`;
     }
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
       throw new EmpError("NO_PERM", "You don't have permission to update this team");
     let role = req.payload.role;
     let newrole = req.payload.newrole;
@@ -1548,7 +1556,7 @@ const TeamSetRole = async function (req, h) {
     if (!team) {
       throw `Team ${teamid} not found`;
     }
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
       throw new EmpError("NO_PERM", "You don't have permission to update this team");
     let role = req.payload.role.trim();
     let members = req.payload.members;
@@ -1574,7 +1582,7 @@ const TeamDeleteRole = async function (req, h) {
     if (!team) {
       throw `Team ${teamid} not found`;
     }
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
       throw new EmpError("NO_PERM", "You don't have permission to update this team");
     let role = req.payload.role;
 
@@ -1593,7 +1601,7 @@ const TeamDelete = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let teamid = req.payload.teamid;
     let team = await Team.findOne({ tenant: tenant, teamid: teamid });
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "delete")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "delete")))
       throw new EmpError("NO_PERM", "You don't have permission to delete this team");
 
     let ret = await Team.deleteOne({ tenant: tenant, teamid: teamid });
@@ -1606,7 +1614,7 @@ const TeamDelete = async function (req, h) {
 
 const TeamSearch = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "read")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read teams");
 
     let mappedField = req.payload.sort_field === "name" ? "teamid" : req.payload.sort_field;
@@ -1630,7 +1638,7 @@ const TeamSearch = async function (req, h) {
 
 const TeamCopyto = async function (req, h) {
   try {
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create team");
 
     let tenant = req.auth.credentials.tenant._id;
@@ -1657,7 +1665,7 @@ const TeamRename = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, teamid: req.payload.fromid };
     let team = await Team.findOne(filter);
-    if (!(await PermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
       throw new EmpError("NO_PERM", "You don't have permission to update this team");
     team.teamid = req.payload.teamid;
     team = await team.save();
@@ -1985,7 +1993,7 @@ const DoCallback = async function (req, h) {
   }
 };
 
-const MyPerm = async function (req, h) {
+const MySystemPerm = async function (req, h) {
   try {
     let instance = null;
     if (req.payload.instance_id) {
@@ -2006,7 +2014,7 @@ const MyPerm = async function (req, h) {
           throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
       }
     }
-    let perm = await PermController.hasPerm(
+    let perm = await SystemPermController.hasPerm(
       req.auth.credentials.email,
       req.payload.what,
       req.payload.instance_id ? instance : null,
@@ -2023,7 +2031,7 @@ const MyPerm = async function (req, h) {
 /**
  * Get member's permission
  */
-const MemberPerm = async function (req, h) {
+const MemberSystemPerm = async function (req, h) {
   try {
     let instance = null;
     let member_email = req.payload.member_email;
@@ -2054,7 +2062,7 @@ const MemberPerm = async function (req, h) {
           throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
       }
     }
-    let perm = await PermController.hasPerm(
+    let perm = await SystemPermController.hasPerm(
       member_email,
       req.payload.what,
       req.payload.instance_id ? instance : null,
@@ -2540,8 +2548,8 @@ module.exports = {
   ListGetItems,
   DoCallback,
   CodeTry,
-  MyPerm,
-  MemberPerm,
+  MySystemPerm,
+  MemberSystemPerm,
   DemoAPI,
   SeeItWork,
 };

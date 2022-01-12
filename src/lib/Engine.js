@@ -15,7 +15,7 @@ const DelayTimer = require("../database/models/DelayTimer");
 const OrgChartHelper = require("./OrgChartHelper");
 const lodash = require("lodash");
 const Tools = require("../tools/tools.js");
-const PermController = require("./PermController");
+const SystemPermController = require("./SystemPermController");
 const { ZMQ } = require("./ZMQ");
 const Cache = require("./Cache");
 const TimeZone = require("./timezone");
@@ -448,7 +448,7 @@ Engine.doWork = async function (email, todoid, tenant, doer, wfid, nodeid, route
   };
   //找到该Todo数据库对象
   let todo = await Todo.findOne(todo_filter);
-  if (!PermController.hasPerm(fact_email, "work", todo, "update"))
+  if (!SystemPermController.hasPerm(fact_email, "work", todo, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 
   if (Tools.isEmpty(todo)) {
@@ -756,10 +756,10 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   if (Tools.isEmpty(old_todo)) {
     throw new EmpError("WORK_NOT_REVOCABLE", "Work ST_DONE does not exist", { wfid, todoid });
   }
-  if (!PermController.hasPerm(email, "work", old_todo, "update"))
+  if (!SystemPermController.hasPerm(email, "work", old_todo, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
   let wf = await Workflow.findOne({ wfid: wfid });
-  if (!PermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
@@ -909,13 +909,13 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   if (todo.status !== "ST_RUN") {
     throw new EmpError("WORK_UNEXPECTED_STATUS", "Work status is not ST_RUN");
   }
-  if (!PermController.hasPerm(fact_email, "work", todo, "update"))
+  if (!SystemPermController.hasPerm(fact_email, "work", todo, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 
   if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
   let isoNow = Tools.toISOString(new Date());
   let wf = await Workflow.findOne({ wfid: wfid });
-  if (!PermController.hasPerm(fact_email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(fact_email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 
   let wfIO = await Parser.parse(wf.doc);
@@ -1242,6 +1242,7 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
       );
+      //tpRoot.find(`.link[from="${from_nodeid}"][to="${nodeid}"]`).addClass("ST_DONE");
       await Common.procNext(
         obj.tenant,
         teamid,
@@ -2128,7 +2129,7 @@ Engine.startWorkflow = async function (
 Engine.stopWorkflow = async function (email, tenant, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -2157,7 +2158,7 @@ Engine.stopWorkflow = async function (email, tenant, wfid) {
 
 Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, teamid, wftitle) {
   let old_wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
-  if (!PermController.hasPerm(email, "workflow", old_wf, "update"))
+  if (!SystemPermController.hasPerm(email, "workflow", old_wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let old_wfIO = await Parser.parse(old_wf.doc);
   let old_wfRoot = old_wfIO(".workflow");
@@ -2211,7 +2212,7 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
 
 Engine.destroyWorkflow = async function (email, tenant, wfid) {
   let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
-  if (!PermController.hasPerm(email, "workflow", wf, "delete"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "delete"))
     throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
   let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
   await Todo.deleteMany({ tenant: tenant, wfid: wfid });
@@ -2222,7 +2223,7 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
 Engine.setWorkflowPbo = async function (email, tenant, wfid, pbo) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   await Engine.setPbo(tenant, wfid, pbo);
   return pbo;
@@ -2262,7 +2263,7 @@ Engine.getWorkflowPbo = async function (email, tenant, wfid) {
 };
 
 Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
-  if (!PermController.hasPerm(email, "workflow", "", "read"))
+  if (!SystemPermController.hasPerm(email, "workflow", "", "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read workflow");
   filter.tenant = tenant;
   let option = {};
@@ -2272,7 +2273,7 @@ Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
 };
 
 Engine.workflowGetLatest = async function (email, tenant, filter) {
-  if (!PermController.hasPerm(email, "workflow", "", "read"))
+  if (!SystemPermController.hasPerm(email, "workflow", "", "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read workflow");
   filter.tenant = tenant;
   let wfs = await Workflow.find(
@@ -2308,7 +2309,7 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
   if (!work) {
     return {};
   }
-  if (!PermController.hasPerm(email, "work", work, "read"))
+  if (!SystemPermController.hasPerm(email, "work", work, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this work");
   let filter = { tenant: tenant, wfid: work.wfid };
   let wf = await Workflow.findOne(filter);
@@ -2660,7 +2661,7 @@ Engine.getStatusFromClass = function (node) {
 Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "read"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -2684,7 +2685,7 @@ Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
 Engine.pauseWorkflow = async function (email, tenant, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -2717,7 +2718,7 @@ Engine.pauseWorkflow = async function (email, tenant, wfid) {
 Engine.resumeWorkflow = async function (email, tenant, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -2803,7 +2804,7 @@ Engine.resumeDelayTimers = async function (tenant, wfid) {
 Engine.getKVars = async function (email, tenant, wfid, workid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!PermController.hasPerm(email, "workflow", wf, "read"))
+  if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -3106,7 +3107,7 @@ Engine.getTrack = async function (email, tenant, wfid, workid) {
   try {
     let wf_filter = { wfid: wfid };
     let wf = await Workflow.findOne(wf_filter);
-    if (!PermController.hasPerm(email, "workflow", wf, "read"))
+    if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
       throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
     let wfIO = await Parser.parse(wf.doc);
     let wfRoot = wfIO(".workflow");

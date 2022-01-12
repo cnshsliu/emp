@@ -37,7 +37,7 @@ const suuid = require("short-uuid");
 const Jimp = require("jimp");
 const { ZMQ } = require("../../lib/ZMQ");
 const internals = {};
-const PermController = require("../../lib/PermController");
+const SystemPermController = require("../../lib/SystemPermController");
 const { EmpError } = require("../../lib/EmpError");
 const Cache = require("../../lib/Cache");
 
@@ -143,7 +143,7 @@ internals.RegisterUser = async function (req, h) {
           orgmode: tenant.orgmode,
           timezone: tenant.timezone,
         },
-        perms: PermController.getMyGroupPerm(user.group),
+        perms: SystemPermController.getMyGroupPerm(user.group),
         avatar: "",
       },
     };
@@ -301,7 +301,7 @@ internals.LoginUser = async function (req, h) {
                 orgmode: user.tenant.orgmode,
                 timezone: user.tenant.timezone,
               },
-              perms: PermController.getMyGroupPerm(user.group),
+              perms: SystemPermController.getMyGroupPerm(user.group),
               avatar: user.avatar,
             },
           };
@@ -336,7 +336,7 @@ internals.RefreshUserSession = async function (req, h) {
             orgmode: user.tenant.orgmode,
             timezone: user.tenant.timezone,
           },
-          perms: PermController.getMyGroupPerm(user.group),
+          perms: SystemPermController.getMyGroupPerm(user.group),
           avatar: user.avatar,
         },
       };
@@ -576,7 +576,7 @@ internals.UpdateProfile = async function (req, h) {
           orgmode: tenant.orgmode,
           timezone: user.tenant.timezone,
         },
-        perms: PermController.getMyGroupPerm(user.group),
+        perms: SystemPermController.getMyGroupPerm(user.group),
         avatar: user.avatar,
       },
     };

@@ -1423,8 +1423,8 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/my/perm",
-    handler: Handlers.MyPerm,
+    path: "/my/sysperm",
+    handler: Handlers.MySystemPerm,
     config: {
       description: "Check my permission on object",
       tags: ["api"],
@@ -1444,8 +1444,8 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/member/perm",
-    handler: Handlers.MemberPerm,
+    path: "/member/sysperm",
+    handler: Handlers.MemberSystemPerm,
     config: {
       description: "Check org member's permission on object",
       tags: ["api"],
