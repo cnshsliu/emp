@@ -170,4 +170,24 @@ internals.removeOrgRelatedCache = async function (orgid, cacheType) {
   }
 };
 
+internals.getVisi = async function (tplid) {
+  debugger;
+  let visiKey = "visi_" + tplid;
+  let visiPeople = await asyncRedisClient.get(visiKey);
+  debugger;
+  return visiPeople;
+};
+internals.setVisi = async function (tplid, visiPeople) {
+  debugger;
+  let visiKey = "visi_" + tplid;
+  if (visiPeople.length > 0) {
+    await asyncRedisClient.set(visiKey, visiPeople);
+    await asyncRedisClient.expire(visiKey, 24 * 60 * 60);
+  }
+};
+internals.removeVisi = async function (tplid) {
+  let visiKey = "visi_" + tplid;
+  await asyncRedisClient.del(visiKey);
+};
+
 module.exports = internals;

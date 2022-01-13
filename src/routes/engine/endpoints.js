@@ -117,7 +117,7 @@ internals.endpoints = [
       },
     },
   },
-  {
+  /* {
     method: "POST",
     path: "/template/list",
     handler: Handlers.TemplateList,
@@ -134,7 +134,7 @@ internals.endpoints = [
         validator: Joi,
       },
     },
-  },
+  }, */
   {
     method: "POST",
     path: "/template/tplid/list",
@@ -342,6 +342,25 @@ internals.endpoints = [
         payload: {
           tplid: Joi.string().required(),
           visi: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/template/clearvisi",
+    handler: Handlers.TemplateClearVisi,
+    config: {
+      description: "clear template visibility",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
         },
         validator: Joi,
       },
@@ -621,7 +640,7 @@ internals.endpoints = [
     },
   },
 
-  {
+  /* {
     method: "POST",
     path: "/workflow/list",
     handler: Handlers.WorkflowList,
@@ -640,7 +659,7 @@ internals.endpoints = [
         validator: Joi,
       },
     },
-  },
+  }, */
   {
     method: "POST",
     path: "/workflow/search",

@@ -25,6 +25,11 @@ const Fs = require("fs");
 const Cache = require("../../lib/Cache");
 
 const EmailSchema = Joi.string().email();
+const asyncFilter = async (arr, predicate) => {
+  const results = await Promise.all(arr.map(predicate));
+
+  return arr.filter((_v, index) => results[index]);
+};
 
 // async function initServer(){
 //   await Engine.serverInit();
@@ -612,6 +617,7 @@ const WorkflowSearch = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
+    let me = await User.findOne({ _id: req.auth.credentials._id });
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read workflow");
     let mappedField = req.payload.sort_field === "name" ? "wftitle" : req.payload.sort_field;
@@ -662,13 +668,50 @@ const WorkflowSearch = async function (req, h) {
       }
     }
 
+    /*
+    db.todos.aggregate([
+      { $match: { doer: "suguotai@xihuanwu.com" } },
+      { $group: { _id: "$tplid", count: { $sum: 1 } } },
+    ]);
+     */
+    //如果当前用户不是ADMIN, 则需要检查进程是否与其相关
+    if (me.group !== "ADMIN") {
+      let todoGroup = await Todo.aggregate([
+        { $match: { doer: myEmail } },
+        { $group: { _id: "$tplid", count: { $sum: 1 } } },
+      ]);
+      let templatesIamIn = todoGroup.map((x) => x._id);
+
+      //如果没有todo与template相关,也需要看是否是启动者
+      //因为,流程的启动者,也许刚好工作都是丢给别人的
+      if (templatesIamIn.length === 0) {
+        filter.starter = myEmail;
+        //return { total: 0, objs: [] };
+      } else {
+        //如果有相关todo与template相关,
+        //则需要同时考虑todo相关 和 starter相关
+        //filter.tplid = { $in: templatesIamIn };
+        filter[$or] = [{ tplid: { $in: templatesIamIn } }, { starter: myEmail }];
+      }
+    }
+
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
     console.log(
       `[Workflow Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
     );
-    let total = await Workflow.find(filter).countDocuments();
+    /* let total = await Workflow.find(filter).countDocuments();
+    let ret = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit); */
+
+    let allObjs = await Workflow.find(filter, { doc: 0 });
+    allObjs = await asyncFilter(allObjs, async (x) => {
+      return await Engine.checkVisi(tenant, x.tplid, myEmail);
+    });
+    let total = allObjs.length;
     let ret = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit);
+    ret = await asyncFilter(ret, async (x) => {
+      return await Engine.checkVisi(tenant, x.tplid, myEmail);
+    });
     return { total, objs: ret };
   } catch (err) {
     console.error(err);
@@ -1027,9 +1070,9 @@ const TemplateList = async function (req, h) {
   try {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read template");
-    let ret = await Template.find({ tenant: req.auth.credentials.tenant._id }, { doc: 0 }).sort(
-      "-updatedAt"
-    );
+    let ret = await Template.find({ tenant: req.auth.credentials.tenant._id }, { doc: 0 })
+      .sort("-updatedAt")
+      .lean();
     return ret;
   } catch (err) {
     console.error(err);
@@ -1072,13 +1115,14 @@ const TemplateIdList = async function (req, h) {
 
 const TemplateSearch = async function (req, h) {
   try {
+    let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "no permission to read template");
 
     let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
     let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
-    let filter = { tenant: req.auth.credentials.tenant._id, ins: false };
+    let filter = { tenant: tenant, ins: false };
     let skip = 0;
     if (req.payload.skip) skip = req.payload.skip;
     let limit = 10000;
@@ -1131,8 +1175,21 @@ const TemplateSearch = async function (req, h) {
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
 
-    let total = await Template.find(filter).countDocuments();
+    //模版的搜索结果, 需要调用Engine.checkVisi检查模版是否对当前用户可见
+    let allObjs = await Template.find(filter, { doc: 0 });
+    allObjs = await asyncFilter(allObjs, async (x) => {
+      return await Engine.checkVisi(tenant, x.tplid, myEmail);
+    });
+    let total = allObjs.length;
     let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit);
+    ret = await asyncFilter(ret, async (x) => {
+      return await Engine.checkVisi(tenant, x.tplid, myEmail);
+    });
+
+    ret = ret.map((x) => {
+      x.tags = x.tags.filter((t) => t.owner === myEmail);
+      return x;
+    });
     return { total, objs: ret };
   } catch (err) {
     console.error(err);
@@ -1200,20 +1257,48 @@ const TemplateSetVisi = async function (req, h) {
     let myEmail = req.auth.credentials.email;
     let author = myEmail;
 
+    let tplid = req.payload.tplid;
+    await Cache.removeVisi(tplid);
     let tpl = await Template.findOneAndUpdate(
-      { tenant: tenant, author: author, tplid: req.payload.tplid },
+      { tenant: tenant, author: author, tplid: tplid },
       { $set: { visi: req.payload.visi } },
       { upsert: false, new: true }
     );
     if (!tpl) {
       throw new EmpError("NO_TPL", "No owned template found");
     }
-    tpl = await Template.findOne(
-      { tenant: tenant, author: author, tplid: req.payload.tplid },
-      { doc: 0 }
-    );
+    tpl = await Template.findOne({ tenant: tenant, author: author, tplid: tplid }, { doc: 0 });
 
     return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * Clear a template visibility setting from template
+ *
+ * @param {...} req -
+ * @param {...} h -
+ *
+ * @return {...}
+ */
+const TemplateClearVisi = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let author = myEmail;
+
+    let tplid = req.payload.tplid;
+    await Cache.removeVisi(tplid);
+    let tpl = await Template.findOneAndUpdate(
+      { tenant: tenant, author: author, tplid: tplid },
+      { $set: { visi: undefined } },
+      { upsert: false, new: true }
+    );
+
+    return h.response("Done");
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -2466,6 +2551,14 @@ const ListGetItems = async function (req, h) {
   }
 };
 
+/**
+ * const CodeTry = async() Try run code in template designer
+ *
+ * @param {...} req- req.payload.code
+ * @param {...} h -
+ *
+ * @return {...}
+ */
 const CodeTry = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -2507,6 +2600,7 @@ module.exports = {
   TemplateDownload,
   TemplateImport,
   TemplateSetVisi,
+  TemplateClearVisi,
   WorkflowRead,
   WorkflowDumpInstemplate,
   WorkflowStart,

@@ -3244,6 +3244,40 @@ Engine.undelegate = async function (tenant, delegator_email, ids) {
   await Delegation.deleteMany(filter);
 };
 
+Engine.checkVisi = async function (tenant, tplid, email) {
+  let ret = false;
+  let tpl = await Template.findOne(
+    { tenant: tenant, tplid: tplid },
+    { author: 1, visi: 1, _id: 0 }
+  );
+  // 如果找不到template,则设置为 visiPeople 为空数组
+  let visiPeople = [];
+  if (!tpl) {
+    visiPeople = [];
+  } else if (tpl.author === email) {
+    visiPeople = [email];
+  } else {
+    //所要检查的用户不是模版作者
+    if (Tools.isEmpty(tpl.visi)) {
+      //如果没有设置visi，则缺省为所有用户可见
+      visiPeople = ["all"];
+    } else {
+      let tmp = await Engine.explainPds({
+        tenant: tenant,
+        rds: tpl.visi,
+        //调用explainPds时，不带wfid, 因为对模版的访问权限跟wfprocess无关，
+        //wfid: null,
+        //缺省用户使用模版的作者
+        email: tpl.author,
+      });
+      visiPeople = tmp.map((x) => x.uid);
+    }
+  }
+  ret = visiPeople.includes(email) || visiPeople.includes("all");
+  console.log(ret, tplid, email);
+  return ret;
+};
+
 Engine.init = Engine.once(async function () {
   await Engine.serverInit();
   await Client.clientInit();
