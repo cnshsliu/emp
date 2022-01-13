@@ -2,7 +2,6 @@ const Jimp = require("jimp");
 const zlib = require("zlib");
 const Moment = require("moment");
 const { ZMQ } = require("../lib/ZMQ");
-const { Parser } = require("../lib/Parser");
 const sprintf = require("sprintf-js").sprintf;
 const EmpConfig = require("../config/emp");
 const replaceReg = / |　/gi;
@@ -219,7 +218,7 @@ const Tools = {
         CMD: "SendSystemMail",
         recipients: process.env.TEST_RECIPIENTS || email,
         subject: `[EMP] Invitation from ${admin_username}`,
-        html: Parser.codeToBase64(mailbody),
+        html: Tools.codeToBase64(mailbody),
       })
     );
   },
@@ -235,7 +234,7 @@ const Tools = {
         CMD: "SendSystemMail",
         recipients: process.env.TEST_RECIPIENTS || email,
         subject: "[EMP] Please register Metatocome",
-        html: Parser.codeToBase64(mailbody),
+        html: Tools.codeToBase64(mailbody),
       })
     );
   },

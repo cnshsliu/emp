@@ -1,8 +1,13 @@
 const zmq = require("zeromq");
 
 const Mailman = require("./Mailman");
-const { Parser } = require("./Parser.js");
 
+const codeToBase64 = function (code) {
+  return Buffer.from(code).toString("base64");
+};
+const base64ToCode = function (base64) {
+  return Buffer.from(base64, "base64").toString("utf-8");
+};
 const ZMQ = {
   server: {},
   client: {},
@@ -49,16 +54,9 @@ ZMQ.client.clientInit = async function () {
     if (tmp.CMD === "SendSystemMail") {
       console.log("Call Mailman.SimpleSend", tmp.recipients, tmp.subject);
       setTimeout(async () => {
-        await Mailman.SimpleSend(
-          tmp.recipients,
-          "",
-          "",
-          tmp.subject,
-          Parser.base64ToCode(tmp.html)
-        );
+        await Mailman.SimpleSend(tmp.recipients, "", "", tmp.subject, base64ToCode(tmp.html));
       });
     } else if ((tmp.CMD = "SendTenantMail")) {
-      console.log(Parser);
       setTimeout(async () => {
         try {
           await Mailman.mail(
@@ -68,7 +66,7 @@ ZMQ.client.clientInit = async function () {
             tmp.cc,
             tmp.bcc,
             tmp.subject,
-            Parser.base64ToCode(tmp.html)
+            base64ToCode(tmp.html)
           );
         } catch (e) {
           console.error(e);

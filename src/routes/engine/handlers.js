@@ -346,12 +346,18 @@ const TemplateDeleteByName = async function (req, h) {
 
 const WorkflowRead = async function (req, h) {
   try {
+    let myEmail = req.auth.credentials.email;
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
     let wf = await Workflow.findOne(filter).lean();
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
     wf.beginat = wf.createdAt;
-    wf.history = await Engine.getWfHistory(req.auth.credentials.tenant._id, req.payload.wfid, wf);
+    wf.history = await Engine.getWfHistory(
+      myEmail,
+      req.auth.credentials.tenant._id,
+      req.payload.wfid,
+      wf
+    );
     return wf;
   } catch (err) {
     console.error(err);
@@ -1307,12 +1313,9 @@ const TemplateClearVisi = async function (req, h) {
 const TemplateDownload = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
-    //console.log(filter);
     let tpl = await Template.findOne(filter);
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
-    //console.log(tpl.doc);
-    //const response = h.response(tpl.doc);
     return (
       h
         .response(tpl.doc)

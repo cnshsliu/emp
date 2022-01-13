@@ -606,7 +606,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       //Move route from attr to mongo
       todo.route = route;
     }
-    Parser.setVars(workNode, kvars, doer);
+    await Parser.setVars(workNode, kvars, doer);
 
     wf.doc = wfIO.html();
     await wf.save();
@@ -719,7 +719,7 @@ Engine.doCallback = async function (cbp, payload) {
   workNode.addClass("ST_DONE");
   workNode.attr("doneat", isoNow);
   if (payload.kvars) {
-    Parser.setVars(workNode, payload.kvars, "EMP");
+    await Parser.setVars(workNode, payload.kvars, "EMP");
   }
 
   wf.doc = wfIO.html();
@@ -997,7 +997,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     comment = Engine.compileContent(wfRoot, kvars, comment);
     /* workNode.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`); */
   }
-  Parser.setVars(workNode, kvars, fact_doer);
+  await Parser.setVars(workNode, kvars, fact_doer);
   wf.doc = wfIO.html();
   await wf.save();
 
@@ -1031,6 +1031,7 @@ Client.yarkNode = async function (obj) {
 
   //TODO: save  to log
 
+  let tenant = obj.tenant;
   let filter = { tenant: obj.tenant, wfid: obj.wfid };
   let teamid = obj.teamid;
   let wf = await Workflow.findOne(filter);
@@ -1041,7 +1042,6 @@ Client.yarkNode = async function (obj) {
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  console.log(JSON.stringify(obj));
   let tpNode = tpRoot.find(obj.selector);
   if (tpNode.length < 1) {
     console.error(obj.selector, " not found, direct to #end");
@@ -1086,11 +1086,13 @@ Client.yarkNode = async function (obj) {
     //TODO: INFORM email implementation
     //TODO: get smtp settting from tenant
     //TODO: node.template replacement with handlebars library
+    //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
     let doer = await Common.getDoer(
       obj.tenant,
       teamid,
       tpNode.attr("role"),
-      wfRoot.attr("starter")
+      wfRoot.attr("starter"),
+      wfRoot
     );
     if (Array.isArray(doer) === false) {
       console.error("Common.getDoer should return array", 5);
@@ -1109,7 +1111,7 @@ Client.yarkNode = async function (obj) {
     try {
       let tmp_subject = tpNode.find("subject").first().text();
       let tmp_body = tpNode.find("content").first().text();
-      let all_kvars = Parser.getVars(wfRoot);
+      let all_kvars = await Parser.getVars("EMP", wfRoot, obj.tenant);
       if (Tools.hasValue(tmp_subject)) {
         mail_subject = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_subject));
       }
@@ -1164,7 +1166,7 @@ Client.yarkNode = async function (obj) {
     console.log("===PARSED==");
     console.log(parsed_code);
     console.log("===========");
-    let all_kvars = Parser.getVars(wfRoot);
+    let all_kvars = await Parser.getVars("EMP", wfRoot, obj.tenant);
     let codeRetString = '{"RET":"DEFAULT"}';
     let codeRetObj = {};
     let codeRetRoute = "DEFAULT";
@@ -1218,10 +1220,6 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${kvarToAdd}${innerTeamToAdd}</div>`
       );
-      //console.log("SCRIPT by", codeRetRoute);
-      //Parser.setVars(wfRoot.children('#' + workid), Parser.getVars(tpNode));
-      //let switch_result = "need_director";
-      // console.log(`runcode result ${switch_result}`);
       await Common.procNext(
         obj.tenant,
         teamid,
@@ -1330,7 +1328,7 @@ Client.yarkNode = async function (obj) {
       `<div class="work GROUND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
     );
   } else if (tpNode.hasClass("SUB")) {
-    let parent_vars = Parser.getVars(wfRoot);
+    let parent_vars = await Parser.getVars("EMP", wfRoot, obj.tenant);
     let pbo = await Engine.getPbo(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
@@ -1406,8 +1404,8 @@ Client.yarkNode = async function (obj) {
       parent_work.removeClass("ST_RUN");
       parent_work.addClass("ST_DONE");
       //Put child kvars to parent_work node in parent workflow
-      let child_kvars = Parser.getVars(wfRoot);
-      Parser.setVars(parent_work, child_kvars);
+      let child_kvars = await Parser.getVars("EMP", wfRoot, obj.tenant);
+      await Parser.setVars(parent_work, child_kvars);
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
       let nexts = [];
       //console.log(`Child kvars ${JSON.stringify(child_kvars)}`);
@@ -1435,9 +1433,10 @@ Client.yarkNode = async function (obj) {
     //An Action node which should be done by person
     //ACTION
     //Reset team if there is team defination in tpNode.attr("role");
-    let teamInRDS = Common.getTeamInRDS(tpNode.attr("role"));
+    let teamInRDS = Parser.getTeamInRDS(tpNode.attr("role"));
     teamid = teamInRDS ? teamInRDS : teamid;
     //Get doers with teamid;
+    //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
     let doerOrDoers = await Common.getDoer(
       obj.tenant,
       teamid,
@@ -1462,7 +1461,10 @@ Client.yarkNode = async function (obj) {
     //     "role"
     //   )}" doer="${doer}"></div>`
     // );
-    Parser.setVars(wfRoot.children("#" + workid), Parser.getVars(tpNode));
+    await Parser.setVars(
+      wfRoot.children("#" + workid),
+      await Parser.getVars("EMP", tpNode, obj.tenant)
+    );
     //建立worklist中的work
     let tpNodeTitle = tpNode.find("p").text().trim();
     if (tpNodeTitle.length === 0) {
@@ -1632,7 +1634,6 @@ Common.procNext = async function (
   let route_param = route;
   let linkSelector = '.link[from="' + from_nodeid + '"]';
   route = Client.formatRoute(route);
-  console.log("procNext from", from_nodeid, "route", JSON.stringify(route));
   let routingOptions = [];
   tpRoot.find(linkSelector).each(function (i, el) {
     //SEE HERE
@@ -1640,7 +1641,6 @@ Common.procNext = async function (
     option = Tools.isEmpty(option) ? "DEFAULT" : option;
     if (routingOptions.indexOf(option) < 0) routingOptions.push(option);
   });
-  //console.log("Route", route, "routingOptions.length: ", routingOptions.length);
   if (routingOptions.length === 0) {
     //This node has no following node, it's a to-be-grounded node
     //只要linkSelector选到了节点，至少有一个option会放到routingOptions数组中
@@ -1661,7 +1661,6 @@ Common.procNext = async function (
     console.error("route '" + JSON.stringify(route) + "' is replaced with DEFAULT");
     route = "DEFAULT";
   }
-  //console.log(tpRoot.toString());
   let nodes = tpRoot.find(linkSelector);
   let parallel_number = 0;
   let parallel_id = uuidv4();
@@ -1697,9 +1696,6 @@ Common.procNext = async function (
         //需要设置parallel_id
         an.parallel_id = parallel_id;
       }
-      console.log(
-        `[Workflow ROUT] ${wfid} route from ${an.from_nodeid} to ${an.selector} on ->${route}`
-      );
       nexts.push(an);
     } else {
     }
@@ -2008,7 +2004,6 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
       //先对例外信息进行按行split
       let errArr = e.message.split("\n");
 
-      //console.log(e.message);
       //如果第一行是Command failed,
       if (errArr[0].startsWith("Command failed")) {
         //则去掉前两行
@@ -2347,15 +2342,15 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
 
-  return await Engine.__getWorkFullInfo(tenant, tpRoot, wfRoot, work.wfid, todoid);
+  return await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, work.wfid, todoid);
 };
 
-Engine.getWfHistory = async function (tenant, wfid, wf) {
+Engine.getWfHistory = async function (email, tenant, wfid, wf) {
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
 
-  return await Engine.__getWorkflowWorksHistory(tenant, tpRoot, wfRoot, wfid);
+  return await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
 };
 
 const splitComment = function (str) {
@@ -2372,6 +2367,7 @@ const splitComment = function (str) {
 /**
  * Engine.__getWorkFullInfo = async() Get the detail information about a work
  *
+ * @param {...} email - the user
  * @param {...} tenant - the Tenant
  * @param {...} tpRoot -  the root of template
  * @param {...} wfRoot - the root of workflow
@@ -2380,7 +2376,7 @@ const splitComment = function (str) {
  *
  * @return {...}
  */
-Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid) {
+Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, todoid) {
   let todo_filter = { tenant: tenant, wfid: wfid, todoid: todoid };
   let work = await Todo.findOne(todo_filter);
   if (!work) {
@@ -2420,12 +2416,12 @@ Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid)
           },
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
-  ret.kvars = Parser.getVars(workNode);
+  ret.kvars = await Parser.getVars(email, workNode, tenant);
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};
   //不包括那些被放上去的var定义，这些定义的doer是EMP;
   //Parser.getVars第二个参数，是包含哪些doer， 第三个参数，是不包含哪些doers
-  ret.wf.kvars = Parser.getVars(wfRoot, [], ["EMP"]);
+  ret.wf.kvars = await Parser.getVars(email, wfRoot, tenant, [], ["EMP"]);
   ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
   ret.wf.starter = wfRoot.attr("starter");
   ret.wf.wftitle = wfRoot.attr("wftitle");
@@ -2437,7 +2433,7 @@ Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid)
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
 
   let tmp = Parser.base64ToCode(Common.getInstruct(tpRoot, work.nodeid));
-  let all_kvars = Parser.getVars(wfRoot);
+  let all_kvars = await Parser.getVars(email, wfRoot, tenant);
   tmp = Engine.compileContent(wfRoot, all_kvars, tmp);
   ret.instruct = Parser.codeToBase64(tmp);
 
@@ -2473,7 +2469,7 @@ Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid)
         : false;
   }
 
-  ret.wf.history = await Engine.__getWorkflowWorksHistory(tenant, tpRoot, wfRoot, wfid);
+  ret.wf.history = await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
 
   return ret;
 };
@@ -2481,6 +2477,7 @@ Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid)
 /**
  * Engine.__getWorkflowWorksHistory = async() Get the completed works of a workflow
  *
+ * @param {...} email -
  * @param {...} tenant -
  * @param {...} tpRoot -
  * @param {...} wfRoot -
@@ -2493,7 +2490,7 @@ Engine.__getWorkFullInfo = async function (tenant, tpRoot, wfRoot, wfid, todoid)
  * kvarsArr}
  * ]
  */
-Engine.__getWorkflowWorksHistory = async function (tenant, tpRoot, wfRoot, wfid) {
+Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot, wfid) {
   let ret = [];
   let tmpRet = [];
   //let todo_filter = { tenant: tenant, wfid: wfid, status: /ST_DONE|ST_RETURNED|ST_REVOKED/ };
@@ -2527,7 +2524,7 @@ Engine.__getWorkflowWorksHistory = async function (tenant, tpRoot, wfRoot, wfid)
     if (works[i].route) historyEntry.route = works[i].route;
     /* historyEntry.kvars = Parser.getVars(workNode);
     historyEntry.kvarsArr = Parser.kvarsToArray(historyEntry.kvars, workid); */
-    let kvars = Parser.getVars(workNode);
+    let kvars = await Parser.getVars(email, workNode, tenant);
     historyEntry.kvarsArr = Parser.kvarsToArray(kvars);
     tmpRet.push(historyEntry);
   }
@@ -2842,9 +2839,9 @@ Engine.getKVars = async function (email, tenant, wfid, workid) {
   let wfRoot = wfIO(".workflow");
   if (workid) {
     let work = wfRoot.find(`#${workid}`);
-    return Parser.getVars(work);
+    return await Parser.getVars(email, work, tenant);
   } else {
-    return Parser.getVars(wfRoot);
+    return await Parser.getVars(email, wfRoot, tenant);
   }
 };
 
@@ -2864,32 +2861,6 @@ Engine.getActiveDelayTimers = async function (tenant, wfid) {
   return await DelayTimer.find(filter);
 };
 
-async function addOneUserToRoleResolver(arr, user) {
-  try {
-    if (!user) return;
-    let uid = null;
-    //找到用户的UID
-    if (typeof user === "object" && user.uid) {
-      uid = user.uid;
-    } else if (typeof user === "string") {
-      uid = user;
-    }
-    //找到用户的邮箱, 如果已经存在了，就不再加入
-    let userEmails = arr.map((x) => x.uid);
-    if (userEmails.includes(uid)) return arr;
-
-    if (typeof user === "object" && user.uid) {
-      arr.push(user);
-    } else if (typeof user === "string") {
-      let username = await Cache.getUserName(user);
-      arr.push({ uid: user, cn: username });
-    }
-    return arr;
-  } catch (err) {
-    return arr;
-  }
-}
-
 /**
  * Common.getDoer = async() 计算工作执行者
  *
@@ -2903,228 +2874,26 @@ async function addOneUserToRoleResolver(arr, user) {
  *
  * @return {...}
  */
-Engine.getDoer = async function (tenant, teamid, role, starter) {
-  return await Common.getDoer(tenant, teamid, role, starter);
+Engine.getDoer = async function (tenant, teamid, role, starter, wfRoot = null) {
+  return await Parser.getDoer(tenant, teamid, rds, starter, wfRoot);
 };
 //
-//Get Team define from RDS. a Team definition starts with "T:"
-Common.getTeamInRDS = function (rds) {
-  let ret = null;
-  if (Tools.isEmpty(rds)) {
-    return ret;
-  }
-  let arr = Parser.splitStringToArray(rds);
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i].startsWith("T:")) {
-      ret = arr[i].substring(2);
-    }
-  }
-  return ret;
-};
 
 /**
- * Common.getDoer = async() Get Doer from RDS
+ * Common.getDoer = async()
  *
+ * wfRoot不为空，是为了从wfRoot中找innerTeam
+ * 目前只在yarkNode中的INFORM和ACTION中用到
  * @param {...} Common.getDoer = asynctenant -
  * @param {...} teamid -
  * @param {...} rds -
  * @param {...} starter -
- * @param {...} wf - can be null
+ * @param {...} wfRoot = null -
  *
  * @return {...}
  */
-Common.getDoer = async function (tenant, teamid, rds, starter, wf = null) {
-  //If there is team definition in RDS, use it.
-  //if RDS is empty, always use starter
-  if (Tools.isEmpty(rds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];
-  //RDS-level team is defined as "T:team_name"
-  let teamInRDS = Common.getTeamInRDS(rds);
-  //Use RDS-level team if it exists, use process-level team if not
-  teamid = teamInRDS ? teamInRDS : teamid;
-
-  let ret = [];
-  let starterEmailSuffix = starter.substring(starter.indexOf("@"));
-  let arr = Parser.splitStringToArray(rds);
-  let tmp = [];
-  for (let i = 0; i < arr.length; i++) {
-    let rdsPart = arr[i].trim();
-    tmp = [];
-    if (rdsPart.startsWith("L:")) {
-      tmp = await Common.getLeaderByPosition(tenant, starter, rdsPart);
-    } else if (rdsPart.startsWith("P:")) {
-      tmp = await Common.getPeerByPosition(tenant, starter, rdsPart);
-    } else if (rdsPart.startsWith("Q:")) {
-      tmp = await Common.getStaffByQuery(tenant, starter, rdsPart);
-    } else if (rdsPart.startsWith("@")) {
-      let email = `${rdsPart.substring(1)}${starterEmailSuffix}`;
-      let cn = await Cache.getUserName(email);
-      if (cn === "USER_NOT_FOUND") tmp = [];
-      else tmp = [{ uid: `${email}`, cn: cn }];
-    } else if (rdsPart.startsWith("T:")) {
-      tmp = []; //Bypass Team Difinition
-    } else {
-      tmp = await Common.getDoerByTeam(tenant, teamid, rdsPart, starter, wf);
-    }
-    if (Array.isArray(tmp)) {
-      for (let i = 0; i < tmp.length; i++) {
-        ret = await addOneUserToRoleResolver(ret, tmp[i]);
-      }
-    } else {
-      if (typeof tmp === "string") {
-        //There must be some wrong in my coding..., track and fix it when see this error.
-        console.error(
-          "Engine.getDoer, team",
-          teamid,
-          " rds ",
-          rds,
-          " got an non-object result: ",
-          tmp
-        );
-      } else {
-        ret = await addOneUserToRoleResolver(ret, tmp);
-      }
-    }
-  }
-  return ret;
-};
-
-/**
- * Get specified positions (normally, leaders) at the upper or the same org level
- *
- * @param {...} Common.getLeaderByPosition = asynctenant -
- * @param {...} uid -
- * @param {...} rdsPart -
- *
- * @return {...} An array of {uid, cn}
- */
-Common.getLeaderByPosition = async function (tenant, uid, rdsPart) {
-  let positions = rdsPart.startsWith("L:") ? rdsPart.substring(2) : rdsPart;
-  let leaders = await OrgChartHelper.getUpperOrPeerByPosition(tenant, uid, positions);
-  let ret = leaders.map((x) => {
-    return { uid: x.uid, cn: x.cn };
-  });
-  return ret;
-};
-
-/**
- * Get peer of positions in the same org level
- *
- * @param {...} tenant -
- * @param {...} uid - current user
- * @param {...} rdsPart - RDS part
- *
- * @return {...} An array of {uid, cn}
- */
-Common.getPeerByPosition = async function (tenant, uid, rdsPart) {
-  let positions = rdsPart.startsWith("P:") ? rdsPart.substring(2) : rdsPart;
-  let leaders = await OrgChartHelper.getPeerByPosition(tenant, uid, positions);
-  let ret = leaders.map((x) => {
-    return { uid: x.uid, cn: x.cn };
-  });
-  return ret;
-};
-
-/**
- * Get staff from a Orgchart Query RDS Part
- *
- * @param {...} Common.getStaffByQuery = asynctenant -
- * @param {...} rdsPart -
- * @param {...} starter -
- *
- * @return {...} An array of {uid, cn}
- */
-Common.getStaffByQuery = async function (tenant, uid, rdsPart) {
-  let positions = rdsPart.startsWith("Q:") ? rdsPart.substring(2) : rdsPart;
-  let staffs = await OrgChartHelper.getOrgStaff(tenant, uid, positions);
-  let ret = staffs.map((x) => {
-    return { uid: x.uid, cn: x.cn };
-  });
-  return ret;
-};
-
-Common.getDoerByTeam = async function (tenant, teamid, rdsPart, starter, wf = null) {
-  let ret = [];
-  let roles = rdsPart
-    .split(":")
-    .map((x) => x.trim())
-    .filter((x) => x.length > 0);
-  for (let i = 0; i < roles.length; i++) {
-    ret = ret.concat(await Common.getSingleRoleDoerByTeam(tenant, teamid, roles[i], starter, wf));
-  }
-  return ret;
-};
-
-Common.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter, wf = null) {
-  let ret = [];
-  aRole = aRole.trim();
-  let doer = starter;
-  //没有设Team或者没有设Role，就用starter
-  //因为这是从Team中取数据，所以，当Teamid等于NOTSET或者DEFAULT的时候，直接返回stater是合理的
-  if (Tools.isEmpty(aRole) || aRole === "DEFAULT") {
-    ret = [{ uid: starter, cn: await Cache.getUserName(starter) }];
-    return ret;
-  }
-  if (wf) {
-    //search inner team
-    let innerTeamDef = {};
-    let allInnerTeam = wf.find(".innerteam");
-    for (let i = 0; i < allInnerTeam.length; i++) {
-      try {
-        innerTeamDef = lodash.assignIn(
-          innerTeamDef,
-          JSON.parse(Parser.base64ToCode(Cheerio(allInnerTeam.get(i)).text()))
-        );
-      } catch (e) {
-        console.log(e);
-      }
-    }
-    //如果在wf的innerteam中找到了这个aRole，就直接使用这个aRole来返回，
-    if (innerTeamDef[aRole]) {
-      if (innerTeamDef[aRole] !== "" && innerTeamDef[aRole].toLowerCase() !== "noinner") {
-        let tmparr = Parser.splitStringToArray(innerTeamDef[aRole]);
-        ret = tmparr;
-        return ret;
-      }
-    }
-  }
-  if (Tools.isEmpty(teamid) || Tools.isEmpty(aRole) || teamid === "NOTSET" || aRole === "DEFAULT") {
-    return [{ uid: starter, cn: await Cache.getUserName(starter) }];
-  }
-  try {
-    //找出团队 team
-    let filter = { tenant: tenant, teamid: teamid };
-    let team = await Team.findOne(filter);
-    //找出team定义中，角色aRole对应的人
-    if (team) {
-      let roleParticipant = team.tmap[aRole];
-      if (Tools.isEmpty(roleParticipant)) {
-        //如果aRole对应的是空，则使用starter
-        doer = starter;
-      } else {
-        if (lodash.isArray(roleParticipant) === false) {
-          console.warning("Tmap ", roleParticipant, " is not an array");
-          doer = starter;
-        } else {
-          if (roleParticipant.length === 0) {
-            //如果这个角色，在Team中没有映射，则使用Starter
-            doer = starter;
-          } else {
-            doer = roleParticipant;
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.debug(err);
-  }
-  if (typeof doer === "string") {
-    ret = [{ uid: doer, cn: await Cache.getUserName(doer) }];
-  } else if (Array.isArray(doer)) {
-    ret = doer;
-  } else {
-    console.error("Something went wrong here, doer should be array");
-  }
-  return ret;
+Common.getDoer = async function (tenant, teamid, rds, starter, wfRoot = null) {
+  return await Parser.getDoer(tenant, teamid, rds, starter, wfRoot);
 };
 
 /**
@@ -3274,7 +3043,6 @@ Engine.checkVisi = async function (tenant, tplid, email) {
     }
   }
   ret = visiPeople.includes(email) || visiPeople.includes("all");
-  console.log(ret, tplid, email);
   return ret;
 };
 
