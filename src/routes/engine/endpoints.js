@@ -820,7 +820,7 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/work/explain/pds",
+    path: "/explain/pds",
     handler: Handlers.WorkExplainPds,
     config: {
       description: "Work Participatn Definiton String explain",
@@ -831,8 +831,10 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          wfid: Joi.string().optional(),
           rds: Joi.string().required(),
+          teamid: Joi.string().optional().allow(""),
+          email: Joi.string().optional(),
+          wfid: Joi.string().optional(),
         },
         validator: Joi,
       },
@@ -1603,27 +1605,6 @@ internals.endpoints = [
         payload: {
           ou: Joi.string().required(),
           include: Joi.boolean().required(),
-        },
-        validator: Joi,
-      },
-    },
-  },
-  {
-    method: "POST",
-    path: "/action/getdoers",
-    handler: Handlers.ActionGetDoers,
-    config: {
-      description: "Check staffs within orgchart",
-      tags: ["api"],
-      auth: "token",
-      validate: {
-        headers: Joi.object({
-          Authorization: Joi.string(),
-        }).unknown(),
-        payload: {
-          role: Joi.string().trim().required(),
-          try_with_teamid: Joi.string().required().allow(""),
-          try_with_email: Joi.string().required(),
         },
         validator: Joi,
       },

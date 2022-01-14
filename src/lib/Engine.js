@@ -873,22 +873,27 @@ Engine.addAdhoc = async function (payload) {
 };
 
 /**
- * Engine.explainPds = async() Explain RDS
+ * Engine.explainPds = async() Explain RDS. payload一共携带四个参数，wfid, teamid, uid, rds, 除rds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
  *
- * @param {...} payload: {tenant, wfid, rds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user email
+ * @param {...} payload: {tenant, wfid, rds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user uid
  *
  * @return {...}
  */
 Engine.explainPds = async function (payload) {
   let theTeamid = null;
   let theUser = "";
+  //使用哪个theTeam， theUser？ 如果有wfid，则
   if (payload.wfid) {
     let filter = { tenant: payload.tenant, wfid: payload.wfid };
     let wf = await Workflow.findOne(filter);
     theTeamid = wf.teamid;
     theUser = wf.starter;
   } else {
-    theTeamid = "";
+    if (payload.teamid) {
+      theTeamid = payload.teamid;
+    } else {
+      theTeamid = "";
+    }
     theUser = payload.email;
   }
 
@@ -3031,6 +3036,7 @@ Engine.checkVisi = async function (tenant, tplid, email) {
       //如果没有设置visi，则缺省为所有用户可见
       visiPeople = ["all"];
     } else {
+      //Visi中如果要用到team，则应用T:team_id来引入
       let tmp = await Engine.explainPds({
         tenant: tenant,
         rds: tpl.visi,

@@ -1003,11 +1003,13 @@ const WorkRevoke = async function (req, h) {
 
 const WorkExplainPds = async function (req, h) {
   try {
+    let useEmail = req.payload.uid ? req.payload.uid : req.auth.credentials.email;
     return h.response(
       await Engine.explainPds({
         tenant: req.auth.credentials.tenant._id,
-        email: req.auth.credentials.email,
+        email: useEmail,
         wfid: req.payload.wfid,
+        teamid: req.payload.teamid,
         rds: Tools.qtb(req.payload.rds),
       })
     );
@@ -1963,21 +1965,6 @@ const OrgChartGetLeader = async function (req, h) {
   }
 };
 
-const ActionGetDoers = async function (req, h) {
-  try {
-    let tenant = req.auth.credentials.tenant._id;
-    let rds = Tools.qtb(req.payload.role);
-    let try_with_teamid = req.payload.try_with_teamid;
-    let try_with_email = req.payload.try_with_email;
-    //Use try_with_teamid, ignore team in RDS, because it is specified
-    let ret = await Engine.getDoer(tenant, try_with_teamid, rds, try_with_email);
-    return h.response(ret);
-  } catch (err) {
-    console.error(err);
-    return h.response(replyHelper.constructErrorResponse(err)).code(500);
-  }
-};
-
 /**
  * 根据querystring查询出对应的人员
  * querystring格式为：
@@ -2662,7 +2649,6 @@ module.exports = {
   TagDel,
   TagList,
   TagListOrg,
-  ActionGetDoers,
   GetCallbackPoints,
   GetLatestCallbackPoint,
   GetTodosByWorkid,
