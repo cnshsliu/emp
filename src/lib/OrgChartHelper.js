@@ -138,10 +138,10 @@ const OrgChartHelper = {
   },
 
   /**
-   *   getOrgStaff: async() GetStaff by RDS
+   *   getOrgStaff: async() GetStaff by PDS
    *
    * @param {...}   getOrgStaff: asynctenant -
-   * @param {...} rdsPart - RDS def format: ouReg1/pos1:pos2&ouReg2/pos3:pos4
+   * @param {...} rdsPart - PDS def format: ouReg1/pos1:pos2&ouReg2/pos3:pos4
    *
    * @return {...} an array of OrgChart entries
    */

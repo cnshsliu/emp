@@ -831,7 +831,7 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          rds: Joi.string().required(),
+          pds: Joi.string().required(),
           teamid: Joi.string().optional().allow(""),
           email: Joi.string().optional(),
           wfid: Joi.string().optional(),

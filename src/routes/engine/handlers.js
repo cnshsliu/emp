@@ -1011,7 +1011,7 @@ const WorkExplainPds = async function (req, h) {
         email: useEmail,
         wfid: req.payload.wfid,
         teamid: req.payload.teamid,
-        rds: Tools.qtb(req.payload.rds),
+        pds: Tools.qtb(req.payload.pds),
       })
     );
   } catch (err) {

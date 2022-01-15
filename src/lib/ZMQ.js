@@ -77,7 +77,6 @@ ZMQ.client.clientInit = async function () {
 };
 
 ZMQ.server.QueSend = async function (topic, msg) {
-  console.log("ZMQ QueSend:", topic, msg);
   await ZMQ.server.PUB.send([topic, msg]);
 };
 

@@ -152,16 +152,15 @@ Parser.getVars = async function (email, elem, tenant, doers = [], notdoers = [])
   };
   await forLoop();
 
-  console.log("Returned ", ret);
   return ret;
 };
-//Get Team define from RDS. a Team definition starts with "T:"
-Parser.getTeamInRDS = function (rds) {
+//Get Team define from PDS. a Team definition starts with "T:"
+Parser.getTeamInPDS = function (pds) {
   let ret = null;
-  if (Tools.isEmpty(rds)) {
+  if (Tools.isEmpty(pds)) {
     return ret;
   }
-  let arr = Parser.splitStringToArray(rds);
+  let arr = Parser.splitStringToArray(pds);
   for (let i = 0; i < arr.length; i++) {
     if (arr[i].startsWith("T:")) {
       ret = arr[i].substring(2);
@@ -191,7 +190,7 @@ Parser.getLeaderByPosition = async function (tenant, uid, rdsPart) {
  *
  * @param {...} tenant -
  * @param {...} uid - current user
- * @param {...} rdsPart - RDS part
+ * @param {...} rdsPart - PDS part
  *
  * @return {...} An array of {uid, cn}
  */
@@ -204,7 +203,7 @@ Parser.getPeerByPosition = async function (tenant, uid, rdsPart) {
   return ret;
 };
 /**
- * Get staff from a Orgchart Query RDS Part
+ * Get staff from a Orgchart Query PDS Part
  *
  * @param {...} Parser.getStaffByQuery = asynctenant -
  * @param {...} rdsPart -
@@ -362,29 +361,29 @@ Parser.setVars = async function (elem, newvars, doer) {
 };
 
 /**
- * Parser.getDoer = async() Get Doer from RDS
+ * Parser.getDoer = async() Get Doer from PDS
  *
  * @param {...} Parser.getDoer = asynctenant -
  * @param {...} teamid -
- * @param {...} rds -
+ * @param {...} pds -
  * @param {...} starter -
  * @param {...} wfRoot - can be null, only required when inteperate innerTeam of a running workflow. When getDoer is called to locate flexible team role or ortchart memebers, wfRoot can be ignored
  *
  * @return {...}
  */
-Parser.getDoer = async function (tenant, teamid, rds, starter, wfRoot = null) {
-  //If there is team definition in RDS, use it.
-  //if RDS is empty, always use starter
-  //if (rds === "@suguotai") debugger;
-  if (Tools.isEmpty(rds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];
-  //RDS-level team is defined as "T:team_name"
-  let teamInRDS = Parser.getTeamInRDS(rds);
-  //Use RDS-level team if it exists, use process-level team if not
-  teamid = teamInRDS ? teamInRDS : teamid;
+Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null) {
+  //If there is team definition in PDS, use it.
+  //if PDS is empty, always use starter
+  //if (pds === "@suguotai") debugger;
+  if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];
+  //PDS-level team is defined as "T:team_name"
+  let teamInPDS = Parser.getTeamInPDS(pds);
+  //Use PDS-level team if it exists, use process-level team if not
+  teamid = teamInPDS ? teamInPDS : teamid;
 
   let ret = [];
   let starterEmailSuffix = starter.substring(starter.indexOf("@"));
-  let arr = Parser.splitStringToArray(rds);
+  let arr = Parser.splitStringToArray(pds);
   let tmp = [];
   for (let i = 0; i < arr.length; i++) {
     let rdsPart = arr[i].trim();
@@ -415,8 +414,8 @@ Parser.getDoer = async function (tenant, teamid, rds, starter, wfRoot = null) {
         console.error(
           "Engine.getDoer, team",
           teamid,
-          " rds ",
-          rds,
+          " pds ",
+          pds,
           " got an non-object result: ",
           tmp
         );
