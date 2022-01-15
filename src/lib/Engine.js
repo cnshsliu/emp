@@ -898,9 +898,9 @@ Engine.addAdhoc = async function (payload) {
 };
 
 /**
- * Engine.explainPds = async() Explain RDS. payload一共携带四个参数，wfid, teamid, uid, rds, 除rds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
+ * Engine.explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, uid, pds, 除pds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
  *
- * @param {...} payload: {tenant, wfid, rds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user uid
+ * @param {...} payload: {tenant, wfid, pds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user uid
  *
  * @return {...}
  */
@@ -922,7 +922,7 @@ Engine.explainPds = async function (payload) {
     theUser = payload.email;
   }
 
-  let doers = await Common.getDoer(payload.tenant, theTeamid, payload.rds, theUser); //
+  let doers = await Common.getDoer(payload.tenant, theTeamid, payload.pds, theUser); //
   doers = doers.filter((x) => x.cn !== "USER_NOT_FOUND");
 
   return doers;
@@ -1465,8 +1465,8 @@ Client.yarkNode = async function (obj) {
     //An Action node which should be done by person
     //ACTION
     //Reset team if there is team defination in tpNode.attr("role");
-    let teamInRDS = Parser.getTeamInRDS(tpNode.attr("role"));
-    teamid = teamInRDS ? teamInRDS : teamid;
+    let teamInPDS = Parser.getTeamInPDS(tpNode.attr("role"));
+    teamid = teamInPDS ? teamInPDS : teamid;
     //Get doers with teamid;
     //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
     let doerOrDoers = await Common.getDoer(
@@ -2907,7 +2907,7 @@ Engine.getActiveDelayTimers = async function (tenant, wfid) {
  * @return {...}
  */
 Engine.getDoer = async function (tenant, teamid, role, starter, wfRoot = null) {
-  return await Parser.getDoer(tenant, teamid, rds, starter, wfRoot);
+  return await Parser.getDoer(tenant, teamid, pds, starter, wfRoot);
 };
 //
 
@@ -2918,14 +2918,14 @@ Engine.getDoer = async function (tenant, teamid, role, starter, wfRoot = null) {
  * 目前只在yarkNode中的INFORM和ACTION中用到
  * @param {...} Common.getDoer = asynctenant -
  * @param {...} teamid -
- * @param {...} rds -
+ * @param {...} pds -
  * @param {...} starter -
  * @param {...} wfRoot = null -
  *
  * @return {...}
  */
-Common.getDoer = async function (tenant, teamid, rds, starter, wfRoot = null) {
-  return await Parser.getDoer(tenant, teamid, rds, starter, wfRoot);
+Common.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null) {
+  return await Parser.getDoer(tenant, teamid, pds, starter, wfRoot);
 };
 
 /**
@@ -3066,7 +3066,7 @@ Engine.checkVisi = async function (tenant, tplid, email) {
       //Visi中如果要用到team，则应用T:team_id来引入
       let tmp = await Engine.explainPds({
         tenant: tenant,
-        rds: tpl.visi,
+        pds: tpl.visi,
         //调用explainPds时，不带wfid, 因为对模版的访问权限跟wfprocess无关，
         //wfid: null,
         //缺省用户使用模版的作者
