@@ -161,6 +161,7 @@ const OrgChartHelper = {
         if (ouReg.length === 0) {
           ret = ret.concat(await that.getPeerByPosition(tenant, uid, tmp[1]));
         } else {
+          if (ouReg === "*") ouReg = ".*";
           let posArr = tmp[1]
             .split(":")
             .map((x) => x.trim())
