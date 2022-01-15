@@ -1612,6 +1612,46 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/orgchart/addpos",
+    handler: Handlers.OrgChartAddPosition,
+    config: {
+      description: "Add positon to an org user",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          ocid: Joi.string().required(),
+          pos: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/orgchart/delpos",
+    handler: Handlers.OrgChartDelPosition,
+    config: {
+      description: "Delete a position from an org user",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          ocid: Joi.string().required(),
+          pos: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/comment/list",
     handler: Handlers.CommentList,
     config: {
