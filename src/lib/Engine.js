@@ -639,7 +639,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
   }
 
   try {
-    Engine.procComment(tenant, doer, wfid, workid, todo.todoid, comment);
+    Engine.procComment(tenant, doer, wfid, todo, comment);
   } catch (e) {
     console.error(e);
   }
@@ -670,12 +670,12 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
 };
 
 //对每个@somebody存储，供somebody反向查询comment
-Engine.procComment = async function (tenant, doer, wfid, workid, todoid, content) {
+Engine.procComment = async function (tenant, doer, wfid, todo, content) {
   //content = "hello @liukehong @yangsiyong @linyukui @suguotai hallo abcd";
   if (typeof content !== "string") {
     return;
   }
-  if (Tools.hasValue(content.trim())) {
+  if (Tools.isEmpty(content.trim())) {
     return;
   }
   let m = content.match(/@(\S+)/g);
@@ -686,12 +686,36 @@ Engine.procComment = async function (tenant, doer, wfid, workid, todoid, content
       tenant: tenant,
       who: doer,
       wfid: wfid,
-      workid: workid,
-      todoid: todoid,
+      workid: todo.workid,
+      todoid: todo.todoid,
       toWhom: anUid,
       content: content,
     });
     comment = await comment.save();
+    /// Send out comment email
+    let toWhomEmail = Tools.makeEmailSameDomain(anUid, doer);
+    let fromCN = await Cache.getUserName(doer);
+    let newCN = await Cache.getUserName(toWhomEmail);
+    let frontendUrl = Tools.getFrontEndUrl();
+    let mail_body = `Hello, ${newCN}, <br/><br/> ${fromCN} leave a comment for you:
+<br/><a href="${frontendUrl}/comment">Check it out </a><br/>
+<br/><br/>
+  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/comment
+<br/>
+<br/>The comment is<br/>
+
+${content}
+
+<br/><br/>
+
+Metatocome`;
+
+    let subject = (todo.rehearsal ? "Rehearsal: " : "") + `Comment from ${fromCN}`;
+    debugger;
+
+    await Engine.sendTenantMail(tenant, toWhomEmail, subject, mail_body);
+
+    /// end of comment email
   }
 };
 
@@ -823,7 +847,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
 
   wf.doc = wfIO.html();
   await wf.save();
-  Engine.procComment(tenant, email, wfid, old_todo.workid, todoid, comment);
+  Engine.procComment(tenant, email, wfid, old_todo, comment);
 
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
