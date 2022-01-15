@@ -15,10 +15,10 @@ const Comment = require("../../database/models/Comment");
 const CbPoint = require("../../database/models/CbPoint");
 const Team = require("../../database/models/Team");
 const OrgChart = require("../../database/models/OrgChart");
+const OrgChartHelper = require("../../lib/OrgChartHelper");
 const replyHelper = require("../../lib/helpers");
 const Tools = require("../../tools/tools.js");
 const { Engine, Client } = require("../../lib/Engine");
-const OrgChartHelper = require("../../lib/OrgChartHelper");
 const SystemPermController = require("../../lib/SystemPermController");
 const { EmpError } = require("../../lib/EmpError");
 const lodash = require("lodash");
@@ -2032,6 +2032,48 @@ const OrgChartExpand = async function (req, h) {
   }
 };
 
+const OrgChartAddPosition = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let ocid = req.payload.ocid;
+    let pos = req.payload.pos;
+    posArr = Parser.splitStringToArray(pos);
+
+    let ret = await OrgChart.findOneAndUpdate(
+      { tenant: tenant, _id: ocid },
+      { $addToSet: { position: { $each: posArr } } },
+      { upsert: false, new: true }
+    );
+
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const OrgChartDelPosition = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let ocid = req.payload.ocid;
+    let pos = req.payload.pos;
+    posArr = Parser.splitStringToArray(pos);
+
+    let ret = await OrgChart.findOneAndUpdate(
+      { tenant: tenant, _id: ocid },
+      { $pull: { position: { $in: posArr } } },
+      { upsert: false, new: true }
+    );
+
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const GetCallbackPoints = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -2644,6 +2686,8 @@ module.exports = {
   OrgChartGetStaff,
   OrgChartList,
   OrgChartExpand,
+  OrgChartAddPosition,
+  OrgChartDelPosition,
   CommentList,
   CommentDelete,
   CommentDeleteBeforeDays,
