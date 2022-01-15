@@ -1,7 +1,6 @@
 const Jimp = require("jimp");
 const zlib = require("zlib");
 const Moment = require("moment");
-const { ZMQ } = require("../lib/ZMQ");
 const sprintf = require("sprintf-js").sprintf;
 const EmpConfig = require("../config/emp");
 const replaceReg = / |　/gi;
@@ -230,7 +229,7 @@ const Tools = {
       })
     );
   },
-  sendInvitationEmail: async function (email) {
+  sendInvitationEmail: async function (ZMQ, email) {
     let frontendUrl = Tool.getFrontEndUrl();
     var mailbody = `<p>Welcome to HyperFlow. </p> <br/> Your have been invited to join Org, <br/>
        Please register if you have no HyperFLow account at this momnent with your email <br/>
@@ -271,5 +270,5 @@ const Tools = {
     );
   },
 };
-console.log(Tools.timeStringTag());
+console.log(Tools.makeEmailSameDomain("zhang@gmail.com", "lucas@xihuanwu.com"));
 module.exports = Tools;
