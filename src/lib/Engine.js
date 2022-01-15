@@ -784,6 +784,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   if (Tools.isEmpty(old_todo)) {
     throw new EmpError("WORK_NOT_REVOCABLE", "Work ST_DONE does not exist", { wfid, todoid });
   }
+  if (old_todo.rehearsal) email = old_todo.doer;
   if (!SystemPermController.hasPerm(email, "work", old_todo, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
   let wf = await Workflow.findOne({ wfid: wfid });
@@ -942,10 +943,12 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let fact_doer = doer;
   let fact_email = email;
 
-  let todo = await Todo.findOne({ todoid: todoid });
+  let todo = await Todo.findOne({ tenant: tenant, todoid: todoid });
+
   if (Tools.isEmpty(todo)) {
     throw new EmpError("WORK_NOT_EXIST", "Todoid Not exist: " + todoid);
   }
+  if (todo.rehearsal) email = todo.doer;
   if (todo.doer !== fact_doer) {
     throw new EmpError("WORK_DOER_WRONG", `${fact_doer} is not the right person`);
   }
@@ -2363,6 +2366,10 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
   if (!work) {
     return {};
   }
+  //如果是Rehearsal，则使用真实人的邮箱
+  if (work.rehearsal) {
+    email = work.doer;
+  }
   if (!SystemPermController.hasPerm(email, "work", work, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this work");
   let filter = { tenant: tenant, wfid: work.wfid };
@@ -2405,12 +2412,8 @@ const splitComment = function (str) {
  *
  * @return {...}
  */
-Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, todoid) {
-  let todo_filter = { tenant: tenant, wfid: wfid, todoid: todoid };
-  let work = await Todo.findOne(todo_filter);
-  if (!work) {
-    return {};
-  }
+Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, work) {
+  if (work.rehearsal) email = work.doer;
   let workNode = wfRoot.find("#" + work.workid);
   let ret = {};
   ret.todoid = work.todoid;
