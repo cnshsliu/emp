@@ -202,12 +202,20 @@ const Tools = {
     });
     return promise;
   },
+  makeEmailSameDomain: function (uid, email) {
+    let domain = this.getEmailDomain(email);
+    let tmp = uid.indexOf("@");
+    if (tmp < 0) return uid + domain;
+    else {
+      return uid.substring(0, tmp) + domain;
+    }
+  },
   getEmailDomain: function (email) {
     let tmp = email.indexOf("@");
     if (tmp < 0) return "notemail";
     return email.substring(tmp);
   },
-  sendInvitationEmail_for_joinOrgChart: async function (admin_username, admin_email, email) {
+  sendInvitationEmail_for_joinOrgChart: async function (ZMQ, admin_username, admin_email, email) {
     let frontendUrl = Tool.getFrontEndUrl();
     var mailbody = `<p>${admin_username} (email: ${admin_email}) </p> <br/> invite you to join his organization, <br/>
        Please login to Metatocome to accept <br/>
