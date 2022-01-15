@@ -1033,10 +1033,15 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   wf.doc = wfIO.html();
   await wf.save();
 
-  todo.status = "ST_RETURNED";
-  todo = await todo.save();
+  await Todo.updateMany(
+    {
+      workid: todo.workid,
+      status: "ST_RUN",
+    },
+    { $set: { status: "ST_RETURNED" } }
+  );
 
-  Engine.procComment(tenant, doer, wfid, todo.workid, todoid, comment);
+  Engine.procComment(tenant, doer, wfid, todo, comment);
 
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
@@ -1759,7 +1764,7 @@ in Workflow: <br/>
 ${work.wftitle}<br/>
 started by ${work.wfstarter}
 <br/><br/>
-  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${workid}</a>
+  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${workid}
 <br/>
 <br/>The task's title is<br/>
 ${work.title}
@@ -1768,7 +1773,7 @@ ${work.title}
 
 Metatocome`;
 
-  let subjet = (work.rehearsal ? "Rehearsal: " : "") + `You got a transferred task from ${fromCN}`;
+  let subject = (work.rehearsal ? "Rehearsal: " : "") + `You got a transferred task from ${fromCN}`;
 
   await Engine.sendTenantMail(tenant, newDoer, subject, mail_body);
 
