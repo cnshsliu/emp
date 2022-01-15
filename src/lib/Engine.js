@@ -793,7 +793,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  let info = await Engine.__getWorkFullInfo(tenant, tpRoot, wfRoot, wfid, todoid);
+  let info = await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, wfid, old_todo);
   if (info.revocable === false) {
     throw new EmpError("WORK_NOT_REVOCABLE", "Work is not revocable", {
       wfid,
@@ -975,7 +975,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  let info = await Engine.__getWorkFullInfo(tenant, tpRoot, wfRoot, wfid, todoid);
+  let info = await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, wfid, todo);
   if (info.returnable === false) {
     throw new EmpError("WORK_NOT_RETURNABLE", "Work is not returnable", {
       wfid,
@@ -2378,7 +2378,7 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
 
-  return await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, work.wfid, todoid);
+  return await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, work.wfid, work);
 };
 
 Engine.getWfHistory = async function (email, tenant, wfid, wf) {
