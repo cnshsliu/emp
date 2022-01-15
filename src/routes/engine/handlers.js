@@ -2,6 +2,7 @@ const Boom = require("boom");
 const { Parser } = require("../../lib/Parser");
 const moment = require("moment");
 const Tenant = require("../../database/models/Tenant");
+const { ZMQ } = require("../../lib/ZMQ");
 const Joi = require("joi");
 const TimeZone = require("../../lib/timezone");
 const Template = require("../../database/models/Template");
@@ -1808,6 +1809,7 @@ const AutoRegisterOrgChartUser = async function (administrator, staffs, myDomain
     ) {
       //如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
       await Tools.sendInvitationEmail_for_joinOrgChart(
+        ZMQ,
         administrator.username,
         administrator.email,
         user.email

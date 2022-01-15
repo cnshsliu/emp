@@ -1132,7 +1132,7 @@ internals.SendInvitation = async function (req, h) {
       throw new EmpError("wrong_password", "You are using a wrong password");
     }
     for (let i = 0; i < emails.length; i++) {
-      await Tools.sendInvitationEmail(emails[i]);
+      await Tools.sendInvitationEmail(ZMQ, emails[i]);
     }
     return h.response({ ret: "done" });
   } catch (err) {
