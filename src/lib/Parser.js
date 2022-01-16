@@ -65,7 +65,7 @@ Parser.parse = async function (str) {
             }
 */
 
-Parser.mergeVars = function (vars, newVars_json) {
+Parser.mergeVars = async function (tenant, vars, newVars_json) {
   try {
     if (newVars_json === null || newVars_json === undefined) {
       newVars_json = {};
@@ -78,6 +78,10 @@ Parser.mergeVars = function (vars, newVars_json) {
         valueDef = { value: valueDef, label: name };
       }
       vars[name] = { ...vars[name], ...valueDef };
+      console.log(name, vars[name].value);
+      if (name.startsWith("ou_")) {
+        vars[name]["display"] = await OrgChartHelper.getOuCN(tenant, valueDef.value);
+      }
       if (!vars[name]["label"]) {
         vars[name]["label"] = name;
       }
@@ -88,9 +92,9 @@ Parser.mergeVars = function (vars, newVars_json) {
     return vars;
   }
 };
-Parser.getVars = async function (email, elem, tenant, doers = [], notdoers = []) {
+Parser.getVars = async function (tenant, email, elem, doers = [], notdoers = []) {
   let ret = {};
-  const mergeElementVars = function (elem, allVars) {
+  const mergeElementVars = async function (elem, allVars) {
     let base64_string = elem.text();
     let code = Parser.base64ToCode(base64_string);
     let jsonVars = {};
@@ -99,7 +103,7 @@ Parser.getVars = async function (email, elem, tenant, doers = [], notdoers = [])
     } catch (err) {
       console.log(err);
     }
-    allVars = Parser.mergeVars(allVars, jsonVars);
+    allVars = await Parser.mergeVars(tenant, allVars, jsonVars);
     return allVars;
   };
   if (elem.hasClass("kvars")) {
@@ -114,7 +118,7 @@ Parser.getVars = async function (email, elem, tenant, doers = [], notdoers = [])
       if (notdoers.indexOf(doer) >= 0) includeIt = false;
     }
     if (includeIt) {
-      ret = mergeElementVars(elem, ret);
+      ret = await mergeElementVars(elem, ret);
     }
   } else {
     let kvars = elem.find(".kvars");
@@ -131,26 +135,24 @@ Parser.getVars = async function (email, elem, tenant, doers = [], notdoers = [])
         if (notdoers.indexOf(doer) >= 0) includeIt = false;
       }
       if (includeIt) {
-        ret = mergeElementVars(cheerObj, ret);
+        ret = await mergeElementVars(cheerObj, ret);
       }
     }
   }
-  const forLoop = async (_) => {
-    for (const [key, valueDef] of Object.entries(ret)) {
-      if (Tools.isEmpty(valueDef.visi)) continue;
-      else {
-        let tmp = await Parser.getDoer(tenant, "", valueDef.visi, email);
-        visiPeople = tmp.map((x) => x.uid);
-        console.log("found visi", valueDef.visi, visiPeople);
-        //如果去掉email!=="EMP"会导致彻底不放出
-        //EMP是用在代表系统， 系统应该都可以看到
-        if (email !== "EMP" && visiPeople.includes(email) === false) {
-          delete ret[key];
-        }
+  for (const [key, valueDef] of Object.entries(ret)) {
+    console.log(key, valueDef.visi);
+    if (Tools.isEmpty(valueDef.visi)) continue;
+    else {
+      let tmp = await Parser.getDoer(tenant, "", valueDef.visi, email);
+      visiPeople = tmp.map((x) => x.uid);
+      console.log("found visi", valueDef.visi, visiPeople);
+      //如果去掉email!=="EMP"会导致彻底不放出
+      //EMP是用在代表系统， 系统应该都可以看到
+      if (email !== "EMP" && visiPeople.includes(email) === false) {
+        delete ret[key];
       }
     }
-  };
-  await forLoop();
+  }
 
   return ret;
 };
@@ -328,9 +330,9 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   }
   return ret;
 };
-Parser.setVars = async function (elem, newvars, doer) {
-  let oldVars = await Parser.getVars("EMP", elem);
-  let mergedVars = Parser.mergeVars(oldVars, newvars);
+Parser.setVars = async function (tenant, elem, newvars, doer) {
+  let oldVars = await Parser.getVars(tenant, "EMP", elem);
+  let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
   let base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
   doer = lodash.isEmpty(doer) ? "EMP" : doer;
   elem.children(".kvars").remove();
@@ -361,6 +363,43 @@ Parser.setVars = async function (elem, newvars, doer) {
 };
 
 /**
+ * Parser.replaceStringWithKVar() Replace string with kvar value
+ *
+ * @param {...} Parser.theString - string with [kvar_name]
+ * @param {...} kvarString - key1=value1;key2=value2;...
+ * @param {...} wfRoot - if not null, use workflow context value
+ *
+ * @return {...}
+ */
+Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wfRoot) {
+  let kvars = {};
+  if (kvarString) {
+    let kvarPairs = Parser.splitStringToArray(kvarString, ";");
+    kvarPairs.map((x) => {
+      let kv = Parser.splitStringToArray(x, "=");
+      if (kv.length > 1) {
+        kvars[kv[0]] = { value: kv[1] };
+      } else {
+        kvars[kv[0]] = { value: kv[0] };
+      }
+      return kv[0];
+    });
+  } else if (wfRoot) {
+    kvars = await Parser.getVars(tenant, "EMP", wfRoot);
+  }
+
+  let m = false;
+  do {
+    m = theString.match(/\[(.+)\]/);
+
+    if (m) {
+      theString = theString.replace(m[0], kvars[m[1]] ? kvars[m[1]].value : "NO_KVAR");
+    }
+  } while (m);
+  return theString;
+};
+
+/**
  * Parser.getDoer = async() Get Doer from PDS
  *
  * @param {...} Parser.getDoer = asynctenant -
@@ -371,11 +410,14 @@ Parser.setVars = async function (elem, newvars, doer) {
  *
  * @return {...}
  */
-Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null) {
+Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null, kvarString = null) {
   //If there is team definition in PDS, use it.
   //if PDS is empty, always use starter
-  //if (pds === "@suguotai") debugger;
   if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];
+  if ((kvarString || wfRoot) && pds.match(/\[(.+)\]/)) {
+    pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, wfRoot);
+  }
+
   //PDS-level team is defined as "T:team_name"
   let teamInPDS = Parser.getTeamInPDS(pds);
   //Use PDS-level team if it exists, use process-level team if not
@@ -385,6 +427,9 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null) {
   let starterEmailSuffix = starter.substring(starter.indexOf("@"));
   let arr = Parser.splitStringToArray(pds);
   let tmp = [];
+  console.log("KvarStrring: ", kvarString);
+  let kvars = {};
+
   for (let i = 0; i < arr.length; i++) {
     let rdsPart = arr[i].trim();
     tmp = [];
@@ -462,7 +507,7 @@ Parser.kvarsToArray = function (kvars) {
     //START Speculate variable type
     //based on prefix_ of name
     let matchResult = name.match(
-      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|file|radio|checkbox|cb)_"
+      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|file|radio|checkbox|cb|ou)_"
     );
     tmp.type = "plaintext";
     if (matchResult) {
@@ -475,7 +520,7 @@ Parser.kvarsToArray = function (kvars) {
       }
     }
     if (tmp.type === "cb") tmp.type = "checkbox";
-    if (tmp.type === "sl" || tmp.type === "sel") tmp.type = "select";
+    if (tmp.type === "sl" || tmp.type === "sel" || tmp.type === "ou") tmp.type = "select";
     if (tmp.type === "dt") tmp.type = "datetime";
     if (tmp.type === "checkbox") {
       console.log(tmp.name, "->", tmp.value, typeof tmp.value);
@@ -512,13 +557,25 @@ Parser.kvarsToArray = function (kvars) {
   }
   return kvarsArr;
 };
-Parser.splitStringToArray = function (str) {
+Parser.splitStringToArray = function (str, deli = null) {
   if (typeof str !== "string") str = "";
   else str = str.trim();
   if (str === "") return [];
-  let tmp = str.split(/[\s;,]/);
+  let tmp = str.split(deli ? deli : /[\s;,]/);
   tmp = tmp.map((x) => x.trim()).filter((x) => x.length > 0);
   return tmp;
+};
+Parser.chunkString = function (str, len) {
+  const size = Math.ceil(str.length / len);
+  const r = Array(size);
+  let offset = 0;
+
+  for (let i = 0; i < size; i++) {
+    r[i] = str.substr(offset, len);
+    offset += len;
+  }
+
+  return r;
 };
 
 Parser.codeToBase64 = function (code) {

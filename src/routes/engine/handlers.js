@@ -1012,6 +1012,7 @@ const WorkExplainPds = async function (req, h) {
         wfid: req.payload.wfid,
         teamid: req.payload.teamid,
         pds: Tools.qtb(req.payload.pds),
+        kvar: req.payload.kvar,
       })
     );
   } catch (err) {
@@ -1988,6 +1989,32 @@ const OrgChartGetStaff = async function (req, h) {
   }
 };
 
+const OrgChartListOu = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myemail = req.auth.credentials.email;
+    let top = req.payload.top;
+    let withTop = req.payload.withTop === "yes";
+    let regexp = null;
+    let filter = {};
+    filter["tenant"] = tenant;
+    filter["uid"] = "OU---";
+    if (top !== "root") {
+      if (withTop) regexp = new RegExp("^" + top + ".*");
+      else regexp = new RegExp("^" + top + "(.{5})+");
+      filter["ou"] = regexp;
+    } else {
+      if (withTop === false) {
+        filter["ou"] = { $ne: "root" };
+      }
+    }
+    let ret = await OrgChart.find(filter, { cn: 1, ou: 1, _id: 0 });
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 const OrgChartList = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -2044,7 +2071,10 @@ const OrgChartAddPosition = async function (req, h) {
       { tenant: tenant, _id: ocid },
       { $addToSet: { position: { $each: posArr } } },
       { upsert: false, new: true }
-    );
+    ).lean();
+
+    //staff不要透传到前端
+    ret.position = ret.position.filter((x) => x !== "staff");
 
     return h.response(ret);
   } catch (err) {
@@ -2065,7 +2095,9 @@ const OrgChartDelPosition = async function (req, h) {
       { tenant: tenant, _id: ocid },
       { $pull: { position: { $in: posArr } } },
       { upsert: false, new: true }
-    );
+    ).lean();
+    //staff不要透传到前端
+    ret.position = ret.position.filter((x) => x !== "staff");
 
     return h.response(ret);
   } catch (err) {
@@ -2685,6 +2717,7 @@ module.exports = {
   OrgChartGetLeader,
   OrgChartGetStaff,
   OrgChartList,
+  OrgChartListOu,
   OrgChartExpand,
   OrgChartAddPosition,
   OrgChartDelPosition,

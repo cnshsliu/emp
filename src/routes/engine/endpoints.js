@@ -834,6 +834,7 @@ internals.endpoints = [
           pds: Joi.string().required(),
           teamid: Joi.string().optional().allow(""),
           email: Joi.string().optional(),
+          kvar: Joi.string().optional(),
           wfid: Joi.string().optional(),
         },
         validator: Joi,
@@ -1549,6 +1550,26 @@ internals.endpoints = [
         payload: {
           uid: Joi.string().required(),
           leader: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/orgchart/listou",
+    handler: Handlers.OrgChartListOu,
+    config: {
+      description: "List out OU",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          top: Joi.string().required(),
+          withTop: Joi.string().required(),
         },
         validator: Joi,
       },

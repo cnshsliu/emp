@@ -10,6 +10,11 @@ const OrgChartHelper = {
     let person = await OrgChart.findOne(filter, { cn: 1 });
     return person ? person.cn : "Not found";
   },
+  getOuCN: async function (tenant, ou) {
+    let filter = { tenant: tenant, ou: ou, uid: "OU---" };
+    let theOu = await OrgChart.findOne(filter, { cn: 1 });
+    return theOu ? theOu.cn : "Not found";
+  },
   /**
    * Get the position of a person
    */
