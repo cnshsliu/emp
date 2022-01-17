@@ -1883,10 +1883,15 @@ const OrgChartImport = async function (req, h) {
     let currentPOU = "";
     let currentCN = "";
     let isOU = false;
+    let errors = [];
     for (let i = 0; i < lines.length; i++) {
       let fields = lines[i].split(",");
-      if (!Tools.isArray(fields)) continue;
+      if (!Tools.isArray(fields)) {
+        errors.push(`line ${i + 1}: not csv`);
+        continue;
+      }
       if (fields.length < 2) {
+        errors.push(`line ${i + 1}: should be at least 2 columns`);
         continue;
       }
       if (fields[0].toLowerCase() === "root") {
@@ -1903,7 +1908,10 @@ const OrgChartImport = async function (req, h) {
       } else {
         //第一列是编号
         //编号要么为空，要么是五个的整数倍
-        if (fields[0].length > 0 && fields[0].length % 5 !== 0) continue;
+        if (fields[0].length > 0 && fields[0].length % 5 !== 0) {
+          errors.push(`line ${i + 1}: ou id ${fields[0]} format is wrong`);
+          continue;
+        }
         //若果非空，是五个的整数倍,应作为OU
         if (fields[0].length > 0) {
           currentOU = fields[0];
@@ -1914,7 +1922,9 @@ const OrgChartImport = async function (req, h) {
         currentCN = fields[1];
         if (isOU === false && Tools.getEmailDomain(fields[2]) !== myDomain) {
           // 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
-          console.log(`Bypass ${fields[2]} not my same domain  ${myDomain}`);
+          errors.push(
+            `line: ${i + 1} bypass doamin:[${fields[2]}] not my same domain  ${myDomain}`
+          );
           continue;
         }
         orgChartArr.push({
@@ -1926,6 +1936,7 @@ const OrgChartImport = async function (req, h) {
           //如果isOU，则position为空[]即可
           //如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
           position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
+          line: i + 1,
         });
       }
     }
@@ -1933,7 +1944,17 @@ const OrgChartImport = async function (req, h) {
     //先清空Orgchart
     await OrgChart.deleteMany({ tenant: tenant });
     //再把所有用户重新插入Orgchart
-    await OrgChart.insertMany(orgChartArr);
+    //console.log(JSON.stringify(orgChartArr));
+    //await OrgChart.insertMany(orgChartArr);
+    for (let i = 0; i < orgChartArr.length; i++) {
+      try {
+        await OrgChart.insertMany([orgChartArr[i]]);
+      } catch (err) {
+        errors.push(
+          `Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].uid}`
+        );
+      }
+    }
     let uniqued_orgchart_staffs = [];
     let uniqued_emails = [];
     for (let i = 0; i < orgChartArr.length; i++) {
@@ -1947,7 +1968,7 @@ const OrgChartImport = async function (req, h) {
       uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
     }
     await AutoRegisterOrgChartUser(admin, uniqued_orgchart_staffs, myDomain, default_user_password);
-    return h.response({ ret: "ok" });
+    return h.response({ ret: "ok", logs: errors });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -2033,9 +2054,17 @@ const OrgChartExpand = async function (req, h) {
     let ou = req.payload.ou;
     let include = req.payload.include;
     let ret = [];
+    let selfOu = null;
+    await OrgChart.updateMany({ tenant: tenant, ou: /root/ }, { $set: { ou: "root" } });
+    if (ou === "root")
+      selfOu = await OrgChart.findOne({ tenant: tenant, ou: /root/, uid: "OU---" });
+    else selfOu = await OrgChart.findOne({ tenant: tenant, ou: ou, uid: "OU---" });
     if (include) {
-      ret.push(await OrgChart.findOne({ tenant: tenant, ou: ou }));
+      console.log("push ", req.payload);
+      ret.push(selfOu);
+      console.log(ret.length);
     }
+    console.log("ret.length:", ret.length);
 
     //先放人
     let childrenStaffFilter = { tenant: tenant };
@@ -2043,6 +2072,7 @@ const OrgChartExpand = async function (req, h) {
     childrenStaffFilter["ou"] = ou;
     let tmp = await OrgChart.find(childrenStaffFilter);
     ret = ret.concat(tmp);
+    console.log("ret.length:", ret.length);
 
     //再放下级组织
     let childrenOuFilter = { tenant: tenant };
@@ -2051,6 +2081,7 @@ const OrgChartExpand = async function (req, h) {
 
     tmp = await OrgChart.find(childrenOuFilter);
     ret = ret.concat(tmp);
+    console.log("ret.length:", ret.length);
 
     return h.response(ret);
   } catch (err) {
