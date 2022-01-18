@@ -349,6 +349,7 @@ const WorkflowRead = async function (req, h) {
   try {
     let myEmail = req.auth.credentials.email;
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    let withDoc = req.payload.withdoc;
     let wf = await Workflow.findOne(filter).lean();
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
@@ -359,6 +360,8 @@ const WorkflowRead = async function (req, h) {
       req.payload.wfid,
       wf
     );
+    if (withDoc === false) delete wf.doc;
+    if (wf.status === "ST_DONE") wf.doneat = wf.updatedAt;
     return wf;
   } catch (err) {
     console.error(err);
@@ -414,6 +417,14 @@ const WorkflowStart = async function (req, h) {
     let pbo = req.payload.pbo;
     let kvars = req.payload.kvars;
 
+    let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
+    if (starterStaff) {
+      kvars["ou_starterou"] = {
+        value: starterStaff.ou,
+        label: "Starter OU",
+      };
+    }
+
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
 
@@ -431,6 +442,8 @@ const WorkflowStart = async function (req, h) {
       "",
       kvars
     );
+
+    console.log(kvars);
 
     return wfDoc;
   } catch (err) {
@@ -698,7 +711,7 @@ const WorkflowSearch = async function (req, h) {
         //如果有相关todo与template相关,
         //则需要同时考虑todo相关 和 starter相关
         //filter.tplid = { $in: templatesIamIn };
-        filter[$or] = [{ tplid: { $in: templatesIamIn } }, { starter: myEmail }];
+        filter["$or"] = [{ tplid: { $in: templatesIamIn } }, { starter: myEmail }];
       }
     }
 
@@ -1886,6 +1899,7 @@ const OrgChartImport = async function (req, h) {
     let isOU = false;
     let errors = [];
     for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().length === 0) continue;
       let fields = lines[i].split(",");
       if (!Tools.isArray(fields)) {
         errors.push(`line ${i + 1}: not csv`);
@@ -1895,51 +1909,45 @@ const OrgChartImport = async function (req, h) {
         errors.push(`line ${i + 1}: should be at least 2 columns`);
         continue;
       }
-      if (fields[0].toLowerCase() === "root") {
-        isOU = true;
-        currentOU = "root";
-        currentCN = fields[1];
-        orgChartArr.push({
-          tenant: tenant,
-          ou: currentOU,
-          cn: currentCN,
-          uid: "OU---",
-          position: [],
-        });
-      } else {
-        //第一列是编号
-        //编号要么为空，要么是五个的整数倍
-        if (fields[0].length > 0 && fields[0].length % 5 !== 0) {
-          errors.push(`line ${i + 1}: ou id ${fields[0]} format is wrong`);
-          continue;
+      //第一列是编号
+      //编号要么为空，要么是五个的整数倍
+      if (fields[0].length > 0 && fields[0] !== "root" && fields[0].length % 5 !== 0) {
+        errors.push(`line ${i + 1}: ou id ${fields[0]} format is wrong`);
+        continue;
+      }
+      //如果第三列为邮箱
+      let emailValiidationResult = EmailSchema.validate(fields[2]);
+      if (!emailValiidationResult.error) {
+        isOU = false;
+        if (fields[0].trim().length > 0) {
+          currentOU = fields[0];
         }
-        //若果非空，是五个的整数倍,应作为OU
-        if (fields[0].length > 0) {
+      } else {
+        if (fields[0].trim().length > 0) {
           currentOU = fields[0];
           isOU = true;
         } else {
-          isOU = false;
+          errors.push(`line: ${i + 1} bypass, not valid OU format`);
         }
-        currentCN = fields[1];
-        if (isOU === false && Tools.getEmailDomain(fields[2]) !== myDomain) {
-          // 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
-          errors.push(
-            `line: ${i + 1} bypass doamin:[${fields[2]}] not my same domain  ${myDomain}`
-          );
-          continue;
-        }
-        orgChartArr.push({
-          tenant: tenant,
-          ou: currentOU,
-          cn: currentCN,
-          //如果不是OU， 则fields[2]为邮箱名
-          uid: isOU ? "OU---" : fields[2],
-          //如果isOU，则position为空[]即可
-          //如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
-          position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
-          line: i + 1,
-        });
       }
+
+      currentCN = fields[1];
+      if (isOU === false && Tools.getEmailDomain(fields[2]) !== myDomain) {
+        // 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
+        errors.push(`line: ${i + 1} bypass doamin:[${fields[2]}] not my same domain  ${myDomain}`);
+        continue;
+      }
+      orgChartArr.push({
+        tenant: tenant,
+        ou: currentOU,
+        cn: currentCN,
+        //如果不是OU， 则fields[2]为邮箱名
+        uid: isOU ? "OU---" : fields[2],
+        //如果isOU，则position为空[]即可
+        //如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
+        position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
+        line: i + 1,
+      });
     }
 
     //先清空Orgchart
@@ -1968,12 +1976,225 @@ const OrgChartImport = async function (req, h) {
       uniqued_emails.push(orgChartArr[i].uid);
       uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
     }
+    //Next funciton use tenant of the first argu: admin,
     await AutoRegisterOrgChartUser(admin, uniqued_orgchart_staffs, myDomain, default_user_password);
     return h.response({ ret: "ok", logs: errors });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
+};
+
+const OrgChartAddOrDeleteEntry = async function (req, h) {
+  try {
+    let admin = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    if (Crypto.decrypt(admin.password) != req.payload.password) {
+      throw new EmpError("wrong_password", "You are using a wrong password");
+    }
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if ((myGroup === "ADMIN" && admin.tenant.orgmode === true) === false) {
+      throw new EmpError("NOT_ORG_ADMIN", "Not org admin or not in orgmode");
+    }
+    let tenant = req.auth.credentials.tenant._id;
+    let default_user_password = req.payload.default_user_password;
+
+    let myDomain = Tools.getEmailDomain(myEmail);
+    const csv = req.payload.content;
+    let lines = csv.split("\n");
+    let ret = await importOrgLines(tenant, myDomain, admin, default_user_password, lines);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const OrgChartExport = async function (req, h) {
+  try {
+    let admin = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    if (Crypto.decrypt(admin.password) != req.payload.password) {
+      throw new EmpError("wrong_password", "You are using a wrong password");
+    }
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if ((myGroup === "ADMIN" && admin.tenant.orgmode === true) === false) {
+      throw new EmpError("NOT_ORG_ADMIN", "Not org admin or not in orgmode");
+    }
+    let tenant = req.auth.credentials.tenant._id;
+    let entries = [];
+
+    const getEntriesUnder = async function (entries, tenant, ou) {
+      let filter = { tenant: tenant, ou: ou, uid: "OU---" };
+      let entry = await OrgChart.findOne(filter);
+      if (entry) {
+        entries.push(`${entry.ou},${entry.cn},,,,`);
+
+        filter = { tenant: tenant, ou: ou, uid: { $ne: "OU---" } };
+        let users = await OrgChart.find(filter);
+        for (let i = 0; i < users.length; i++) {
+          let usrPos = users[i].position.filter((x) => x !== "staff");
+          entries.push(`${users[i].ou},${users[i].cn},${users[i].uid},${usrPos.join(":")},,`);
+        }
+
+        let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
+        filter = { tenant: tenant, ou: ouFilter, uid: "OU---" };
+        let ous = await OrgChart.find(filter);
+        for (let i = 0; i < ous.length; i++) {
+          await getEntriesUnder(entries, tenant, ous[i].ou);
+        }
+      }
+    };
+    await getEntriesUnder(entries, tenant, "root");
+
+    return h.response(entries);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const importOrgLines = async function (tenant, myDomain, admin, default_user_password, lines) {
+  let orgChartArr = [];
+  let tobeDeletedArr = [];
+  let currentOU = "";
+  let currentPOU = "";
+  let currentCN = "";
+  let isOU = false;
+  let errors = [];
+  for (let i = 0; i < lines.length; i++) {
+    let fields = lines[i].split(",");
+    if (!Tools.isArray(fields)) {
+      errors.push(`line ${i + 1}: not csv`);
+      continue;
+    }
+    if (fields.length < 2) {
+      errors.push(`line ${i + 1}: should be at least 2 columns`);
+      continue;
+    }
+    if (fields[0].toLowerCase().trim() === "d") {
+      if (fields[1].trim().length > 0) tobeDeletedArr.push(fields[1].trim());
+    } else if (fields[0].toLowerCase() === "root") {
+      isOU = true;
+      currentOU = "root";
+      currentCN = fields[1];
+      orgChartArr.push({
+        tenant: tenant,
+        ou: currentOU,
+        cn: currentCN,
+        uid: "OU---",
+        position: [],
+      });
+    } else {
+      //第一列是编号
+      //编号要么为空，要么是五个的整数倍
+      if (fields[0].length > 0 && fields[0].length % 5 !== 0) {
+        errors.push(`line ${i + 1}: ou id ${fields[0]} format is wrong`);
+        continue;
+      }
+      //若果非空，是五个的整数倍,应作为OU
+      let emailValiidationResult = EmailSchema.validate(fields[2]);
+      if (!emailValiidationResult.error) {
+        isOU = false;
+        if (fields[0].trim().length > 0) {
+          currentOU = fields[0];
+        }
+      } else {
+        if (fields[0].trim().length > 0) {
+          currentOU = fields[0];
+          isOU = true;
+        } else {
+          errors.push(`line: ${i + 1} bypass, not valid OU format`);
+        }
+      }
+      currentCN = fields[1];
+      if (isOU === false && Tools.getEmailDomain(fields[2]) !== myDomain) {
+        // 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
+        errors.push(`line: ${i + 1} bypass doamin:[${fields[2]}] not my same domain  ${myDomain}`);
+        continue;
+      }
+      if (currentOU.length > 0) {
+        orgChartArr.push({
+          tenant: tenant,
+          ou: currentOU,
+          cn: currentCN,
+          //如果不是OU， 则fields[2]为邮箱名
+          uid: isOU ? "OU---" : fields[2],
+          //如果isOU，则position为空[]即可
+          //如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
+          position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
+          line: i + 1,
+        });
+      } else {
+        errors.push(`line: ${i + 1} bypass current OU is unknown`);
+      }
+    }
+  }
+
+  //先清空Orgchart
+  //await OrgChart.deleteMany({ tenant: tenant });
+  //再把所有用户重新插入Orgchart
+  //console.log(JSON.stringify(orgChartArr));
+  //await OrgChart.insertMany(orgChartArr);
+  for (let i = 0; i < orgChartArr.length; i++) {
+    try {
+      //await OrgChart.insertMany([orgChartArr[i]]);
+      let entry = await OrgChart.findOne({
+        tenant: orgChartArr[i].tenant,
+        ou: orgChartArr[i].ou,
+        uid: orgChartArr[i].uid,
+      });
+      if (entry === null) {
+        await OrgChart.insertMany([orgChartArr[i]]);
+      } else {
+        await OrgChart.updateOne(
+          {
+            tenant: orgChartArr[i].tenant,
+            ou: orgChartArr[i].ou,
+            uid: orgChartArr[i].uid,
+          },
+          {
+            $set: {
+              cn: orgChartArr[i].cn,
+              position: orgChartArr[i].position,
+            },
+          }
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      errors.push(
+        `Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].uid}`
+      );
+    }
+  }
+  let uniqued_orgchart_staffs = [];
+  let uniqued_emails = [];
+  for (let i = 0; i < orgChartArr.length; i++) {
+    if (
+      orgChartArr[i].uid.startsWith("OU-") ||
+      uniqued_emails.indexOf(orgChartArr[i].uid) > -1 ||
+      myDomain !== Tools.getEmailDomain(orgChartArr[i].uid)
+    )
+      continue;
+    uniqued_emails.push(orgChartArr[i].uid);
+    uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
+  }
+  await AutoRegisterOrgChartUser(admin, uniqued_orgchart_staffs, myDomain, default_user_password);
+  for (let i = 0; i < tobeDeletedArr.length; i++) {
+    let emailValiidationResult = EmailSchema.validate(tobeDeletedArr[i]);
+    //Delete OU
+    if (emailValiidationResult.error) {
+      //this is a OU
+      if (tobeDeletedArr[i] !== "root") {
+        await OrgChart.deleteMany({ tenant: tenant, ou: { $regex: `^${tobeDeletedArr[i]}.*` } });
+      }
+    } else {
+      //Delete user
+      await OrgChart.deleteMany({ tenant: tenant, uid: tobeDeletedArr[i] });
+    }
+  }
+  return { ret: "ok", logs: errors };
 };
 
 const OrgChartGetLeader = async function (req, h) {
@@ -2746,6 +2967,8 @@ module.exports = {
   CheckCoworker,
   TransferWork,
   OrgChartImport,
+  OrgChartAddOrDeleteEntry,
+  OrgChartExport,
   OrgChartGetLeader,
   OrgChartGetStaff,
   OrgChartList,

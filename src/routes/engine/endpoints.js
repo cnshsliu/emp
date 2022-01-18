@@ -442,6 +442,7 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           wfid: Joi.string().required(),
+          withdoc: Joi.boolean().default(true),
         },
         validator: Joi,
       },
@@ -1530,6 +1531,46 @@ internals.endpoints = [
           password: Joi.string().regex(EmpConfig.validation.password).required(),
           default_user_password: Joi.string().required(),
           file: Joi.any().meta({ swaggerType: "file" }),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/orgchart/add",
+    handler: Handlers.OrgChartAddOrDeleteEntry,
+    config: {
+      description: "Add CSV orgchart",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          password: Joi.string().required(),
+          content: Joi.string().required(),
+          default_user_password: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/orgchart/export",
+    handler: Handlers.OrgChartExport,
+    config: {
+      description: "Export CSV orgchart",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          password: Joi.string().required(),
         },
         validator: Joi,
       },

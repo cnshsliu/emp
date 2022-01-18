@@ -1524,6 +1524,9 @@ Client.yarkNode = async function (obj) {
         tpNodeTitle = "Work of " + nodeid;
       }
     }
+    if (tpNodeTitle.indexOf("[") >= 0) {
+      tpNodeTitle = await Parser.replaceStringWithKVar(tenant, tpNodeTitle, null, wfRoot);
+    }
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
     //TODO TO THINK, adhoctask直接添加了comment，这里没有添加，主要是从模板过来的任务项，comment没有来源
     await Engine.createTodo({
@@ -1850,6 +1853,7 @@ Client.newTodo = async function (
   rehearsal
 ) {
   let todoid = uuidv4();
+
   let todo = new Todo({
     todoid: todoid,
     tenant: tenant,
@@ -2442,6 +2446,9 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.nodeid = work.nodeid;
   ret.workid = work.workid;
   ret.title = work.title;
+  if (ret.title.indexOf("[") >= 0) {
+    ret.title = await Parser.replaceStringWithKVar(tenant, ret.title, null, wfRoot);
+  }
   ret.status = work.status;
   ret.wfstarter = work.wfstarter;
   ret.wfstatus = work.wfstatus;
@@ -2468,6 +2475,20 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
   ret.kvars = await Parser.getVars(tenant, email, workNode);
+
+  /*
+   //这段代码会导致死循环，比如，一个var引入同一个var， var=[var]
+  const replaceValueInBrackets = async function (tenant, email, wfRoot, kvars) {
+    for (const [name, valueDef] of Object.entries(kvars)) {
+      if (valueDef.value.match(/\[(.+)\]/)) {
+        valueDef.value = await Parser.replaceStringWithKVar(tenant, valueDef.value, null, wfRoot);
+      }
+    }
+    return kvars;
+  };
+  ret.kvars = await replaceValueInBrackets(tenant, email, wfRoot, ret.kvars);
+  */
+
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};
   //不包括那些被放上去的var定义，这些定义的doer是EMP;

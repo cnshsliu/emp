@@ -18,7 +18,23 @@ const OrgChartHelper = {
   getOuCN: async function (tenant, ou) {
     let filter = { tenant: tenant, ou: ou, uid: "OU---" };
     let theOu = await OrgChart.findOne(filter, { cn: 1 });
-    return theOu ? theOu.cn : "Not found";
+    return theOu ? theOu.cn : ou + " Not found";
+  },
+
+  getStaffOU: async function (tenant, email) {
+    let filter = { tenant: tenant, uid: email };
+    let theStaff = await OrgChart.findOne(filter);
+    let theOu = null;
+    if (theStaff) {
+      filter = { tenant: tenant, ou: theStaff.ou, uid: "OU---" };
+      theOu = await OrgChart.findOne(filter);
+    }
+    return theOu;
+  },
+  getStaff: async function (tenant, email) {
+    let filter = { tenant: tenant, uid: email };
+    let theStaff = await OrgChart.findOne(filter);
+    return theStaff;
   },
   /**
    * Get the position of a person
@@ -73,6 +89,7 @@ const OrgChartHelper = {
   getUpperOrPeerByPosition: async function (tenant, uid, positions, mode = 0, ou = "") {
     let filter = { tenant: tenant, uid: uid };
     //找到用户
+    if (ou === null || ou === undefined) ou = "";
     console.log(uid, positions, ou);
     let ret = [];
     let posArr = positions
@@ -209,7 +226,7 @@ const OrgChartHelper = {
 
       if (qstr.indexOf("/") < 0) {
         ret = ret.concat(
-          await that.getUpperOrPeerByPosition(tenant, uid, qstr, OrgChartHelper.FIND_ALL, null)
+          await that.getUpperOrPeerByPosition(tenant, uid, qstr, OrgChartHelper.FIND_ALL, "")
         );
       } else {
         let tmp = qstr.split("/");

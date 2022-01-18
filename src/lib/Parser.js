@@ -75,10 +75,9 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
         vars[name] = {};
       }
       if (valueDef.hasOwnProperty("value") === false) {
-        valueDef = { value: valueDef, label: name };
+        if (typeof valueDef === "string") valueDef = { value: valueDef, label: name };
       }
       vars[name] = { ...vars[name], ...valueDef };
-      console.log(name, vars[name].value);
       if (name.startsWith("ou_")) {
         vars[name]["display"] = await OrgChartHelper.getOuCN(tenant, valueDef.value);
       }
@@ -139,8 +138,8 @@ Parser.getVars = async function (tenant, email, elem, doers = [], notdoers = [])
       }
     }
   }
+  //处理kvar的可见行 visi,
   for (const [key, valueDef] of Object.entries(ret)) {
-    console.log(key, valueDef.visi);
     if (Tools.isEmpty(valueDef.visi)) continue;
     else {
       let tmp = await Parser.getDoer(tenant, "", valueDef.visi, email);
@@ -332,6 +331,11 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
 };
 Parser.setVars = async function (tenant, elem, newvars, doer) {
   let oldVars = await Parser.getVars(tenant, "EMP", elem);
+  for (const [name, valueDef] of Object.entries(newvars)) {
+    while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
+    while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+  }
+
   let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
   let base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
   doer = lodash.isEmpty(doer) ? "EMP" : doer;
@@ -393,7 +397,10 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
     m = theString.match(/\[(.+)\]/);
 
     if (m) {
-      theString = theString.replace(m[0], kvars[m[1]] ? kvars[m[1]].value : "NO_KVAR");
+      let newValue = kvars[m[1]] ? kvars[m[1]].value : "NO_KVAR";
+      //万一newValue中有【】，需要去掉，否则，do...while会死循环
+      newValue = newValue.replace(/\[(.+)\]/, "");
+      theString = theString.replace(m[0], newValue);
     }
   } while (m);
   return theString;
