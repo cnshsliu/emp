@@ -1004,7 +1004,7 @@ const WorkRevoke = async function (req, h) {
 
 const WorkExplainPds = async function (req, h) {
   try {
-    let useEmail = req.payload.uid ? req.payload.uid : req.auth.credentials.email;
+    let useEmail = req.payload.email ? req.payload.email : req.auth.credentials.email;
     return h.response(
       await Engine.explainPds({
         tenant: req.auth.credentials.tenant._id,
@@ -1013,6 +1013,7 @@ const WorkExplainPds = async function (req, h) {
         teamid: req.payload.teamid,
         pds: Tools.qtb(req.payload.pds),
         kvar: req.payload.kvar,
+        insertDefault: false,
       })
     );
   } catch (err) {

@@ -1,5 +1,10 @@
+const { EmpError } = require("./EmpError");
 const OrgChart = require("../database/models/OrgChart");
 const OrgChartHelper = {
+  FIND_ALL: 3,
+  FIND_ALL_UPPER: 2,
+  FIND_FIRST_UPPER: 1,
+  FIND_IN_OU: 0,
   /**
    * Get the common name of a uid
    * for people, uid is their email
@@ -60,51 +65,87 @@ const OrgChartHelper = {
    * @param {...}   getUpperOrPeerByPosition: asynctenant -
    * @param {...} uid - the email of a staff whose leader(s) to query
    * @param {...} positions - a colon separated position names
+   * @param {...} mode - 0: in this ou, 1: find then stop; 2: find all up to root, 3. find all;
+   * @param {...} ou - Organization unit
    *
    * @return {...} An array of OrgChart entries
    */
-  getUpperOrPeerByPosition: async function (tenant, uid, positions) {
+  getUpperOrPeerByPosition: async function (tenant, uid, positions, mode = 0, ou = "") {
     let filter = { tenant: tenant, uid: uid };
     //找到用户
-    let person = await OrgChart.findOne(filter, { ou: 1 });
+    console.log(uid, positions, ou);
+    let ret = [];
     let posArr = positions
       .split(":")
       .map((x) => x.trim())
       .filter((x) => x.length > 0);
-    let ret = [];
-    if (person) {
-      //找到用户的所有Peers
-      let ouIn = [];
-      //如果这个人在root里，比如CEO，则只查root  OU
-      //============
-      if (person.ou === "root") {
-        ouIn = ["root"];
-      } else {
-        let tmp = person.ou;
-        //否则就要逐级往上检查各级OU
-        while (tmp.length > 0) {
-          ouIn.push(tmp);
-          tmp = tmp.substring(0, tmp.length - 5);
-        }
-        //一直到root为止
-        ouIn.push("root");
+
+    if (ou === "" && mode !== OrgChartHelper.FIND_ALL) {
+      let person = await OrgChart.findOne(filter, { ou: 1 });
+      if (!person) {
+        console.log(`User ${uid} not found`);
+        return [];
       }
-      //=============
-      //以上代码把从当前用户所在部门到最顶层的部门
-      //按自底向上的顺序放在了ouIn数组中
-      //=============
-      //接下来，mongodb搜索用户，
-      filter = {
-        tenant: tenant,
-        //部门需要在ouIn数组中，也就是从当前用户所在部门开始，自底向上一直到root
-        ou: { $in: ouIn },
-        //排除部门定义，也就是只包含用户
-        uid: { $ne: "OU---" },
-        //所搜索的职位
-        position: { $in: posArr },
-      };
-      ret = await OrgChart.find(filter);
+      ou = person.ou;
     }
+    //找到用户的所有Peers
+    let ouCondition = undefined;
+    let ouIn = [];
+    if (ou !== "root") {
+      let tmp = ou;
+      //否则就要逐级往上检查各级OU
+      while (tmp.length > 0) {
+        ouIn.push(tmp);
+        if (tmp.length - 5 > 0) tmp = tmp.substring(0, tmp.length - 5);
+        else break;
+      }
+      //一直到root为止
+    }
+    ouIn.push("root");
+    console.log(ouIn);
+    //如果这个人在root里，比如CEO，则只查root  OU
+    //============
+    if (mode === OrgChartHelper.FIND_IN_OU) {
+      ouCondition = ou;
+    } else if (mode === OrgChartHelper.FIND_FIRST_UPPER) {
+      for (let i = 0; i < ouIn.length; i++) {
+        ouCondition = ouIn[i];
+        let tmpFilter = {
+          tenant: tenant,
+          ou: ouCondition,
+          uid: { $ne: "OU---" },
+          position: { $in: posArr },
+        };
+        ret = await OrgChart.find(tmpFilter);
+        if (ret && Array.isArray(ret) && ret.length > 0) {
+          break;
+        }
+      }
+      return ret;
+    } else if (mode === OrgChartHelper.FIND_ALL_UPPER) {
+      ouCondition = { $in: ouIn };
+    } else if (mode === OrgChartHelper.FIND_ALL) {
+      ouCondition = undefined;
+    }
+    //=============
+    //以上代码把从当前用户所在部门到最顶层的部门
+    //按自底向上的顺序放在了ouIn数组中
+    //=============
+    //接下来，mongodb搜索用户，
+    filter = {
+      tenant: tenant,
+      //部门需要在ouIn数组中，也就是从当前用户所在部门开始，自底向上一直到root
+      ou: ouCondition,
+      //排除部门定义，也就是只包含用户
+      uid: { $ne: "OU---" },
+      //所搜索的职位
+      position: { $in: posArr },
+    };
+    if (ouCondition === undefined) {
+      delete filter.ou;
+    }
+
+    ret = await OrgChart.find(filter);
     return ret;
   },
 
@@ -157,30 +198,30 @@ const OrgChartHelper = {
     let qstrs = rdsPart.split("&");
     for (let i = 0; i < qstrs.length; i++) {
       let qstr = qstrs[i];
-      //If OUReg is absent, use getUpperOrPeerByPosition
+      let findScope = OrgChartHelper.FIND_IN_OU;
+      if (qstr.indexOf("///") >= 0) {
+        qstr = qstr.replace("///", "/");
+        findScope = OrgChartHelper.FIND_ALL_UPPER;
+      } else if (qstr.indexOf("//") >= 0) {
+        qstr = qstr.replace("//", "/");
+        findScope = OrgChartHelper.FIND_FIRST_UPPER;
+      }
+
       if (qstr.indexOf("/") < 0) {
-        ret = ret.concat(await that.getUpperOrPeerByPosition(tenant, uid, qstr));
+        ret = ret.concat(
+          await that.getUpperOrPeerByPosition(tenant, uid, qstr, OrgChartHelper.FIND_ALL, null)
+        );
       } else {
-        let tmp = qstrs[i].split("/");
+        let tmp = qstr.split("/");
         let ouReg = tmp[0].trim();
-        if (ouReg.length === 0) {
-          ret = ret.concat(await that.getPeerByPosition(tenant, uid, tmp[1]));
+        if (ouReg === "*") {
+          ret = ret.concat(
+            await that.getUpperOrPeerByPosition(tenant, uid, tmp[1], OrgChartHelper.FIND_ALL)
+          );
         } else {
-          if (ouReg === "*") ouReg = ".*";
-          let posArr = tmp[1]
-            .split(":")
-            .map((x) => x.trim())
-            .filter((x) => x.length > 0);
-          let filter = {
-            tenant: tenant,
-            uid: { $ne: "OU---" },
-            ou: { $regex: ouReg },
-            position: { $in: posArr },
-          };
-          if (posArr.includes("all")) {
-            delete filter["position"];
-          }
-          ret = ret.concat(await OrgChart.find(filter));
+          ret = ret.concat(
+            await that.getUpperOrPeerByPosition(tenant, uid, tmp[1], findScope, ouReg)
+          );
         }
       }
     }

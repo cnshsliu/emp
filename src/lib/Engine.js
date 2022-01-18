@@ -933,7 +933,8 @@ Engine.explainPds = async function (payload) {
     payload.pds,
     theUser,
     wfRoot,
-    theKvarString
+    theKvarString,
+    payload.insertDefault
   ); //
   doers = doers.filter((x) => x.cn !== "USER_NOT_FOUND");
 
@@ -2944,9 +2945,17 @@ Engine.getDoer = async function (tenant, teamid, role, starter, wfRoot = null) {
  *
  * @return {...}
  */
-Common.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null, kvarString = null) {
+Common.getDoer = async function (
+  tenant,
+  teamid,
+  pds,
+  starter,
+  wfRoot = null,
+  kvarString = null,
+  insertDefault = true
+) {
   let ret = await Parser.getDoer(tenant, teamid, pds, starter, wfRoot, kvarString);
-  if (!ret || (Array.isArray(ret) && ret.length == 0)) {
+  if (insertDefault && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
     ret = [{ uid: starter, cn: await Cache.getUserName(starter) }];
   }
   return ret;
@@ -3095,6 +3104,7 @@ Engine.checkVisi = async function (tenant, tplid, email) {
         //wfid: null,
         //缺省用户使用模版的作者
         email: tpl.author,
+        insertDefault: true,
       });
       visiPeople = tmp.map((x) => x.uid);
     }
