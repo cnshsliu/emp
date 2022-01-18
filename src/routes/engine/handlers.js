@@ -419,7 +419,7 @@ const WorkflowStart = async function (req, h) {
 
     let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
     if (starterStaff) {
-      kvars["ou_starterou"] = {
+      kvars["ou_SOU"] = {
         value: starterStaff.ou,
         label: "Starter OU",
       };
