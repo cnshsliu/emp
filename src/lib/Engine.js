@@ -1,5 +1,6 @@
 const { Cheerio, Parser } = require("./Parser");
 const { Mutex } = require("./Mutex");
+const moment = require("moment");
 const Template = require("../database/models/Template");
 const User = require("../database/models/User");
 const Workflow = require("../database/models/Workflow");
@@ -1035,7 +1036,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   }
 
   //workNode.remove();
-  //await Todo.deleteMany({ workid: workid });
+  //await Todo.deleteMany({ tenant: tenant, workid: workid });
   workNode.removeClass("ST_RUN").addClass("ST_RETURNED");
   workNode.attr("doneat", isoNow);
   if (comment) {
@@ -2203,7 +2204,34 @@ Engine.startWorkflow = async function (
       starter: starter,
     }),
   ]);
+
+  Engine.clearOlderRehearsal(tenant, starter);
+
   return wf;
+};
+
+/**
+ * clearnout rehearsal workflow and todos old than 1 day.
+ */
+Engine.clearOlderRehearsal = async function (tenant, starter) {
+  let wfFilter = {
+    tenant: tenant,
+    starter: starter,
+    rehearsal: true,
+    updatedAt: { $lt: new Date(moment().subtract(1, "d")) },
+  };
+  Workflow.find(wfFilter, { wfid: 1, _id: 0 }).then((res) => {
+    res = res.map((x) => x.wfid);
+    console.log(res);
+    Todo.deleteMany({
+      tenant: tenant,
+      wfid: { $in: res },
+    }).then((r) => {
+      Workflow.deleteMany(wfFilter).then((d) => {
+        console.log("cleared", res);
+      });
+    });
+  });
 };
 
 Engine.stopWorkflow = async function (email, tenant, wfid) {
