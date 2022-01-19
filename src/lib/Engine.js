@@ -1898,7 +1898,7 @@ ${title}
 
 Metatocome`;
 
-  let subject = "You have new task to do";
+  let subject = `[New task] ${title}`;
   let extra_body = "";
   if (rehearsal) {
     subject = "Rehearsal: " + subject;
