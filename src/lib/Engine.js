@@ -1591,15 +1591,6 @@ Engine.createTodo = async function (obj) {
 
 Engine.compileContent = function (wfRoot, all_kvars, txt) {
   let ret = txt;
-  all_kvars = {
-    ...all_kvars,
-    starter: {
-      label: "Starter",
-      value: wfRoot.attr("starter"),
-      type: "string",
-      name: "starter",
-    },
-  };
   let template = Handlebars.compile(txt);
   ret = template(all_kvars);
   ret = SanitizeHtml(ret, {
