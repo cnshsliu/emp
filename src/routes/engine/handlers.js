@@ -635,9 +635,9 @@ const __GetTagsFilter = async function (tagsForFilter, myEmail) {
 };
 
 const WorkflowSearch = async function (req, h) {
+  let tenant = req.auth.credentials.tenant._id;
+  let myEmail = req.auth.credentials.email;
   try {
-    let tenant = req.auth.credentials.tenant._id;
-    let myEmail = req.auth.credentials.email;
     let me = await User.findOne({ _id: req.auth.credentials._id });
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read workflow");
@@ -733,10 +733,13 @@ const WorkflowSearch = async function (req, h) {
     ret = await asyncFilter(ret, async (x) => {
       return await Engine.checkVisi(tenant, x.tplid, myEmail);
     });
+
     return { total, objs: ret };
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  } finally {
+    Engine.clearOlderRehearsal(tenant, myEmail, 24);
   }
 };
 
@@ -757,10 +760,10 @@ const WorkflowGetLatest = async function (req, h) {
  * 要么myEmail用户被doerEmail用户委托
  */
 const WorkList = async function (req, h) {
+  let tenant = req.auth.credentials.tenant._id;
+  //如果有wfid，则找只属于这个wfid工作流的workitems
+  let myEmail = req.auth.credentials.email;
   try {
-    let tenant = req.auth.credentials.tenant._id;
-    //如果有wfid，则找只属于这个wfid工作流的workitems
-    let myEmail = req.auth.credentials.email;
     let myGroup = await Cache.getMyGroup(myEmail);
     let filter = {
       tenant: req.auth.credentials.tenant._id,
@@ -877,6 +880,8 @@ const WorkList = async function (req, h) {
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  } finally {
+    Engine.clearOlderRehearsal(tenant, myEmail, 24);
   }
 };
 

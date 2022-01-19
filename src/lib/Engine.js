@@ -2205,7 +2205,7 @@ Engine.startWorkflow = async function (
     }),
   ]);
 
-  Engine.clearOlderRehearsal(tenant, starter);
+  Engine.clearOlderRehearsal(tenant, starter, 24);
 
   return wf;
 };
@@ -2213,22 +2213,21 @@ Engine.startWorkflow = async function (
 /**
  * clearnout rehearsal workflow and todos old than 1 day.
  */
-Engine.clearOlderRehearsal = async function (tenant, starter) {
+Engine.clearOlderRehearsal = async function (tenant, starter, hours = 24) {
   let wfFilter = {
     tenant: tenant,
     starter: starter,
     rehearsal: true,
-    updatedAt: { $lt: new Date(moment().subtract(1, "d")) },
+    updatedAt: { $lt: new Date(moment().subtract(hours, "h")) },
   };
   Workflow.find(wfFilter, { wfid: 1, _id: 0 }).then((res) => {
     res = res.map((x) => x.wfid);
-    console.log(res);
     Todo.deleteMany({
       tenant: tenant,
       wfid: { $in: res },
     }).then((r) => {
       Workflow.deleteMany(wfFilter).then((d) => {
-        console.log("cleared", res);
+        console.log(`Old Rehearsal cleared in ${hours} hours`);
       });
     });
   });
