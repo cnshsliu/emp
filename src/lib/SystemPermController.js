@@ -42,6 +42,7 @@ internals.getMyGroupPerm = function (group) {
  */
 internals.hasPerm = async function (email, what, instance, op) {
   email = email.toLowerCase();
+  /*
   //先找缓存
   let permKey = `perm_${email}_${what}_${op}`;
   if (instance && instance._id) {
@@ -58,6 +59,9 @@ internals.hasPerm = async function (email, what, instance, op) {
     console.log("GOT perm from cache");
   }
   console.log("Perm>", perm, permKey);
+  */
+  let group = await Cache.getMyGroup(email);
+  let perm = this.control(this.getMyGroupPerm(group), email, what, instance, op);
   return perm;
 };
 
@@ -101,6 +105,16 @@ internals.control = function (perms, who, what, instance, op) {
         if (assign) ret = true;
         else ret = false;
       }
+    }
+    if (
+      what &&
+      instance &&
+      who &&
+      what === "workflow" &&
+      instance["starter"] === who &&
+      instance["rehearsal"] === true
+    ) {
+      ret = true;
     }
   }
   return ret;

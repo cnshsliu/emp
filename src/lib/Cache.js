@@ -3,6 +3,7 @@ const Tenant = require("../database/models/Tenant");
 const Site = require("../database/models/Site");
 const { asyncRedisClient } = require("../database/redis");
 const internals = {};
+const PERM_EXPIRE_SECONDS = 60;
 
 internals.setUserName = async function (email, username = null, expire = 60) {
   email = email.toLowerCase().trim();
@@ -68,9 +69,9 @@ internals.getMyGroup = async function (email) {
   let mygroup = await asyncRedisClient.get(mygroup_redis_key);
   if (!mygroup) {
     console.log("reset mygroup to redis");
-    let user = await User.findOne({ email: email });
+    let user = await User.findOne({ email: email }, { group: 1 });
     await asyncRedisClient.set(mygroup_redis_key, user.group);
-    await asyncRedisClient.expire(mygroup_redis_key, 30 * 60);
+    await asyncRedisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
     mygroup = user.group;
   } else {
     console.log("Use mygroup in redis");
@@ -141,7 +142,7 @@ internals.getMyPerm = async function (permKey) {
 };
 internals.setMyPerm = async function (permKey, perm) {
   await asyncRedisClient.set(permKey, perm);
-  await asyncRedisClient.expire(permKey, 30 * 60);
+  await asyncRedisClient.expire(permKey, PERM_EXPIRE_SECONDS);
 };
 internals.removeKey = async function (key) {
   await asyncRedisClient.del(key);
