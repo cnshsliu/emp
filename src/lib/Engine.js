@@ -2211,17 +2211,16 @@ Engine.clearOlderRehearsal = async function (tenant, starter, hours = 24) {
     rehearsal: true,
     updatedAt: { $lt: new Date(moment().subtract(hours, "h")) },
   };
-  Workflow.find(wfFilter, { wfid: 1, _id: 0 }).then((res) => {
-    res = res.map((x) => x.wfid);
-    Todo.deleteMany({
-      tenant: tenant,
-      wfid: { $in: res },
-    }).then((r) => {
-      Workflow.deleteMany(wfFilter).then((d) => {
-        console.log(`Old Rehearsal cleared in ${hours} hours`);
-      });
-    });
-  });
+  let res = await Workflow.find(wfFilter, { wfid: 1, _id: 0 });
+  res = res.map((x) => x.wfid);
+  if (res.length > 0) {
+    await Todo.deleteMany({ tenant: tenant, wfid: { $in: res } });
+    await DelayTimer.deleteMany({ tenant: tenant, wfid: { $in: res } });
+    await CbPoint.deleteMany({ tenant: tenant, wfid: { $in: res } });
+    await WfPbo.deleteMany({ tenant: tenant, wfid: { $in: res } });
+    await Workflow.deleteMany(wfFilter);
+  }
+  console.log(`Old Rehearsal cleared in ${hours} hours: ${res.length}`);
 };
 
 Engine.stopWorkflow = async function (email, tenant, wfid) {
@@ -2316,6 +2315,7 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
   await Todo.deleteMany({ tenant: tenant, wfid: wfid });
   await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
   await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
+  await WfPbo.deleteMany({ tenant: tenant, wfid: wfid });
   return ret;
 };
 Engine.setWorkflowPbo = async function (email, tenant, wfid, pbo) {
