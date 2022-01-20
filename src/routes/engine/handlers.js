@@ -172,7 +172,8 @@ const SeeItWork = async function (req, h) {
       "Metaflow Learning Guide",
       "",
       "",
-      {}
+      {},
+      "standalone"
     );
 
     return h.response(wfDoc);
@@ -454,10 +455,9 @@ const WorkflowStart = async function (req, h) {
       wftitle,
       "",
       "",
-      kvars
+      kvars,
+      "standalone"
     );
-
-    console.log(kvars);
 
     return wfDoc;
   } catch (err) {

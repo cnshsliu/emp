@@ -1252,6 +1252,7 @@ Client.yarkNode = async function (obj) {
       codeRetRoute = codeRetString;
     }
     //Get a clean KVAR array
+    //Script运行结束后，下面这些vars不需要被记录在节点上
     delete codeRetObj["RET"];
     delete codeRetObj["USE_TEAM"];
     delete codeRetObj["INNER_TEAM"];
@@ -1261,6 +1262,7 @@ Client.yarkNode = async function (obj) {
     if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
       let base64_string = Parser.codeToBase64(JSON.stringify(codeRetObj));
       kvarToAdd = `<div class="kvars" doer="EMP_SCRIPT">${base64_string}</div>`;
+      //KVAR above
     }
     if (Tools.hasValue(innerTeamSet)) {
       innerTeamToAdd = `<div class="innerteam">${Parser.codeToBase64(
@@ -1270,6 +1272,7 @@ Client.yarkNode = async function (obj) {
     if (runInSyncMode) {
       wfRoot.append(
         `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${kvarToAdd}${innerTeamToAdd}</div>`
+        //KVAR above: kvarToAdd
       );
       await Common.procNext(
         obj.tenant,
@@ -1287,6 +1290,7 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${kvarToAdd}${innerTeamToAdd}</div>`
       );
+      //KVAR above: kvarToAdd
       //异步回调不会调用procNext， 而是新建一个Callback Point
       //需要通过访问callbackpoint，来推动流程向后运行
       let cbp = new CbPoint({
@@ -1383,21 +1387,26 @@ Client.yarkNode = async function (obj) {
     let pbo = await Engine.getPbo(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
+    let sub_wf_id = uuidv4();
+    let parent_wf_id = isStandalone ? "" : obj.wfid;
+    let parent_work_id = isStandalone ? "" : workid;
+    let runmode = isStandalone ? "standalone" : "sub";
+    await Engine.startWorkflow(
+      //runsub
+      wf.rehearsal,
+      obj.tenant,
+      sub_tpl_id,
+      wf.starter,
+      pbo,
+      teamid,
+      sub_wf_id,
+      sub_tpl_id + "-sub-" + Tools.timeStringTag(),
+      parent_wf_id,
+      parent_work_id,
+      parent_vars,
+      runmode
+    );
     if (isStandalone) {
-      let standaloneWorkflowId = uuidv4();
-      await Engine.startWorkflow(
-        wf.rehearsal,
-        obj.tenant,
-        sub_tpl_id,
-        wfRoot.attr("starter"),
-        pbo,
-        obj.teamid,
-        standaloneWorkflowId,
-        sub_tpl_id + "-" + Tools.timeStringTag(),
-        "",
-        "",
-        parent_vars
-      );
       wfRoot.append(
         `<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} at="${isoNow}"></div>`
       );
@@ -1414,18 +1423,6 @@ Client.yarkNode = async function (obj) {
         nexts
       );
     } else {
-      await Engine.runSub(
-        wf.rehearsal,
-        obj.tenant,
-        wf.starter,
-        pbo,
-        teamid,
-        obj.wfid,
-        nodeid,
-        workid,
-        sub_tpl_id,
-        parent_vars
-      );
       wfRoot.append(
         `<div class="work SUB ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} at="${isoNow}"></div>`
       );
@@ -1442,7 +1439,7 @@ Client.yarkNode = async function (obj) {
     wf.status = "ST_DONE";
     let parent_wfid = wfRoot.attr("pwfid");
     let parent_workid = wfRoot.attr("pworkid");
-    if (Tools.hasValue(parent_wfid) && Tools.hasValue(parent_workid)) {
+    if (Tools.hasValue(parent_wfid) && Tools.hasValue(parent_workid) && wf.runmode === "sub") {
       let filter = { wfid: parent_wfid };
       let parent_wf = await Workflow.findOne(filter);
       let parent_tplid = parent_wf.tplid;
@@ -1457,6 +1454,7 @@ Client.yarkNode = async function (obj) {
       //Put child kvars to parent_work node in parent workflow
       let child_kvars = await Parser.getVars(obj.tenant, "EMP", wfRoot);
       await Parser.setVars(obj.tenant, parent_work, child_kvars);
+      //KVAR above, 在流程结束时设置父亲流程中当前节点的参数
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
       let nexts = [];
       //console.log(`Child kvars ${JSON.stringify(child_kvars)}`);
@@ -2083,52 +2081,6 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 };
 
 /**
- * Engine.runSub = async() 运行子流程
- *
- * @param {...} Engine.runSub = asynctenant -
- * @param {...} starter -
- * @param {...} pbo -
- * @param {...} teamid -
- * @param {...} parent_wf_id -
- * @param {...} nodeid -
- * @param {...} parent_work_id -
- * @param {...} sub_tpl_id -
- * @param {...} parent_vars -
- *
- * @return {...}
- */
-Engine.runSub = async function (
-  rehearsal,
-  tenant,
-  starter,
-  pbo,
-  teamid,
-  parent_wf_id,
-  nodeid,
-  parent_work_id,
-  sub_tpl_id,
-  parent_vars
-) {
-  let result = "DEFAULT";
-  //double confirm blank chars are trimed.
-  sub_tpl_id = sub_tpl_id.trim();
-  let sub_wf_id = uuidv4();
-  await Engine.startWorkflow(
-    rehearsal,
-    tenant,
-    sub_tpl_id,
-    starter,
-    pbo,
-    teamid,
-    sub_wf_id,
-    sub_tpl_id + "_" + sub_wf_id, //sub title
-    parent_wf_id,
-    parent_work_id,
-    parent_vars
-  );
-};
-
-/**
  * Start a workflow
  * @param  {} tenant    Tenant id
  * @param  {} tplid     Template ID
@@ -2151,7 +2103,8 @@ Engine.startWorkflow = async function (
   wftitle,
   parent_wf_id,
   parent_work_id,
-  parent_vars
+  parent_vars,
+  runmode = "standalone"
 ) {
   let filter = { tenant: tenant, tplid: tplid };
   let tpl = await Template.findOne(filter);
@@ -2166,6 +2119,7 @@ Engine.startWorkflow = async function (
     tpl.doc +
     `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"><div class="kvars" doer="EMP_PARENT">${base64_parent_kvars}</div></div>` +
     "</div>";
+  //KVAR above
   //TODO: where to put attachments on workflow start?  in workflow object or in START work node?
   let wf = new Workflow({
     tenant: tenant,
@@ -2177,6 +2131,8 @@ Engine.startWorkflow = async function (
     status: "ST_RUN",
     doc: startDoc,
     rehearsal: rehearsal,
+    version: 2,
+    runmode: runmode,
   });
   wf = await wf.save();
   await Engine.setPbo(tenant, wfid, pbo);
@@ -2276,6 +2232,7 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
     tplDoc +
     `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${old_pwfid}" pworkid="${old_pworkid}"><div class="kvars" doer="EMP_PARENT">${base64_string}</div></div>` +
     "</div>";
+  //KVAR above
   let wf = new Workflow({
     wfid: wfid,
     wftitle: wftitle,
@@ -2286,6 +2243,8 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
     status: "ST_RUN",
     doc: startDoc,
     rehearsal: old_wf.rehearsal,
+    version: 2, //new workflow new version 2
+    runmode: old_wf.runmode ? old_wf.runmode : "standalone",
   });
   wf = await wf.save();
   await Engine.setPbo(tenant, wfid, pbo);

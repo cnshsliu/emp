@@ -32,6 +32,8 @@ var WorkflowSchema = new Schema(
     starter: { type: String, required: [true, "不能为空"], index: true },
     doc: { type: String, required: true },
     rehearsal: { type: Boolean, required: true, default: false, index: true },
+    runmode: { type: String, default: "standalone" },
+    version: { type: Number, default: 1 },
   },
   { timestamps: true }
 );
