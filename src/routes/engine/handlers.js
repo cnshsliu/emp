@@ -144,7 +144,7 @@ const TemplateBasic = async function (req, h) {
   }
 };
 
-const WorkflowUpgradeVars = async function (req, h) {
+const WorkflowUpgrade = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -154,11 +154,54 @@ const WorkflowUpgradeVars = async function (req, h) {
       let wfIO = await Parser.parse(wf.doc);
       let tpRoot = wfIO(".template");
       let wfRoot = wfIO(".workflow");
-      let kvars = wfRoot.find(".kvars");
-      for (let i = 0; i < kvars.length; i++) {}
+      let kvars = wfRoot.find(".kvars").first();
+      for (let i = 0; i < kvars.length; i++) {
+        let cheerObj = Cheerio(kvars.get(i));
+        let doer = cheerObj.attr("doer");
+        if (!doer) doer = "EMP";
+        let base64_string = cheerObj.text();
+        let wfid = wf.wfid;
+        let code = Parser.base64ToCode(base64_string);
+        if (base64_string !== "e30=") {
+          console.log(doer, code);
+          let obj = new KVar({
+            tenant: tenant,
+            wfid: wfid,
+            objid: "workflow",
+            doer: doer,
+            content: base64_string,
+          });
+          obj = await obj.save();
+        }
+      }
+      let works = wfRoot.find(".work");
+      for (let i = 0; i < works.length; i++) {
+        let work = Cheerio(works.get(i));
+        kvars = work.find(".kvars");
+        for (let k = 0; k < kvars.length; k++) {
+          let kvar = Cheerio(kvars.get(k));
+          let doer = kvar.attr("doer");
+          if (!doer) doer = "EMP";
+          let base64_string = kvar.text();
+          let wfid = wf.wfid;
+          let workid = work.attr("id");
+          if (base64_string !== "e30=") {
+            console.log(doer, wfid, workid, base64_string);
+
+            let obj = new KVar({
+              tenant: tenant,
+              wfid: wfid,
+              objid: workid,
+              doer: doer,
+              content: base64_string,
+            });
+            obj = await obj.save();
+          }
+        }
+      }
     }
 
-    return { total, objs: ret };
+    return h.response("done");
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3037,5 +3080,5 @@ module.exports = {
   MemberSystemPerm,
   DemoAPI,
   SeeItWork,
-  WorkflowUpgradeVars,
+  WorkflowUpgrade,
 };

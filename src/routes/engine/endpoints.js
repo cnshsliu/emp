@@ -755,8 +755,8 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/workflow/v12",
-    handler: Handlers.WorkflowUpgradeVars,
+    path: "/workflow/upgrade",
+    handler: Handlers.WorkflowUpgrade,
     config: {
       description: "get workflow kvars",
       tags: ["api"],
