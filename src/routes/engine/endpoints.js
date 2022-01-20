@@ -755,6 +755,23 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/workflow/v12",
+    handler: Handlers.WorkflowUpgradeVars,
+    config: {
+      description: "get workflow kvars",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {},
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/work/status",
     handler: Handlers.WorkStatus,
     config: {

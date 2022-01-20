@@ -12,6 +12,7 @@ const Comment = require("../database/models/Comment");
 const Team = require("../database/models/Team");
 const Delegation = require("../database/models/Delegation");
 const WfPbo = require("../database/models/WfPbo");
+const KVar = require("../database/models/KVar");
 const DelayTimer = require("../database/models/DelayTimer");
 const OrgChartHelper = require("./OrgChartHelper");
 const lodash = require("lodash");
@@ -587,9 +588,6 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       //有多人Todo，但不是要求ByAll，也就是，有一个人完成即可
     }
   }
-  if (comment) {
-    comment = Engine.compileContent(wfRoot, kvars, comment);
-  }
 
   //如果可以完成当前节点
   let nexts = [];
@@ -597,17 +595,12 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     workNode.removeClass("ST_RUN");
     workNode.addClass("ST_DONE");
     workNode.attr("doneat", isoNow);
-    //设置 comment 到worknode上，对于多个人一起参与的节点，无法判断是谁说的
-    //所以，comment需要分todo（对应到人）来设定
-    /* if (comment) {
-      worknode.append(`<div class="comment">${parser.codetobase64(comment)}</div>`);
-    } */
     if (route) {
       //workNode.attr("route", route);
       //Move route from attr to mongo
       todo.route = route;
     }
-    await Parser.setVars(tenant, workNode, kvars, doer);
+    await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, doer);
 
     wf.doc = wfIO.html();
     await wf.save();
@@ -624,6 +617,10 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       route,
       nexts
     );
+  }
+  if (comment) {
+    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
+    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
   }
 
   todo.comment = comment;
@@ -744,7 +741,7 @@ Engine.doCallback = async function (cbp, payload) {
   workNode.addClass("ST_DONE");
   workNode.attr("doneat", isoNow);
   if (payload.kvars) {
-    await Parser.setVars(tenant, workNode, payload.kvars, "EMP");
+    await Parser.setVars(tenant, cbp.wfid, cbp.workid, payload.kvars, "EMP");
   }
 
   wf.doc = wfIO.html();
@@ -1043,7 +1040,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     comment = Engine.compileContent(wfRoot, kvars, comment);
     /* workNode.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`); */
   }
-  await Parser.setVars(tenant, workNode, kvars, fact_doer);
+  await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, fact_doer);
   wf.doc = wfIO.html();
   await wf.save();
 
@@ -1138,19 +1135,18 @@ Client.yarkNode = async function (obj) {
     //TODO: get smtp settting from tenant
     //TODO: node.template replacement with handlebars library
     //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
-    let doer = await Common.getDoer(
+    let doers = await Common.getDoer(
       obj.tenant,
       teamid,
       tpNode.attr("role"),
       wfRoot.attr("starter"),
       wfRoot
     );
-    if (Array.isArray(doer) === false) {
+    if (Array.isArray(doers) === false) {
       console.error("Common.getDoer should return array", 5);
+    } else {
+      doers = [doers];
     }
-    let recipients = Common.getEmailRecipientsFromDoers(doer);
-    //TODO: get mailSetting from Redis
-
     let smtp = await Cache.getOrgSmtp(obj.tenant);
     let mailSetting = {
       smtp: smtp,
@@ -1159,39 +1155,45 @@ Client.yarkNode = async function (obj) {
     //TODO: send to queue, like what "verify email" process does.
     let mail_subject = "Message from Metatocome";
     let mail_body = "Message from Metatocome";
-    try {
-      let tmp_subject = tpNode.find("subject").first().text();
-      let tmp_body = tpNode.find("content").first().text();
-      let all_kvars = await Parser.getVars(obj.tenant, "EMP", wfRoot);
-      if (Tools.hasValue(tmp_subject)) {
-        mail_subject = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_subject));
+    //let recipients = Common.getEmailRecipientsFromDoers(doers);
+    //TODO: get mailSetting from Redis
+
+    for (let i = 0; i < doers.length; i++) {
+      let recipients = doers[i].uid;
+      try {
+        let tmp_subject = tpNode.find("subject").first().text();
+        let tmp_body = tpNode.find("content").first().text();
+        let all_kvars = await Parser.userGetVars(obj.tenant, doers[i].uid, obj.wfid, "workflow");
+        if (Tools.hasValue(tmp_subject)) {
+          mail_subject = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_subject));
+        }
+        if (Tools.hasValue(tmp_body)) {
+          mail_body = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_body));
+        }
+      } catch (error) {
+        console.warn(error.message);
       }
-      if (Tools.hasValue(tmp_body)) {
-        mail_body = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_body));
+      try {
+        if (wf.rehearsal) {
+          mail_subject = "Rehearsal: " + mail_subject;
+          recipients = wf.starter;
+        }
+        await ZMQ.server.QueSend(
+          "EmpBiz",
+          JSON.stringify({
+            CMD: "SendTenantMail",
+            smtp: mailSetting.smtp,
+            from: mailSetting.sender,
+            recipients: recipients,
+            cc: "",
+            bcc: "",
+            subject: mail_subject,
+            html: Parser.codeToBase64(mail_body),
+          })
+        );
+      } catch (error) {
+        console.error(error);
       }
-    } catch (error) {
-      console.warn(error.message);
-    }
-    try {
-      if (wf.rehearsal) {
-        mail_subject = "Rehearsal: " + mail_subject;
-        recipients = wf.starter;
-      }
-      await ZMQ.server.QueSend(
-        "EmpBiz",
-        JSON.stringify({
-          CMD: "SendTenantMail",
-          smtp: mailSetting.smtp,
-          from: mailSetting.sender,
-          recipients: recipients,
-          cc: "",
-          bcc: "",
-          subject: mail_subject,
-          html: Parser.codeToBase64(mail_body),
-        })
-      );
-    } catch (error) {
-      console.error(error);
     }
     wfRoot.append(
       `<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
@@ -1217,7 +1219,7 @@ Client.yarkNode = async function (obj) {
     console.log("===PARSED==");
     console.log(parsed_code);
     console.log("===========");
-    let all_kvars = await Parser.getVars(obj.tenant, "EMP", wfRoot);
+    let all_kvars = await Parser.sysGetVars(obj.tenant, wfRoot);
     let codeRetString = '{"RET":"DEFAULT"}';
     let codeRetObj = {};
     let codeRetRoute = "DEFAULT";
@@ -1257,13 +1259,7 @@ Client.yarkNode = async function (obj) {
     delete codeRetObj["USE_TEAM"];
     delete codeRetObj["INNER_TEAM"];
 
-    let kvarToAdd = "";
     let innerTeamToAdd = "";
-    if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
-      let base64_string = Parser.codeToBase64(JSON.stringify(codeRetObj));
-      kvarToAdd = `<div class="kvars" doer="EMP_SCRIPT">${base64_string}</div>`;
-      //KVAR above
-    }
     if (Tools.hasValue(innerTeamSet)) {
       innerTeamToAdd = `<div class="innerteam">${Parser.codeToBase64(
         JSON.stringify(innerTeamSet)
@@ -1271,8 +1267,7 @@ Client.yarkNode = async function (obj) {
     }
     if (runInSyncMode) {
       wfRoot.append(
-        `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${kvarToAdd}${innerTeamToAdd}</div>`
-        //KVAR above: kvarToAdd
+        `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
       );
       await Common.procNext(
         obj.tenant,
@@ -1288,9 +1283,8 @@ Client.yarkNode = async function (obj) {
       );
     } else {
       wfRoot.append(
-        `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${kvarToAdd}${innerTeamToAdd}</div>`
+        `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
       );
-      //KVAR above: kvarToAdd
       //异步回调不会调用procNext， 而是新建一个Callback Point
       //需要通过访问callbackpoint，来推动流程向后运行
       let cbp = new CbPoint({
@@ -1301,6 +1295,9 @@ Client.yarkNode = async function (obj) {
         workid: workid,
       });
       await cbp.save();
+    }
+    if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
+      await Parser.setVars(tenant, obj.wfid, workid, codeRetObj, "EMP");
     }
   } else if (tpNode.hasClass("AND")) {
     let andDone = Common.checkAnd(
@@ -1383,7 +1380,7 @@ Client.yarkNode = async function (obj) {
       `<div class="work GROUND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
     );
   } else if (tpNode.hasClass("SUB")) {
-    let parent_vars = await Parser.getVars(obj.tenant, "EMP", wfRoot);
+    let parent_vars = await Parser.sysGetVars(obj.tenant, wfRoot);
     let pbo = await Engine.getPbo(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
@@ -1452,8 +1449,8 @@ Client.yarkNode = async function (obj) {
       parent_work.removeClass("ST_RUN");
       parent_work.addClass("ST_DONE");
       //Put child kvars to parent_work node in parent workflow
-      let child_kvars = await Parser.getVars(obj.tenant, "EMP", wfRoot);
-      await Parser.setVars(obj.tenant, parent_work, child_kvars);
+      let child_kvars = await Parser.sysGetVars(obj.tenant, wfRoot);
+      await Parser.setVars(obj.tenant, parent_wfid, parent_workid, child_kvars, "EMP");
       //KVAR above, 在流程结束时设置父亲流程中当前节点的参数
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
       let nexts = [];
@@ -1510,11 +1507,8 @@ Client.yarkNode = async function (obj) {
     //     "role"
     //   )}" doer="${doer}"></div>`
     // );
-    await Parser.setVars(
-      obj.tenant,
-      wfRoot.children("#" + workid),
-      await Parser.getVars(obj.tenant, "EMP", tpNode)
-    );
+    let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode);
+    await Parser.setVars(obj.tenant, obj.wfid, workid, varsFromTemplateNode, "EMP");
     //建立worklist中的work
     let tpNodeTitle = tpNode.find("p").text().trim();
     if (tpNodeTitle.length === 0) {
@@ -1524,7 +1518,7 @@ Client.yarkNode = async function (obj) {
       }
     }
     if (tpNodeTitle.indexOf("[") >= 0) {
-      tpNodeTitle = await Parser.replaceStringWithKVar(tenant, tpNodeTitle, null, wfRoot);
+      tpNodeTitle = await Parser.replaceStringWithKVar(tenant, tpNodeTitle, null, wf.wfid);
     }
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
     //TODO TO THINK, adhoctask直接添加了comment，这里没有添加，主要是从模板过来的任务项，comment没有来源
@@ -2112,12 +2106,10 @@ Engine.startWorkflow = async function (
   wfid = Tools.isEmpty(wfid) ? uuidv4() : wfid;
   wftitle = Tools.isEmpty(wftitle) ? (await Cache.getUserName(starter)) + "/" + tplid : wftitle;
   teamid = Tools.isEmpty(teamid) ? "" : teamid;
-  parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
-  let base64_parent_kvars = Parser.codeToBase64(JSON.stringify(parent_vars));
   let startDoc =
     `<div class="process">` +
     tpl.doc +
-    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"><div class="kvars" doer="EMP_PARENT">${base64_parent_kvars}</div></div>` +
+    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
     "</div>";
   //KVAR above
   //TODO: where to put attachments on workflow start?  in workflow object or in START work node?
@@ -2136,6 +2128,8 @@ Engine.startWorkflow = async function (
   });
   wf = await wf.save();
   await Engine.setPbo(tenant, wfid, pbo);
+  parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
+  await Parser.setVars(tenant, wfid, "workflow", parent_vars, "EMP");
   await Engine.PUB.send([
     "EMP",
     JSON.stringify({
@@ -2152,7 +2146,7 @@ Engine.startWorkflow = async function (
     }),
   ]);
 
-  Engine.clearOlderRehearsal(tenant, starter, 24);
+  Engine.clearOlderRehearsal(tenant, starter, 5, "m");
 
   return wf;
 };
@@ -2160,12 +2154,12 @@ Engine.startWorkflow = async function (
 /**
  * clearnout rehearsal workflow and todos old than 1 day.
  */
-Engine.clearOlderRehearsal = async function (tenant, starter, hours = 24) {
+Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit = "h") {
   let wfFilter = {
     tenant: tenant,
     starter: starter,
     rehearsal: true,
-    updatedAt: { $lt: new Date(moment().subtract(hours, "h")) },
+    updatedAt: { $lt: new Date(moment().subtract(howmany, unit)) },
   };
   let res = await Workflow.find(wfFilter, { wfid: 1, _id: 0 });
   res = res.map((x) => x.wfid);
@@ -2174,9 +2168,10 @@ Engine.clearOlderRehearsal = async function (tenant, starter, hours = 24) {
     await DelayTimer.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await CbPoint.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await WfPbo.deleteMany({ tenant: tenant, wfid: { $in: res } });
+    await KVar.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await Workflow.deleteMany(wfFilter);
   }
-  console.log(`Old Rehearsal cleared in ${hours} hours: ${res.length}`);
+  console.log(`Old Rehearsal cleared in ${howmany} ${unit}: ${res.length}`);
 };
 
 Engine.stopWorkflow = async function (email, tenant, wfid) {
@@ -2210,31 +2205,31 @@ Engine.stopWorkflow = async function (email, tenant, wfid) {
 };
 
 Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, teamid, wftitle) {
-  let old_wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
+  let old_wfid = wfid;
+  let old_wf = await Workflow.findOne({ tenant: tenant, wfid: old_wfid });
   if (!SystemPermController.hasPerm(email, "workflow", old_wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let old_wfIO = await Parser.parse(old_wf.doc);
   let old_wfRoot = old_wfIO(".workflow");
   let old_pwfid = old_wfRoot.attr("pwfid");
   let old_pworkid = old_wfRoot.attr("pworkid");
-  await Engine.stopWorkflow(email, tenant, wfid);
+  await Engine.stopWorkflow(email, tenant, old_wfid);
   let isoNow = Tools.toISOString(new Date());
-  wfid = uuidv4();
   starter = Tools.defaultValue(starter, old_wf.starter);
   teamid = Tools.defaultValue(teamid, old_wf.teamid);
   wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
-  pbo = Tools.defaultValue(pbo, await Engine.getPbo(tenant, wfid));
-  let base64_string = old_wfRoot.find(".kvars").first().text();
+  pbo = Tools.defaultValue(pbo, await Engine.getPbo(tenant, old_wfid));
+  let new_wfid = uuidv4();
   let tplDoc = Cheerio.html(old_wfIO(".template").first());
   let tplid = old_wf.tplid;
   let startDoc =
     `<div class="process">` +
     tplDoc +
-    `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${old_pwfid}" pworkid="${old_pworkid}"><div class="kvars" doer="EMP_PARENT">${base64_string}</div></div>` +
+    `<div class="workflow ST_RUN" id="${new_wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${old_pwfid}" pworkid="${old_pworkid}"></div>` +
     "</div>";
   //KVAR above
   let wf = new Workflow({
-    wfid: wfid,
+    wfid: new_wfid,
     wftitle: wftitle,
     tenant: tenant,
     teamid: teamid,
@@ -2247,6 +2242,7 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
     runmode: old_wf.runmode ? old_wf.runmode : "standalone",
   });
   wf = await wf.save();
+  await Parser.copyVars(tenant, old_wfid, "workflow", new_wfid, "workflow");
   await Engine.setPbo(tenant, wfid, pbo);
   await Engine.PUB.send([
     "EMP",
@@ -2275,6 +2271,7 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
   await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
   await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
   await WfPbo.deleteMany({ tenant: tenant, wfid: wfid });
+  await KVar.deleteMany({ tenant: tenant, wfid: wfid });
   return ret;
 };
 Engine.setWorkflowPbo = async function (email, tenant, wfid, pbo) {
@@ -2451,7 +2448,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
           },
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
-  ret.kvars = await Parser.getVars(tenant, email, workNode);
+  ret.kvars = await Parser.userGetVars(tenant, email, work.wfid, work.workid);
 
   /*
    //这段代码会导致死循环，比如，一个var引入同一个var， var=[var]
@@ -2469,8 +2466,8 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};
   //不包括那些被放上去的var定义，这些定义的doer是EMP;
-  //Parser.getVars第二个参数，是包含哪些doer， 第三个参数，是不包含哪些doers
-  ret.wf.kvars = await Parser.getVars(tenant, email, wfRoot, [], ["EMP"]);
+  //Parser.userGetVars第二个参数，是包含哪些doer， 第三个参数，是不包含哪些doers
+  ret.wf.kvars = await Parser.userGetVars(tenant, email, wfid, "workflow", [], []);
   ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
   ret.wf.starter = wfRoot.attr("starter");
   ret.wf.wftitle = wfRoot.attr("wftitle");
@@ -2482,8 +2479,8 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
 
   let tmp = Parser.base64ToCode(Common.getInstruct(tpRoot, work.nodeid));
-  let all_kvars = await Parser.getVars(tenant, email, wfRoot);
-  tmp = Engine.compileContent(wfRoot, all_kvars, tmp);
+  let all_visied_kvars = await Parser.userGetVars(tenant, email, wfid, "workflow");
+  tmp = Engine.compileContent(wfRoot, all_visied_kvars, tmp);
   ret.instruct = Parser.codeToBase64(tmp);
 
   ret.routingOptions = Common.getRoutingOptions(tpRoot, work.nodeid);
@@ -2571,7 +2568,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     //if (workNode.attr("route")) historyEntry.route = workNode.attr("route");
     //Move route from node attr to mongo
     if (works[i].route) historyEntry.route = works[i].route;
-    let kvars = await Parser.getVars(tenant, email, workNode);
+    let kvars = await Parser.userGetVars(tenant, email, works[i].wfid, works[i].workid);
     historyEntry.kvarsArr = Parser.kvarsToArray(kvars);
     tmpRet.push(historyEntry);
   }
@@ -2877,18 +2874,15 @@ Engine.resumeDelayTimers = async function (tenant, wfid) {
  * 如果忽略workid,则取工作流的变量
  * 如果有workID, 则取工作项的变量
  */
-Engine.getKVars = async function (email, tenant, wfid, workid) {
+Engine.getKVars = async function (tenant, email, wfid, workid) {
   let filter = { tenant: tenant, wfid: wfid };
-  let wf = await Workflow.findOne(filter);
+  let wf = await Workflow.findOne(filter, { doc: 0 });
   if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
-  let wfIO = await Parser.parse(wf.doc);
-  let wfRoot = wfIO(".workflow");
   if (workid) {
-    let work = wfRoot.find(`#${workid}`);
-    return await Parser.getVars(tenant, email, work);
+    return await Parser.userGetVars(tenant, email, wfid, workid);
   } else {
-    return await Parser.getVars(tenant, email, wfRoot);
+    return await Parser.userGetVars(tenant, email, wfid, "workflow");
   }
 };
 

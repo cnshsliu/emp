@@ -144,6 +144,27 @@ const TemplateBasic = async function (req, h) {
   }
 };
 
+const WorkflowUpgradeVars = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let wfs = await Workflow.find({ tenant: tenant });
+    for (let i = 0; i < wfs.length; i++) {
+      let wf = wfs[i];
+      let wfIO = await Parser.parse(wf.doc);
+      let tpRoot = wfIO(".template");
+      let wfRoot = wfIO(".workflow");
+      let kvars = wfRoot.find(".kvars");
+      for (let i = 0; i < kvars.length; i++) {}
+    }
+
+    return { total, objs: ret };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const SeeItWork = async function (req, h) {
   try {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
@@ -1386,8 +1407,8 @@ const WorkflowGetKVars = async function (req, h) {
   try {
     let email = req.auth.credentials.email;
     let kvars = Engine.getKVars(
-      email,
       req.auth.credentials.tenant._id,
+      email,
       req.payload.wfid,
       req.payload.workid
     );
@@ -3016,4 +3037,5 @@ module.exports = {
   MemberSystemPerm,
   DemoAPI,
   SeeItWork,
+  WorkflowUpgradeVars,
 };

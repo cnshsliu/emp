@@ -2,6 +2,7 @@ const Cheerio = require("cheerio");
 const lodash = require("lodash");
 const Tools = require("../tools/tools.js");
 const Team = require("../database/models/Team");
+const KVar = require("../database/models/KVar");
 const Cache = require("./Cache");
 const OrgChartHelper = require("./OrgChartHelper");
 //const Engine = require("./Engine");
@@ -91,9 +92,85 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
     return vars;
   }
 };
-Parser.getVars = async function (tenant, email, elem, doers = [], notdoers = []) {
+/**
+ * Get all vars without visi checking.
+ *
+ * @param {...} Parser.sysGetVars = asynctenant -
+ * @param {...} elem -
+ * @param {...} doers = [] -
+ * @param {...} notdoers = [] -
+ *
+ * @return {...}
+ */
+Parser.sysGetVars = async function (tenant, wfid, objid, doers = [], notdoers = []) {
+  return await Parser.userGetVars(tenant, "EMP", wfid, objid, doers, notdoers);
+};
+
+/**
+ */
+Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], notdoers = []) {
+  if (typeof wfid !== "string") {
+    console.trace("wfid should be a string");
+  }
   let ret = {};
-  const mergeElementVars = async function (elem, allVars) {
+  const mergeElementVars = async function (tenant, base64_string, allVars) {
+    let code = Parser.base64ToCode(base64_string);
+    let jsonVars = {};
+    try {
+      jsonVars = JSON.parse(code);
+    } catch (err) {
+      console.log(err);
+    }
+    allVars = await Parser.mergeVars(tenant, allVars, jsonVars);
+    return allVars;
+  };
+  let filter = {};
+  if (objid === "workflow") {
+    filter = { tenant: tenant, wfid: wfid };
+  } else {
+    filter = { tenant: tenant, wfid: wfid, objid: objid };
+  }
+  let kvars = await KVar.find(filter).sort("createdAt");
+  for (let i = 0; i < kvars.length; i++) {
+    let includeIt = true;
+    let doer = kvars[i].doer;
+    if (!doer) doer = "EMP";
+    if (doers.length > 0) {
+      if (doers.indexOf(doer) < 0) includeIt = false;
+      else includeIt = true;
+    }
+    if (includeIt && notdoers.length > 0) {
+      if (notdoers.indexOf(doer) >= 0) includeIt = false;
+    }
+    if (includeIt) {
+      ret = await mergeElementVars(tenant, kvars[i].content, ret);
+    }
+  }
+
+  //如果formWhom不是EMP，而是邮箱，则需要检查visi
+  if (forWhom !== "EMP") {
+    //处理kvar的可见行 visi,
+    for (const [key, valueDef] of Object.entries(ret)) {
+      if (Tools.isEmpty(valueDef.visi)) continue;
+      else {
+        let tmp = await Parser.getDoer(tenant, "", valueDef.visi, forWhom);
+        visiPeople = tmp.map((x) => x.uid);
+        console.log("found visi", valueDef.visi, visiPeople);
+        //如果去掉forWhom!=="EMP"会导致彻底不放出
+        //EMP是用在代表系统， 系统应该都可以看到
+        if (visiPeople.includes(forWhom) === false) {
+          delete ret[key];
+        }
+      }
+    }
+  }
+
+  return ret;
+};
+
+Parser.sysGetTemplateVars = async function (tenant, elem) {
+  let ret = {};
+  const mergeTplVars = async function (elem, allVars) {
     let base64_string = elem.text();
     let code = Parser.base64ToCode(base64_string);
     let jsonVars = {};
@@ -106,53 +183,14 @@ Parser.getVars = async function (tenant, email, elem, doers = [], notdoers = [])
     return allVars;
   };
   if (elem.hasClass("kvars")) {
-    let includeIt = true;
-    let doer = elem.attr("doer");
-    if (!doer) doer = "EMP";
-    if (doers.length > 0) {
-      if (doers.indexOf(doer) < 0) includeIt = false;
-      else includeIt = true;
-    }
-    if (includeIt && notdoers.length > 0) {
-      if (notdoers.indexOf(doer) >= 0) includeIt = false;
-    }
-    if (includeIt) {
-      ret = await mergeElementVars(elem, ret);
-    }
+    ret = await mergeTplVars(elem, ret);
   } else {
     let kvars = elem.find(".kvars");
     for (let i = 0; i < kvars.length; i++) {
       let cheerObj = Cheerio(kvars.get(i));
-      let includeIt = true;
-      let doer = cheerObj.attr("doer");
-      if (!doer) doer = "EMP";
-      if (doers.length > 0) {
-        if (doers.indexOf(doer) < 0) includeIt = false;
-        else includeIt = true;
-      }
-      if (includeIt && notdoers.length > 0) {
-        if (notdoers.indexOf(doer) >= 0) includeIt = false;
-      }
-      if (includeIt) {
-        ret = await mergeElementVars(cheerObj, ret);
-      }
+      ret = await mergeTplVars(cheerObj, ret);
     }
   }
-  //处理kvar的可见行 visi,
-  for (const [key, valueDef] of Object.entries(ret)) {
-    if (Tools.isEmpty(valueDef.visi)) continue;
-    else {
-      let tmp = await Parser.getDoer(tenant, "", valueDef.visi, email);
-      visiPeople = tmp.map((x) => x.uid);
-      console.log("found visi", valueDef.visi, visiPeople);
-      //如果去掉email!=="EMP"会导致彻底不放出
-      //EMP是用在代表系统， 系统应该都可以看到
-      if (email !== "EMP" && visiPeople.includes(email) === false) {
-        delete ret[key];
-      }
-    }
-  }
-
   return ret;
 };
 //Get Team define from PDS. a Team definition starts with "T:"
@@ -329,8 +367,20 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   }
   return ret;
 };
-Parser.setVars = async function (tenant, elem, newvars, doer) {
-  let oldVars = await Parser.getVars(tenant, "EMP", elem);
+Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid) {
+  let filter = { tenant: tenant, wfid: fromWfid, objid: fromObjid };
+  let kvar = await KVar.findOne(filter);
+  if (!kvar) {
+    console.warn("COPY_VARS_FAILED", "can't find old vars");
+    return null;
+  }
+  let newKvar = new KVar({ tenant: tenant, wfid: toWfid, objid: toObjid, content: kvar.content });
+  newKvar = await newKvar.save();
+  return newKvar;
+};
+Parser.setVars = async function (tenant, wfid, objid, newvars, doer) {
+  if (JSON.stringify(newvars) === "{}") return;
+  let oldVars = await Parser.sysGetVars(tenant, wfid, objid);
   for (const [name, valueDef] of Object.entries(newvars)) {
     while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
     while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
@@ -338,32 +388,19 @@ Parser.setVars = async function (tenant, elem, newvars, doer) {
 
   let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
   let base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
+  let filter = { tenant: tenant, wfid: wfid, objid: objid, doer: doer };
   doer = lodash.isEmpty(doer) ? "EMP" : doer;
-  elem.children(".kvars").remove();
-  elem.append('<div class="kvars" doer="' + doer + '">' + base64_vars_string + "</div>");
+  await KVar.deleteMany(filter);
+  let kvar = new KVar({
+    tenant: tenant,
+    wfid: wfid,
+    objid: objid,
+    doer: doer,
+    content: base64_vars_string,
+  });
+  kvar = await kvar.save();
+
   return mergedVars;
-  /*
-    let kvarsElem = null;
-    if (elem.hasClass('kvars')) {
-        kvarsElem = elem;
-    } else {
-        let tmp = elem.children('.kvars');
-        if (tmp.length > 0) {
-            kvarsElem = tmp;
-        } else {
-            elem.append('<div class="kvars">e30=</div>');
-            kvarsElem = elem.children('.kvars');
-        }
-    }
-    let oldVars = Parser.getVars(kvarsElem);
-    // console.log(`oldVars: ${JSON.stringify(oldVars)}`);
-    lodash.merge(oldVars, newvars);
-    // console.log(`newVars: ${JSON.stringify(newvars)}`);
-    // console.log(`newVars: ${JSON.stringify(oldVars)}`);
-    kvarsElem.empty();
-    let oldVars_string = Parser.codeToBase64(JSON.stringify(oldVars));
-    kvarsElem.text(oldVars_string);
-    */
 };
 
 /**
@@ -375,7 +412,7 @@ Parser.setVars = async function (tenant, elem, newvars, doer) {
  *
  * @return {...}
  */
-Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wfRoot) {
+Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wfid) {
   let kvars = {};
   if (kvarString) {
     let kvarPairs = Parser.splitStringToArray(kvarString, ";");
@@ -388,8 +425,8 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
       }
       return kv[0];
     });
-  } else if (wfRoot) {
-    kvars = await Parser.getVars(tenant, "EMP", wfRoot);
+  } else if (wfid) {
+    kvars = await Parser.sysGetVars(tenant, wfid, "workflow");
   }
 
   let m = false;
@@ -479,34 +516,6 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null, kv
   return ret;
 };
 
-/**
- * Parser.getVarsHistory() get kvars log for a work node
- *
- * @param {node} Parser.elem -
- *
- * @return {JSON}
- */
-Parser.getVarsHistory = function (elem) {
-  let ret = [];
-  if (elem.hasClass("kvars")) {
-    ret.push({
-      doer: elem.attr("doer"),
-      kvars: JSON.parse(Parser.base64ToCode(elem.text())),
-    });
-  } else {
-    let kvars = elem.find(".kvars");
-    for (let i = 0; i < kvars.length; i++) {
-      let elem = Cheerio(kvars.get(i));
-      ret.push({
-        doer: elem.attr("doer"),
-        kvars: JSON.parse(Parser.base64ToCode(elem.text())),
-      });
-    }
-  }
-  return ret;
-};
-
-//Parser.kvarsToArray = function (kvars, workid) {
 Parser.kvarsToArray = function (kvars) {
   let kvarsArr = [];
   for (const [name, valueDef] of Object.entries(kvars)) {
