@@ -862,7 +862,16 @@ Engine.addAdhoc = async function (payload) {
   let wfRoot = wfIO(".workflow");
   let workid = uuidv4();
 
-  let doers = await Common.getDoer(payload.tenant, wf.teamid, payload.doer, wf.starter); //
+  let doers = await Common.getDoer(
+    payload.tenant,
+    wf.teamid,
+    payload.doer,
+    wf.starter,
+    payload.wfid,
+    wfRoot,
+    null,
+    true
+  ); //
 
   let doers_string = Parser.codeToBase64(JSON.stringify(doers));
   let isoNow = Tools.toISOString(new Date());
@@ -930,7 +939,8 @@ Engine.explainPds = async function (payload) {
     theTeamid,
     payload.pds,
     theUser,
-    wfRoot,
+    payload.wfid,
+    null, //expalinPDS 没有workflow实例
     theKvarString,
     payload.insertDefault
   ); //
@@ -1140,10 +1150,13 @@ Client.yarkNode = async function (obj) {
       teamid,
       tpNode.attr("role"),
       wfRoot.attr("starter"),
-      wfRoot
+      obj.wfid,
+      wfRoot,
+      null,
+      true
     );
     if (Array.isArray(doers) === false) {
-      console.error("Common.getDoer should return array", 5);
+      console.error("C.getDoer should return array", 5);
     } else {
       doers = [doers];
     }
@@ -1488,7 +1501,10 @@ Client.yarkNode = async function (obj) {
       teamid,
       tpNode.attr("role"),
       wfRoot.attr("starter"),
-      wfRoot
+      obj.wfid,
+      wfRoot,
+      null,
+      true
     );
     if (Array.isArray(doerOrDoers) === false) {
       throw new EmpError("DOER_ARRAY_ERROR", "Doer is not array");
@@ -2421,7 +2437,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.workid = work.workid;
   ret.title = work.title;
   if (ret.title.indexOf("[") >= 0) {
-    ret.title = await Parser.replaceStringWithKVar(tenant, ret.title, null, wfRoot);
+    ret.title = await Parser.replaceStringWithKVar(tenant, ret.title, null, wfid);
   }
   ret.status = work.status;
   ret.wfstarter = work.wfstarter;
@@ -2449,19 +2465,6 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
   ret.kvars = await Parser.userGetVars(tenant, email, work.wfid, work.workid);
-
-  /*
-   //这段代码会导致死循环，比如，一个var引入同一个var， var=[var]
-  const replaceValueInBrackets = async function (tenant, email, wfRoot, kvars) {
-    for (const [name, valueDef] of Object.entries(kvars)) {
-      if (valueDef.value.match(/\[(.+)\]/)) {
-        valueDef.value = await Parser.replaceStringWithKVar(tenant, valueDef.value, null, wfRoot);
-      }
-    }
-    return kvars;
-  };
-  ret.kvars = await replaceValueInBrackets(tenant, email, wfRoot, ret.kvars);
-  */
 
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};
@@ -2903,33 +2906,9 @@ Engine.getActiveDelayTimers = async function (tenant, wfid) {
 };
 
 /**
- * Common.getDoer = async() 计算工作执行者
- *
- * @param {...} Common.getDoer = asynctenant -
- * @param {...} teamid -
- * @param {...} role -
- * @param {...} starter -
- *
- * 如果teamid的团队中有role,则返回role对应的用户
- * 如果没有,则使用starter
- *
- * @return {...}
- */
-Engine.getDoer = async function (tenant, teamid, role, starter, wfRoot = null) {
-  let ret = await Parser.getDoer(tenant, teamid, pds, starter, wfRoot);
-  if (!ret || (Array.isArray(ret) && ret.length == 0)) {
-    ret = [{ uid: starter, cn: await Cache.getUserName(starter) }];
-  }
-  return ret;
-};
-//
-
-/**
- * Common.getDoer = async()
- *
  * wfRoot不为空，是为了从wfRoot中找innerTeam
  * 目前只在yarkNode中的INFORM和ACTION中用到
- * @param {...} Common.getDoer = asynctenant -
+ * @param {...} tenant -
  * @param {...} teamid -
  * @param {...} pds -
  * @param {...} starter -
@@ -2942,11 +2921,12 @@ Common.getDoer = async function (
   teamid,
   pds,
   starter,
-  wfRoot = null,
-  kvarString = null,
-  insertDefault = true
+  wfid,
+  wfRoot,
+  kvarString,
+  insertDefault
 ) {
-  let ret = await Parser.getDoer(tenant, teamid, pds, starter, wfRoot, kvarString);
+  let ret = await Parser.getDoer(tenant, teamid, pds, starter, wfid, wfRoot, kvarString);
   if (insertDefault && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
     ret = [{ uid: starter, cn: await Cache.getUserName(starter) }];
   }

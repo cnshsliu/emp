@@ -80,7 +80,7 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
       }
       vars[name] = { ...vars[name], ...valueDef };
       if (name.startsWith("ou_")) {
-        vars[name]["display"] = await OrgChartHelper.getOuCN(tenant, valueDef.value);
+        vars[name]["display"] = await OrgChartHelper.getOuFullCN(tenant, valueDef.value);
       }
       if (!vars[name]["label"]) {
         vars[name]["label"] = name;
@@ -153,7 +153,7 @@ Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], n
     for (const [key, valueDef] of Object.entries(ret)) {
       if (Tools.isEmpty(valueDef.visi)) continue;
       else {
-        let tmp = await Parser.getDoer(tenant, "", valueDef.visi, forWhom);
+        let tmp = await Parser.getDoer(tenant, "", valueDef.visi, forWhom, wfid, null, null);
         visiPeople = tmp.map((x) => x.uid);
         console.log("found visi", valueDef.visi, visiPeople);
         //如果去掉forWhom!=="EMP"会导致彻底不放出
@@ -260,9 +260,9 @@ Parser.getStaffByQuery = async function (tenant, uid, rdsPart) {
 };
 
 /**
- * Parser.getDoerByTeam = async() Get rdspart Doer by team。 rdsPart may includes many roles separated ':'
+ * Get rdspart Doer by team。 rdsPart may includes many roles separated ':'
  *
- * @param {...} Parser.getDoerByTeam = asynctenant -
+ * @param {...} tenant -
  * @param {...} teamid -
  * @param {...} rdsPart - 用冒号:分割的rdspart， 每一部分为一个独立的role
  * @param {...} starter -
@@ -285,9 +285,9 @@ Parser.getDoerByTeam = async function (tenant, teamid, rdsPart, starter, wfRoot 
 };
 
 /**
- * Parser.getSingleRoleDoerByTeam = async() Get doer of a single role by team
+ * Get doer of a single role by team
  *
- * @param {...} Parser.getSingleRoleDoerByTeam = asynctenant -
+ * @param {...} tenant -
  * @param {...} teamid -
  * @param {...} aRole -
  * @param {...} starter -
@@ -404,7 +404,7 @@ Parser.setVars = async function (tenant, wfid, objid, newvars, doer) {
 };
 
 /**
- * Parser.replaceStringWithKVar() Replace string with kvar value
+ * Replace string with kvar value
  *
  * @param {...} Parser.theString - string with [kvar_name]
  * @param {...} kvarString - key1=value1;key2=value2;...
@@ -444,22 +444,23 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
 };
 
 /**
- * Parser.getDoer = async() Get Doer from PDS
+ *  Get Doer from PDS
  *
- * @param {...} Parser.getDoer = asynctenant -
+ * @param {...} tenant -
  * @param {...} teamid -
  * @param {...} pds -
  * @param {...} starter -
  * @param {...} wfRoot - can be null, only required when inteperate innerTeam of a running workflow. When getDoer is called to locate flexible team role or ortchart memebers, wfRoot can be ignored
+ * @param {...} kvarString - Normally, used for testing purpose, in format of "pos=who;pos=who;..."
  *
  * @return {...}
  */
-Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null, kvarString = null) {
+Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kvarString) {
   //If there is team definition in PDS, use it.
   //if PDS is empty, always use starter
   if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];
-  if ((kvarString || wfRoot) && pds.match(/\[(.+)\]/)) {
-    pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, wfRoot);
+  if ((kvarString || wfid) && pds.match(/\[(.+)\]/)) {
+    pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, wfid);
   }
 
   //PDS-level team is defined as "T:team_name"
@@ -501,7 +502,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfRoot = null, kv
       if (typeof tmp === "string") {
         //There must be some wrong in my coding..., track and fix it when see this error.
         console.error(
-          "Engine.getDoer, team",
+          "Parser.getDoer, team",
           teamid,
           " pds ",
           pds,
@@ -580,18 +581,6 @@ Parser.splitStringToArray = function (str, deli = null) {
   let tmp = str.split(deli ? deli : /[\s;,]/);
   tmp = tmp.map((x) => x.trim()).filter((x) => x.length > 0);
   return tmp;
-};
-Parser.chunkString = function (str, len) {
-  const size = Math.ceil(str.length / len);
-  const r = Array(size);
-  let offset = 0;
-
-  for (let i = 0; i < size; i++) {
-    r[i] = str.substr(offset, len);
-    offset += len;
-  }
-
-  return r;
 };
 
 Parser.codeToBase64 = function (code) {

@@ -1,4 +1,5 @@
 const { EmpError } = require("./EmpError");
+const Tools = require("../tools/tools");
 const OrgChart = require("../database/models/OrgChart");
 const OrgChartHelper = {
   FIND_ALL: 3,
@@ -19,6 +20,31 @@ const OrgChartHelper = {
     let filter = { tenant: tenant, ou: ou, uid: "OU---" };
     let theOu = await OrgChart.findOne(filter, { cn: 1 });
     return theOu ? theOu.cn : ou + " Not found";
+  },
+  getOuFullCN: async function (tenant, ou, includeRoot = true) {
+    let filter = { tenant: tenant, uid: "OU---", ou: "root" };
+    let rootOu = await OrgChart.findOne(filter, { ou: 1, cn: 1 });
+    if (ou === "root") {
+      return rootOu.cn;
+    } else {
+      let filter = { tenant: tenant, uid: "OU---" };
+      let allOus = await OrgChart.find(filter, { ou: 1, cn: 1 });
+      let tmpArr = [];
+      tmpArr.push(rootOu.cn);
+      let m = Tools.chunkString(ou, 5);
+      for (let i = 0; i < m.length; i++) {
+        let tmpOu = "";
+        for (let j = 0; j <= i; j++) {
+          tmpOu += m[j];
+        }
+        for (let k = 0; k < allOus.length; k++) {
+          if (allOus[k].ou === tmpOu) {
+            tmpArr.push(allOus[k].cn);
+          }
+        }
+      }
+      return tmpArr.join("-");
+    }
   },
 
   getStaffOU: async function (tenant, email) {
