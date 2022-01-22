@@ -1402,6 +1402,39 @@ const TemplateSetVisi = async function (req, h) {
   }
 };
 
+const TemplateSetAuthor = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+
+    let tplid = req.payload.tplid;
+
+    let toWhomEmail = Tools.makeEmailSameDomain(req.payload.author, myEmail);
+    let newOwner = await User.findOne({ tenant: tenant, email: toWhomEmail });
+    if (!newOwner) {
+      throw new EmpError("NO_USER", `User ${toWhomEmail} not found`);
+    }
+
+    let filter = { tenant: tenant, tplid: tplid };
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") filter["author"] = myEmail;
+    let tpl = await Template.findOneAndUpdate(
+      filter,
+      { $set: { author: newOwner.email, authorName: newOwner.username } },
+      { upsert: false, new: true }
+    );
+    if (!tpl) {
+      throw new EmpError("NO_TPL", `Not admin or owner`);
+    }
+    tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
+
+    return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 /**
  * Clear a template visibility setting from template
  *
@@ -3022,6 +3055,7 @@ module.exports = {
   TemplateImport,
   TemplateSetVisi,
   TemplateClearVisi,
+  TemplateSetAuthor,
   WorkflowRead,
   WorkflowDumpInstemplate,
   WorkflowStart,

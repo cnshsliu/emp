@@ -368,6 +368,26 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/template/set/author",
+    handler: Handlers.TemplateSetAuthor,
+    config: {
+      description: "Set template author",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+          author: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/template/download",
     handler: Handlers.TemplateDownload,
     config: {
