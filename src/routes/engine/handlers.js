@@ -6,6 +6,7 @@ const { ZMQ } = require("../../lib/ZMQ");
 const Joi = require("joi");
 const TimeZone = require("../../lib/timezone");
 const Template = require("../../database/models/Template");
+const EdittingLog = require("../../database/models/EdittingLog");
 const Crypto = require("../../lib/Crypto");
 const Workflow = require("../../database/models/Workflow");
 const User = require("../../database/models/User");
@@ -260,18 +261,36 @@ const TemplatePut = async function (req, h) {
     if (Tools.isEmpty(tplid)) {
       throw new EmpError("NO_TPLID", "Template id can not be empty");
     }
-    //let bdoc = await Tools.zipit(req.payload.doc, {});
-    let filter = { tenant: tenant, tplid: tplid },
-      update = {
-        $set: {
-          author: author,
-          authorName: await Cache.getUserName(author),
-          doc: req.payload.doc,
-          //bdoc: bdoc,
+    let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
+    if (obj) {
+      //let bdoc = await Tools.zipit(req.payload.doc, {});
+      let filter = { tenant: tenant, tplid: tplid },
+        update = {
+          $set: {
+            doc: req.payload.doc,
+            //bdoc: bdoc,
+          },
         },
-      },
-      options = { upsert: true, new: true };
-    let obj = await Template.findOneAndUpdate(filter, update, options);
+        options = { upsert: false, new: true };
+      obj = await Template.findOneAndUpdate(filter, update, options);
+    } else {
+      obj = new Template({
+        tenant: tenant,
+        tplid: tplid,
+        author: author,
+        authorName: await Cache.getUserName(author),
+        doc: req.payload.doc,
+      });
+      obj = await obj.save();
+    }
+    let edittingLog = new EdittingLog({
+      tenant: tenant,
+      objtype: "Template",
+      objid: obj.tplid,
+      editor: author,
+      editorName: await Cache.getUserName(author),
+    });
+    edittingLog = await edittingLog.save();
     return h.response({ _id: obj._id, tplid: obj.tplid });
   } catch (err) {
     console.error(err);
