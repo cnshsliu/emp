@@ -2573,6 +2573,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     if (works[i].route) historyEntry.route = works[i].route;
     let kvars = await Parser.userGetVars(tenant, email, works[i].wfid, works[i].workid);
     historyEntry.kvarsArr = Parser.kvarsToArray(kvars);
+    historyEntry.kvarsArr = historyEntry.kvarsArr.filter((x) => x.ui.includes("input"));
     tmpRet.push(historyEntry);
   }
   //把相同workid聚合起来
