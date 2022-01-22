@@ -1011,6 +1011,9 @@ const CheckCoworker = async function (req, h) {
       { tenant: tenant, email: coWorkerEmail },
       { email: 1, username: 1, _id: 0 }
     );
+    if (!user) {
+      throw new EmpError("USER_NOT_FOUND", `${whom} not exist`);
+    }
 
     return user;
   } catch (err) {

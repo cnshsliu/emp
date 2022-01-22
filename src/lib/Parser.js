@@ -81,6 +81,13 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
       vars[name] = { ...vars[name], ...valueDef };
       if (name.startsWith("ou_")) {
         vars[name]["display"] = await OrgChartHelper.getOuFullCN(tenant, valueDef.value);
+      } else if (name.startsWith("usr_") || name.startsWith("user_")) {
+        if (valueDef.value) {
+          vars[name]["display"] = await Cache.getUserName(valueDef.value);
+          let userOU = await OrgChartHelper.getStaffOUCode(tenant, valueDef.value);
+          vars["ou_" + name] = { auto: true, value: userOU, label: "OUof_" + vars[name]["label"] };
+          vars["ou_" + name]["display"] = await OrgChartHelper.getOuFullCN(tenant, userOU);
+        }
       }
       if (!vars[name]["label"]) {
         vars[name]["label"] = name;
@@ -524,7 +531,7 @@ Parser.kvarsToArray = function (kvars) {
     //START Speculate variable type
     //based on prefix_ of name
     let matchResult = name.match(
-      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|file|radio|checkbox|cb|ou)_"
+      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|radio|checkbox|cb|ou|usr|user)_"
     );
     tmp.type = "plaintext";
     if (matchResult) {
@@ -537,10 +544,11 @@ Parser.kvarsToArray = function (kvars) {
       }
     }
     if (tmp.type === "cb") tmp.type = "checkbox";
+    if (tmp.type === "ta") tmp.type = "textarea";
     if (tmp.type === "sl" || tmp.type === "sel" || tmp.type === "ou") tmp.type = "select";
+    if (tmp.type === "usr" || tmp.type === "user") tmp.type = "user";
     if (tmp.type === "dt") tmp.type = "datetime";
     if (tmp.type === "checkbox") {
-      console.log(tmp.name, "->", tmp.value, typeof tmp.value);
       if (typeof tmp.value !== "boolean") {
         if (typeof tmp.value === "string") {
           tmp.value = tmp.value.toLowerCase() === "true" ? true : false;
@@ -548,7 +556,6 @@ Parser.kvarsToArray = function (kvars) {
           tmp.value = Boolean(tmp.value);
         }
       }
-      console.log(tmp.name, "->", tmp.value, typeof tmp.value);
     }
     //END Speculate variable type
     /*

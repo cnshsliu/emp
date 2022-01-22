@@ -1,6 +1,8 @@
 const { EmpError } = require("./EmpError");
 const Tools = require("../tools/tools");
 const OrgChart = require("../database/models/OrgChart");
+const Cache = require("./Cache");
+const Tenant = require("../database/models/Tenant");
 const OrgChartHelper = {
   FIND_ALL: 3,
   FIND_ALL_UPPER: 2,
@@ -57,10 +59,25 @@ const OrgChartHelper = {
     }
     return theOu;
   },
+  getStaffOUCode: async function (tenant, email) {
+    let theStaff = await this.getStaff(tenant, email);
+    return theStaff.ou;
+  },
   getStaff: async function (tenant, email) {
+    email = await this.makeTenantEmail(tenant, email);
     let filter = { tenant: tenant, uid: email };
     let theStaff = await OrgChart.findOne(filter);
     return theStaff;
+  },
+
+  makeTenantEmail: async function (tenant, email) {
+    if (email.indexOf("@") > 0) return email;
+    else {
+      let theTenant = await Tenant.findOne({ _id: tenant });
+      let siteDomain = await Cache.getSiteDomain(theTenant.site);
+      email = email + siteDomain;
+      return email;
+    }
   },
   /**
    * Get the position of a person
