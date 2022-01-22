@@ -1,5 +1,6 @@
 const User = require("../database/models/User");
 const Tenant = require("../database/models/Tenant");
+const OrgChart = require("../database/models/OrgChart");
 const Site = require("../database/models/Site");
 const { asyncRedisClient } = require("../database/redis");
 const internals = {};
@@ -50,6 +51,36 @@ internals.getUserName = async function (email) {
     } else {
       return "USER_NOT_FOUND";
     }
+  }
+};
+
+internals.getUserOU = async function (tenant, email) {
+  let key = "ou_" + tenant + email;
+  let ouCode = await asyncRedisClient.get(key);
+  if (ouCode) {
+    console.log("userOU cache");
+    return ouCode;
+  } else {
+    email = await internals.makeTenantEmail(tenant, email);
+    let filter = { tenant: tenant, uid: email };
+    let theStaff = await OrgChart.findOne(filter);
+    if (theStaff) {
+      await asyncRedisClient.set(key, theStaff.ou);
+      await asyncRedisClient.expire(key, 60);
+      return theStaff.ou;
+    } else {
+      return "USER_NOT_FOUND";
+    }
+  }
+};
+
+internals.makeTenantEmail = async function (tenant, email) {
+  if (email.indexOf("@") > 0) return email;
+  else {
+    let theTenant = await Tenant.findOne({ _id: tenant });
+    let siteDomain = await Cache.getSiteDomain(theTenant.site);
+    email = email + siteDomain;
+    return email;
   }
 };
 

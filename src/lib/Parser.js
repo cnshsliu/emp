@@ -508,7 +508,13 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
     } else if (rdsPart.startsWith("Q:")) {
       tmp = await Parser.getStaffByQuery(tenant, starter, rdsPart);
     } else if (rdsPart.startsWith("@")) {
-      let email = `${rdsPart.substring(1)}${starterEmailSuffix}`;
+      let tmpEmail = rdsPart.substring(1);
+      let email = null;
+      if (tmpEmail.indexOf("@") > 0) {
+        email = tmpEmail;
+      } else {
+        email = `${tmpEmail}${starterEmailSuffix}`;
+      }
       let cn = await Cache.getUserName(email);
       if (cn === "USER_NOT_FOUND") tmp = [];
       else tmp = [{ uid: `${email}`, cn: cn }];

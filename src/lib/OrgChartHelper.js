@@ -61,24 +61,16 @@ const OrgChartHelper = {
   },
   getStaffOUCode: async function (tenant, email) {
     let theStaff = await this.getStaff(tenant, email);
-    return theStaff.ou;
+    if (theStaff && theStaff.ou) return theStaff.ou;
+    else return "unknown ou";
   },
   getStaff: async function (tenant, email) {
-    email = await this.makeTenantEmail(tenant, email);
+    email = await Cache.makeTenantEmail(tenant, email);
     let filter = { tenant: tenant, uid: email };
     let theStaff = await OrgChart.findOne(filter);
     return theStaff;
   },
 
-  makeTenantEmail: async function (tenant, email) {
-    if (email.indexOf("@") > 0) return email;
-    else {
-      let theTenant = await Tenant.findOne({ _id: tenant });
-      let siteDomain = await Cache.getSiteDomain(theTenant.site);
-      email = email + siteDomain;
-      return email;
-    }
-  },
   /**
    * Get the position of a person
    */
