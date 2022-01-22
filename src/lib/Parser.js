@@ -79,13 +79,29 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
         if (typeof valueDef === "string") valueDef = { value: valueDef, label: name };
       }
       vars[name] = { ...vars[name], ...valueDef };
-      if (name.startsWith("ou_")) {
+      vars[name]["ui"] = ["input", "context"];
+      if (name.startsWith("cn_usr_") || name.startsWith("cn_user_")) {
+        vars[name]["ui"] = [];
+      } else if (name.startsWith("ou_usr_") || name.startsWith("ou_user_")) {
+        vars[name]["ui"] = [];
+      } else if (name.startsWith("ou_")) {
         vars[name]["display"] = await OrgChartHelper.getOuFullCN(tenant, valueDef.value);
       } else if (name.startsWith("usr_") || name.startsWith("user_")) {
         if (valueDef.value) {
-          vars[name]["display"] = await Cache.getUserName(valueDef.value);
-          let userOU = await OrgChartHelper.getStaffOUCode(tenant, valueDef.value);
-          vars["ou_" + name] = { auto: true, value: userOU, label: "OUof_" + vars[name]["label"] };
+          let theCN = await Cache.getUserName(valueDef.value);
+          console.log("Get CN for name ", name, "value:", valueDef.value, " got ", theCN);
+          vars["cn_" + name] = { ui: [], value: theCN, label: vars[name]["label"] + "CN" };
+          //插入display
+          vars[name]["display"] = theCN;
+          //插入OU
+          let userOU = await Cache.getUserOU(tenant, valueDef.value);
+          console.log("Get Staff OUCode", valueDef.value, "got", userOU);
+          vars["ou_" + name] = {
+            ui: ["context"],
+            value: userOU,
+            label: "OUof_" + vars[name]["label"],
+          };
+          //插入OU的display
           vars["ou_" + name]["display"] = await OrgChartHelper.getOuFullCN(tenant, userOU);
         }
       }
