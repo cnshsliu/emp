@@ -4,6 +4,7 @@ const moment = require("moment");
 const Template = require("../database/models/Template");
 const User = require("../database/models/User");
 const Workflow = require("../database/models/Workflow");
+const Attachment = require("../database/models/Attachment");
 const Handlebars = require("handlebars");
 const SanitizeHtml = require("sanitize-html");
 const Todo = require("../database/models/Todo");
@@ -1414,7 +1415,8 @@ Client.yarkNode = async function (obj) {
       parent_wf_id,
       parent_work_id,
       parent_vars,
-      runmode
+      runmode,
+      []
     );
     if (isStandalone) {
       wfRoot.append(
@@ -1524,6 +1526,7 @@ Client.yarkNode = async function (obj) {
     //   )}" doer="${doer}"></div>`
     // );
     let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode);
+    console.log(JSON.stringify(varsFromTemplateNode, null, 2));
     await Parser.setVars(obj.tenant, obj.wfid, workid, varsFromTemplateNode, "EMP");
     //建立worklist中的work
     let tpNodeTitle = tpNode.find("p").text().trim();
@@ -2101,6 +2104,8 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  * @param  {} parent_wf_id   parent workflow id
  * @param  {} parent_work_id  parent work id
  * @param  {} parent_vars     parent workflow vars
+ * @param  {} runmode     uarent workflow vars
+ * @param  {} uploadedFiles     uarent workflow vars
  */
 Engine.startWorkflow = async function (
   rehearsal,
@@ -2114,7 +2119,8 @@ Engine.startWorkflow = async function (
   parent_wf_id,
   parent_work_id,
   parent_vars,
-  runmode = "standalone"
+  runmode = "standalone",
+  uploadedFiles
 ) {
   let filter = { tenant: tenant, tplid: tplid };
   let tpl = await Template.findOne(filter);
@@ -2143,6 +2149,7 @@ Engine.startWorkflow = async function (
     runmode: runmode,
   });
   wf = await wf.save();
+  pbo = [...pbo, ...uploadedFiles];
   await Engine.setPbo(tenant, wfid, pbo);
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
   await Parser.setVars(tenant, wfid, "workflow", parent_vars, "EMP");
@@ -2323,6 +2330,15 @@ Engine.getPbo = async function (tenant, wfid) {
     wfid: wfid,
   }).lean();
   if (ret) {
+    for (let i = 0; i < ret.pbo.length; i++) {
+      if (ret.pbo[i].serverId) {
+        let filter = { tenant: tenant, fileId: ret.pbo[i].serverId };
+        let attach = await Attachment.findOne(filter);
+        if (attach) {
+          ret.pbo[i]["realName"] = attach.realName;
+        }
+      }
+    }
     return ret.pbo;
   } else {
     return [];
@@ -2387,6 +2403,11 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
     throw new EmpError("NO_PERM", "You don't have permission to read this work");
   let filter = { tenant: tenant, wfid: work.wfid };
   let wf = await Workflow.findOne(filter);
+  if (!wf) {
+    await Todo.deleteOne(todo_filter);
+
+    throw new EmpError("NO_WF", "Workflow does not exist");
+  }
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
@@ -2465,6 +2486,15 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
   ret.kvars = await Parser.userGetVars(tenant, email, work.wfid, work.workid);
+  let existingVars = await Parser.userGetVars(
+    tenant,
+    email,
+    work.wfid,
+    "workflow",
+    [email],
+    ["EMP"]
+  );
+  Parser.mergeValueFrom(ret.kvars, existingVars);
 
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};

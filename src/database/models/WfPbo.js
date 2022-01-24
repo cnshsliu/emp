@@ -19,7 +19,7 @@ var WfPboSchema = new Schema(
   {
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
     wfid: { type: String, required: [true, "不能为空"] },
-    pbo: [String],
+    pbo: [Schema.Types.Mixed],
   },
   { timestamps: false }
 );

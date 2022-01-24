@@ -41,5 +41,5 @@ if (process.env.OPENSHIFT_MONGODB_DB_HOST) {
 }
 
 Mongoose.connect(connection_string, { useUnifiedTopology: true, useNewUrlParser: true });
-Mongoose.set("useCreateIndex", true);
-Mongoose.set("useFindAndModify", false);
+//Mongoose.set("useCreateIndex", true);
+//Mongoose.set("useFindAndModify", false);

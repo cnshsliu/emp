@@ -500,6 +500,7 @@ internals.endpoints = [
             ),
           pbo: Joi.string().optional().allow("").description("Primary Business Object"),
           kvars: Joi.object().optional().default({}),
+          uploadedFiles: Joi.array().optional().default([]),
         },
         validator: Joi,
       },
@@ -1565,7 +1566,7 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          password: Joi.string().regex(EmpConfig.validation.password).required(),
+          password: Joi.string().required(),
           default_user_password: Joi.string().required(),
           file: Joi.any().meta({ swaggerType: "file" }),
         },
@@ -1745,6 +1746,23 @@ internals.endpoints = [
           ocid: Joi.string().required(),
           pos: Joi.string().required(),
         },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/orgchart/authorized/admin",
+    handler: Handlers.OrgChartAuthorizedAdmin,
+    config: {
+      description: "Delete a position from an org user",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {},
         validator: Joi,
       },
     },
@@ -2053,6 +2071,76 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           code: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/filepond/process",
+    handler: Handlers.FilePondProcess,
+    config: {
+      description: "FilePond process",
+      tags: ["api"],
+      auth: "token",
+      payload: {
+        maxBytes: 1024 * 1024 * 100,
+        parse: true,
+        output: "file",
+        multipart: true,
+        allow: "multipart/form-data",
+        timeout: false,
+      },
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          filepond: Joi.array().items(Joi.any()).required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "DELETE",
+    path: "/filepond/revert",
+    handler: Handlers.FilePondRevert,
+    config: {
+      description: "FilePond revert",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/filepond/viewer/{serverId}",
+    handler: Handlers.FilePondViewer,
+    config: {
+      auth: "token",
+    },
+  },
+  {
+    method: "POST",
+    path: "/filepond/viewer",
+    handler: Handlers.FilePondViewer,
+    config: {
+      description: "FilePond file viewer",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          serverId: Joi.string(),
         },
         validator: Joi,
       },

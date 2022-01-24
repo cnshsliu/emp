@@ -16,7 +16,6 @@ internals.setUserName = async function (email, username = null, expire = 60) {
         await asyncRedisClient.set("ew_" + email, user.ew ? "TRUE" : "FALSE");
         await asyncRedisClient.expire("ew_" + email, expire);
         let emailWork = await asyncRedisClient.get("ew_" + email);
-        console.log("SET +====", emailWork);
       }
     }
   }
@@ -58,7 +57,6 @@ internals.getUserOU = async function (tenant, email) {
   let key = "ou_" + tenant + email;
   let ouCode = await asyncRedisClient.get(key);
   if (ouCode) {
-    console.log("userOU cache");
     return ouCode;
   } else {
     email = await internals.makeTenantEmail(tenant, email);
@@ -78,7 +76,7 @@ internals.makeTenantEmail = async function (tenant, email) {
   if (email.indexOf("@") > 0) return email;
   else {
     let theTenant = await Tenant.findOne({ _id: tenant });
-    let siteDomain = await Cache.getSiteDomain(theTenant.site);
+    let siteDomain = await this.getSiteDomain(theTenant.site);
     email = email + siteDomain;
     return email;
   }
@@ -99,7 +97,6 @@ internals.getMyGroup = async function (email) {
   let mygroup_redis_key = "e2g_" + email.toLowerCase();
   let mygroup = await asyncRedisClient.get(mygroup_redis_key);
   if (!mygroup) {
-    console.log("reset mygroup to redis");
     let user = await User.findOne({ email: email }, { group: 1 });
     await asyncRedisClient.set(mygroup_redis_key, user.group);
     await asyncRedisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
@@ -189,7 +186,6 @@ internals.removeKeyByEmail = async function (email, cacheType) {
     await asyncRedisClient.del("name_" + emailKey);
     await asyncRedisClient.del("ew_" + emailKey);
     let emailWork = await asyncRedisClient.get("ew_" + emailKey);
-    console.log("+====", emailWork);
   }
 };
 

@@ -530,6 +530,24 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/tnt/set/orgchartadminpds",
+    handler: AccountHandlers.OrgSetOrgChartAdminPds,
+    config: {
+      tags: ["api"],
+      description: "Save PDS for OrgChart admin",
+      auth: "token",
+      validate: {
+        headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+        payload: {
+          orgchartadminpds: Joi.string().required().allow(""),
+          password: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/tnt/join",
     handler: AccountHandlers.JoinOrg,
     config: {

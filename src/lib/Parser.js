@@ -1,6 +1,7 @@
-const Cheerio = require("cheerio");
+const Cheerio = require("cheerio").default;
 const lodash = require("lodash");
 const Tools = require("../tools/tools.js");
+const { EmpError } = require("./EmpError");
 const Team = require("../database/models/Team");
 const KVar = require("../database/models/KVar");
 const Cache = require("./Cache");
@@ -66,6 +67,13 @@ Parser.parse = async function (str) {
             }
 */
 
+Parser.mergeValueFrom = async function (objA, objB) {
+  for (let [name, valueDef] of Object.entries(objA)) {
+    if (objB[name]) {
+      objA[name] = objB[name];
+    }
+  }
+};
 Parser.mergeVars = async function (tenant, vars, newVars_json) {
   try {
     if (newVars_json === null || newVars_json === undefined) {
@@ -89,13 +97,11 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
       } else if (name.startsWith("usr_") || name.startsWith("user_")) {
         if (valueDef.value) {
           let theCN = await Cache.getUserName(valueDef.value);
-          console.log("Get CN for name ", name, "value:", valueDef.value, " got ", theCN);
           vars["cn_" + name] = { ui: [], value: theCN, label: vars[name]["label"] + "CN" };
           //插入display
           vars[name]["display"] = theCN;
           //插入OU
           let userOU = await Cache.getUserOU(tenant, valueDef.value);
-          console.log("Get Staff OUCode", valueDef.value, "got", userOU);
           vars["ou_" + name] = {
             ui: ["context"],
             value: userOU,
@@ -135,7 +141,7 @@ Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], n
   if (typeof wfid !== "string") {
     console.trace("wfid should be a string");
   }
-  let ret = {};
+  let retResult = {};
   const mergeElementVars = async function (tenant, base64_string, allVars) {
     let code = Parser.base64ToCode(base64_string);
     let jsonVars = {};
@@ -166,14 +172,14 @@ Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], n
       if (notdoers.indexOf(doer) >= 0) includeIt = false;
     }
     if (includeIt) {
-      ret = await mergeElementVars(tenant, kvars[i].content, ret);
+      retResult = await mergeElementVars(tenant, kvars[i].content, retResult);
     }
   }
 
   //如果formWhom不是EMP，而是邮箱，则需要检查visi
   if (forWhom !== "EMP") {
     //处理kvar的可见行 visi,
-    for (const [key, valueDef] of Object.entries(ret)) {
+    for (const [key, valueDef] of Object.entries(retResult)) {
       if (Tools.isEmpty(valueDef.visi)) continue;
       else {
         let tmp = await Parser.getDoer(tenant, "", valueDef.visi, forWhom, wfid, null, null);
@@ -182,13 +188,13 @@ Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], n
         //如果去掉forWhom!=="EMP"会导致彻底不放出
         //EMP是用在代表系统， 系统应该都可以看到
         if (visiPeople.includes(forWhom) === false) {
-          delete ret[key];
+          delete retResult[key];
         }
       }
     }
   }
 
-  return ret;
+  return retResult;
 };
 
 Parser.sysGetTemplateVars = async function (tenant, elem) {
@@ -626,6 +632,37 @@ Parser.addUserTag = function (str) {
   }
   console.log(str);
   return str;
+};
+
+Parser.checkOrgChartAdminAuthorization = async function (tenant, me) {
+  let isTenantOwner = me.email === me.tenant.owner && me.tenant.orgmode === true;
+  let myGroup = await Cache.getMyGroup(me.email);
+  let isAdminGroup = myGroup === "ADMIN" && me.tenant.orgmode === true;
+  let orgchartAdmins = await Parser.getDoer(
+    tenant,
+    "",
+    me.tenant.orgchartadminpds,
+    me.tenant.owner,
+    null,
+    null,
+    null
+  );
+  orgchartAdmins = orgchartAdmins.map((x) => x.uid);
+  let isOneOfOrgChartAdmin = orgchartAdmins.includes(me.email);
+  if (!(isTenantOwner || isAdminGroup || isOneOfOrgChartAdmin)) {
+    throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
+  }
+  return true;
+};
+
+Parser.isAdmin = async function (me) {
+  let isTenantOwner = me.email === me.tenant.owner && me.tenant.orgmode === true;
+  let myGroup = await Cache.getMyGroup(me.email);
+  let isAdminGroup = myGroup === "ADMIN" && me.tenant.orgmode === true;
+  if ((isTenantOwner || isAdminGroup) === false) {
+    throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
+  }
+  return true;
 };
 
 const testStr = "abcd/efgh ijkl\nmnop;qrst, uvwx\ryzab  cdef; ghij/klmn/opqr,/stuv";

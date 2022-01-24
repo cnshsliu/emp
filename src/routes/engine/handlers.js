@@ -1,10 +1,13 @@
 const Boom = require("boom");
-const { Parser } = require("../../lib/Parser");
+const { Cheerio, Parser } = require("../../lib/Parser");
 const moment = require("moment");
 const Tenant = require("../../database/models/Tenant");
+const fs = require("fs");
 const { ZMQ } = require("../../lib/ZMQ");
 const Joi = require("joi");
+const { v4: uuidv4 } = require("uuid");
 const TimeZone = require("../../lib/timezone");
+const Attachment = require("../../database/models/Attachment");
 const Template = require("../../database/models/Template");
 const EdittingLog = require("../../database/models/EdittingLog");
 const Crypto = require("../../lib/Crypto");
@@ -22,6 +25,7 @@ const Tools = require("../../tools/tools.js");
 const { Engine, Client } = require("../../lib/Engine");
 const SystemPermController = require("../../lib/SystemPermController");
 const { EmpError } = require("../../lib/EmpError");
+const EmpConfig = require("../../config/emp");
 const lodash = require("lodash");
 const Fs = require("fs");
 const Cache = require("../../lib/Cache");
@@ -238,7 +242,8 @@ const SeeItWork = async function (req, h) {
       "",
       "",
       {},
-      "standalone"
+      "standalone",
+      []
     );
 
     return h.response(wfDoc);
@@ -500,6 +505,7 @@ const WorkflowStart = async function (req, h) {
     let rehearsal = req.payload.rehearsal;
     let pbo = req.payload.pbo;
     let kvars = req.payload.kvars;
+    let uploadedFiles = req.payload.uploadedFiles;
 
     kvars["starter"] = {
       label: "Starter",
@@ -527,6 +533,11 @@ const WorkflowStart = async function (req, h) {
       throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
 
     pbo = pbo ? pbo : "";
+    if (pbo.length > 0) {
+      pbo = [pbo];
+    } else {
+      pbo = [];
+    }
     let wfDoc = await Engine.startWorkflow(
       rehearsal,
       tenant,
@@ -539,7 +550,8 @@ const WorkflowStart = async function (req, h) {
       "",
       "",
       kvars,
-      "standalone"
+      "standalone",
+      uploadedFiles
     );
 
     return wfDoc;
@@ -2006,23 +2018,22 @@ const AutoRegisterOrgChartUser = async function (administrator, staffs, myDomain
 
 const OrgChartImport = async function (req, h) {
   try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myId = req.auth.credentials._id;
+    let myEmail = req.auth.credentials.email;
     if ((await Cache.setOnNonExist("admin_" + req.auth.credentials.email, "a", 10)) === false) {
       throw new EmpError("NO_BRUTE", "Please wait for 10 seconds");
     }
-    let admin = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-    if (Crypto.decrypt(admin.password) != req.payload.password) {
+    let me = await User.findOne({ _id: myId }).populate("tenant").lean();
+    if (Crypto.decrypt(me.password) != req.payload.password) {
       throw new EmpError("wrong_password", "You are using a wrong password");
     }
-    if ((admin.email === admin.tenant.owner && admin.tenant.orgmode === true) === false) {
-      throw new EmpError("NOT_ORG_ADMIN", "Not org admin or not in orgmode");
-    }
-    let tenant = req.auth.credentials.tenant._id;
-    let myemail = req.auth.credentials.email;
+    await Parser.checkOrgChartAdminAuthorization(tenant, me);
     let filePath = req.payload.file.path;
     let default_user_password = req.payload.default_user_password;
     let admin_password = req.payload.password;
 
-    let myDomain = Tools.getEmailDomain(myemail);
+    let myDomain = Tools.getEmailDomain(myEmail);
     /* let test_tenant = Mongoose.Types.ObjectId("61aca9f500c96d4c54ccd7aa");
 
     let tenant = test_tenant; */
@@ -2115,7 +2126,7 @@ const OrgChartImport = async function (req, h) {
       uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
     }
     //Next funciton use tenant of the first argu: admin,
-    await AutoRegisterOrgChartUser(admin, uniqued_orgchart_staffs, myDomain, default_user_password);
+    await AutoRegisterOrgChartUser(me, uniqued_orgchart_staffs, myDomain, default_user_password);
     return h.response({ ret: "ok", logs: errors });
   } catch (err) {
     console.error(err);
@@ -2125,22 +2136,19 @@ const OrgChartImport = async function (req, h) {
 
 const OrgChartAddOrDeleteEntry = async function (req, h) {
   try {
-    let admin = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-    if (Crypto.decrypt(admin.password) != req.payload.password) {
+    let tenant = req.auth.credentials.tenant._id;
+    let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    if (Crypto.decrypt(me.password) != req.payload.password) {
       throw new EmpError("wrong_password", "You are using a wrong password");
     }
+    await Parser.checkOrgChartAdminAuthorization(tenant, me);
     let myEmail = req.auth.credentials.email;
-    let myGroup = await Cache.getMyGroup(myEmail);
-    if ((myGroup === "ADMIN" && admin.tenant.orgmode === true) === false) {
-      throw new EmpError("NOT_ORG_ADMIN", "Not org admin or not in orgmode");
-    }
-    let tenant = req.auth.credentials.tenant._id;
     let default_user_password = req.payload.default_user_password;
 
     let myDomain = Tools.getEmailDomain(myEmail);
     const csv = req.payload.content;
     let lines = csv.split("\n");
-    let ret = await importOrgLines(tenant, myDomain, admin, default_user_password, lines);
+    let ret = await importOrgLines(tenant, myDomain, me, default_user_password, lines);
     return h.response(ret);
   } catch (err) {
     console.error(err);
@@ -2150,16 +2158,12 @@ const OrgChartAddOrDeleteEntry = async function (req, h) {
 
 const OrgChartExport = async function (req, h) {
   try {
-    let admin = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-    if (Crypto.decrypt(admin.password) != req.payload.password) {
+    let tenant = req.auth.credentials.tenant._id;
+    let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    if (Crypto.decrypt(me.password) != req.payload.password) {
       throw new EmpError("wrong_password", "You are using a wrong password");
     }
-    let myEmail = req.auth.credentials.email;
-    let myGroup = await Cache.getMyGroup(myEmail);
-    if ((myGroup === "ADMIN" && admin.tenant.orgmode === true) === false) {
-      throw new EmpError("NOT_ORG_ADMIN", "Not org admin or not in orgmode");
-    }
-    let tenant = req.auth.credentials.tenant._id;
+    await Parser.checkOrgChartAdminAuthorization(tenant, me);
     let entries = [];
 
     const getEntriesUnder = async function (entries, tenant, ou) {
@@ -2420,11 +2424,8 @@ const OrgChartExpand = async function (req, h) {
       selfOu = await OrgChart.findOne({ tenant: tenant, ou: /root/, uid: "OU---" });
     else selfOu = await OrgChart.findOne({ tenant: tenant, ou: ou, uid: "OU---" });
     if (include) {
-      console.log("push ", req.payload);
       ret.push(selfOu);
-      console.log(ret.length);
     }
-    console.log("ret.length:", ret.length);
 
     //先放人
     let childrenStaffFilter = { tenant: tenant };
@@ -2432,7 +2433,6 @@ const OrgChartExpand = async function (req, h) {
     childrenStaffFilter["ou"] = ou;
     let tmp = await OrgChart.find(childrenStaffFilter);
     ret = ret.concat(tmp);
-    console.log("ret.length:", ret.length);
 
     //再放下级组织
     let childrenOuFilter = { tenant: tenant };
@@ -2441,7 +2441,6 @@ const OrgChartExpand = async function (req, h) {
 
     tmp = await OrgChart.find(childrenOuFilter);
     ret = ret.concat(tmp);
-    console.log("ret.length:", ret.length);
 
     return h.response(ret);
   } catch (err) {
@@ -2454,6 +2453,9 @@ const OrgChartAddPosition = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myemail = req.auth.credentials.email;
+    let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    await Parser.checkOrgChartAdminAuthorization(tenant, me);
+
     let ocid = req.payload.ocid;
     let pos = req.payload.pos;
     posArr = Parser.splitStringToArray(pos);
@@ -2478,6 +2480,9 @@ const OrgChartDelPosition = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myemail = req.auth.credentials.email;
+    let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    await Parser.checkOrgChartAdminAuthorization(tenant, me);
+
     let ocid = req.payload.ocid;
     let pos = req.payload.pos;
     posArr = Parser.splitStringToArray(pos);
@@ -2494,6 +2499,20 @@ const OrgChartDelPosition = async function (req, h) {
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+/**
+ * Whether or not the current user is authorzied to manage orgchart
+ */
+const OrgChartAuthorizedAdmin = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+    await Parser.checkOrgChartAdminAuthorization(tenant, me);
+    return h.response(true);
+  } catch (err) {
+    return h.response(false);
   }
 };
 
@@ -3038,6 +3057,89 @@ const DemoAPI = async function (req, h) {
     stringv: "hello",
   };
 };
+const FilePondProcess = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    console.log("FilePond PRocesss");
+    let filepond = req.payload.filepond;
+    let ids = "";
+    for (let i = 0; i < filepond.length; i++) {
+      if (filepond[i].path && filepond[i].headers) {
+        let contentType = filepond[i]["headers"]["content-type"];
+        let realName = filepond[i]["filename"];
+        let fileId = uuidv4();
+        let relativeFolder = `${tenant}/${myEmail}/`;
+        let relativeFilePath = `${tenant}/${myEmail}/${fileId}`;
+        let storedFolder = `${EmpConfig.attachment.folder}/${relativeFolder}`;
+        let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
+        if (EmpConfig.attachment.folder.match(/.*\/$/)) {
+          storedFolder = `${EmpConfig.attachment.folder}${relativeFolder}`;
+          storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
+        }
+        if (fs.existsSync(storedFolder) === false) fs.mkdirSync(storedFolder, { recursive: true });
+        fs.renameSync(filepond[i].path, storedFileName);
+        let attachment = new Attachment({
+          tenant: tenant,
+          author: myEmail,
+          realName: realName,
+          contentType: contentType,
+          fileId: fileId,
+        });
+        await attachment.save();
+        ids = fileId;
+      }
+    }
+    return h.response(ids);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const FilePondRevert = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let fileId = req.payload;
+    let relativeFilePath = `${tenant}/${myEmail}/${fileId}`;
+    let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
+    if (EmpConfig.attachment.folder.match(/.*\/$/)) {
+      storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
+    }
+    fs.unlinkSync(storedFileName);
+    Attachment.deleteMany({ tenant: tenant, author: myEmail, fileId: fileId });
+    return h.response(fileId);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const FilePondViewer = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let fileId = req.params.serverId;
+    let filter = { tenant, fileId };
+    let attach = await Attachment.findOne(filter);
+
+    let relativeFilePath = `${tenant}/${attach.author}/${fileId}`;
+    let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
+    if (EmpConfig.attachment.folder.match(/.*\/$/)) {
+      storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
+    }
+    var readStream = fs.createReadStream(storedFileName);
+    return h
+      .response(readStream)
+      .header("cache-control", "no-cache")
+      .header("Pragma", "no-cache")
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Content-Type", attach.contentType)
+      .header("Content-Disposition", `attachment;filename="abcd.png"`);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
 module.exports = {
   TemplateCreate,
@@ -3115,6 +3217,7 @@ module.exports = {
   OrgChartExpand,
   OrgChartAddPosition,
   OrgChartDelPosition,
+  OrgChartAuthorizedAdmin,
   CommentList,
   CommentDelete,
   CommentDeleteBeforeDays,
@@ -3137,4 +3240,7 @@ module.exports = {
   DemoAPI,
   SeeItWork,
   WorkflowUpgrade,
+  FilePondProcess,
+  FilePondRevert,
+  FilePondViewer,
 };

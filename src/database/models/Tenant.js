@@ -27,6 +27,7 @@ var TenantSchema = new Schema({
     required: false,
   },
   tags: { type: String, required: false, default: "" },
+  orgchartadminpds: { type: String, required: false, default: "" },
 });
 
 module.exports = Mongoose.model("Tenant", TenantSchema);
