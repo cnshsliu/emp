@@ -545,6 +545,46 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/workflow/addFilePbo",
+    handler: Handlers.WorkflowAddFilePbo,
+    config: {
+      description: "Add filepond to workflow PBO",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          pondfiles: Joi.array().items(Joi.any()),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/workflow/removePbo",
+    handler: Handlers.WorkflowRemovePbo,
+    config: {
+      description: "Remove PBO",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          pbo: Joi.any(),
+        },
+        validator: Joi,
+      },
+    },
+  },
 
   {
     method: "POST",

@@ -104,20 +104,19 @@ const TemplateCreate = async function (req, h) {
 
 const TemplateDesc = async function (req, h) {
   try {
-    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "update")))
-      throw new EmpError("NO_PERM", "You don't have permission to update template");
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    let myGroup = await Cache.getMyGroup(myEmail);
-    let author = myEmail;
-    let authorName = req.auth.credentials.username;
     let tplid = req.payload.tplid;
     let desc = req.payload.desc;
-    let obj = await Template.findOneAndUpdate(
+    let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
+    if (
+      !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", obj, "update"))
+    )
+      throw new EmpError("NO_PERM", "You don't have permission to update template");
+    obj = await Template.findOneAndUpdate(
       {
         tenant: tenant,
         tplid: tplid,
-        author: myEmail,
       },
       { $set: { desc: desc ? desc : "" } },
       { new: true, upsert: false }
@@ -561,6 +560,43 @@ const WorkflowStart = async function (req, h) {
   }
 };
 
+const WorkflowAddFilePbo = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let pondfiles = req.payload.pondfiles;
+    if (pondfiles.length > 0) {
+      pondfiles = pondfiles.map((x) => {
+        x.author = email;
+        return x;
+      });
+      await Engine.addFilePbo(tenant, wfid, pondfiles);
+    }
+
+    return h.response(await Engine.getPbo(tenant, wfid));
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowRemovePbo = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let pbo = req.payload.pbo;
+    if (Array.isArray(pbo) === false) {
+      pbo = [pbo];
+    }
+    await Engine.removePbo(tenant, wfid, pbo, email);
+
+    return h.response(await Engine.getPbo(tenant, wfid));
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 const WorkflowSetPbo = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -3240,6 +3276,8 @@ module.exports = {
   DemoAPI,
   SeeItWork,
   WorkflowUpgrade,
+  WorkflowAddFilePbo,
+  WorkflowRemovePbo,
   FilePondProcess,
   FilePondRevert,
   FilePondViewer,

@@ -30,6 +30,7 @@ const Exec = util.promisify(require("child_process").exec);
 const zmq = require("zeromq");
 const { EmpError } = require("./EmpError");
 const { isEmpty } = require("../tools/tools.js");
+const EmpConfig = require("../config/emp");
 
 const Engine = {};
 const Client = {};
@@ -2150,6 +2151,10 @@ Engine.startWorkflow = async function (
   });
   wf = await wf.save();
   pbo = [...pbo, ...uploadedFiles];
+  pbo = pbo.map((x) => {
+    if (x.serverId) x.author = starter;
+    return x;
+  });
   await Engine.setPbo(tenant, wfid, pbo);
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
   await Parser.setVars(tenant, wfid, "workflow", parent_vars, "EMP");
@@ -2322,6 +2327,81 @@ Engine.setPbo = async function (tenant, wfid, pbo) {
     pbo: pboArray,
   });
   return await newPbo.save();
+};
+Engine.addFilePbo = async function (tenant, wfid, files) {
+  let tmp = await WfPbo.findOne({ tenant, wfid });
+  if (files.length > 0) {
+    if (tmp) {
+      tmp = await WfPbo.findOneAndUpdate(
+        { tenant, wfid },
+        { $addToSet: { pbo: { $each: files } } }
+      );
+    } else {
+      tmp = new WfPbo({ tenant, wfid, pbo: files });
+      tmp = await tmp.save();
+    }
+  }
+  return tmp;
+};
+Engine.removePbo = async function (tenant, wfid, files, email) {
+  if (files.length <= 0) return;
+  let tmp = await WfPbo.findOne({ tenant, wfid });
+  if (Tools.isEmpty(tmp)) return;
+  let wfPbos = tmp.pbo;
+  if (Tools.isEmpty(wfPbos)) return;
+  if (Array.isArray(wfPbos) && wfPbos.length === 0) return;
+
+  let me = await User.findOne({ email: email }).populate("tenant").lean();
+  let canDeleteAll = false;
+  let filter = { tenant: tenant, wfid: wfid };
+  if (Parser.isAdmin(me)) canDeleteAll = true;
+  else {
+    let wf = await Workflow.findOne(filter);
+    if (wf && wf.starter === email) canDeleteAll = true;
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    let pbo = files[i];
+    if (typeof pbo === "string") {
+      wfPbos = wfPbos.filter((x) => {
+        return !(x === pbo);
+      });
+    } else {
+      if (canDeleteAll) {
+        wfPbos = wfPbos.filter((x) => {
+          return x.serverId !== pbo.serverId;
+        });
+        let tmp = await Attachment.find({ tenant: tenant, fileId: pbo.serverId });
+        for (let i = 0; i < tmp.length; i++) {
+          try {
+            let fileName = `${EmpConfig.attachment.folder}/${tenant}/${tmp[i].author}/${pbo.serverId}`;
+            fs.unlinkSync(fileName);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        await Attachment.deleteMany({ tenant: tenant, fileId: pbo.serverId });
+      } else {
+        wfPbos = wfPbos.filter((x) => {
+          return !(x.serverId === pbo.serverId && author === email);
+        });
+        await Attachment.delete({ tenant: teannt, fileId: pbo.serverId, author: email });
+        let deleted = wfPbos.filter((x) => {
+          return x.serverId === pbo.serverId && author === email;
+        });
+        try {
+          for (let i = 0; i < deleted.length; i++) {
+            let fileName = `${EmpConfig.attachment.folder}/${tenant}/${email}/${deleted[i].serverId}`;
+            fs.unlinkSync(fileName);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+  }
+
+  await WfPbo.updateOne({ tenant, wfid }, { $set: { pbo: wfPbos } });
 };
 
 Engine.getPbo = async function (tenant, wfid) {
