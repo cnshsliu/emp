@@ -460,12 +460,12 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
 
   let m = false;
   do {
-    m = theString.match(/\[(.+)\]/);
+    m = theString.match(/\[([^\]]+)\]/);
 
     if (m) {
       let newValue = kvars[m[1]] ? kvars[m[1]].value : m[1];
       //万一newValue中有【】，需要去掉，否则，do...while会死循环
-      newValue = newValue.replace(/\[(.+)\]/, "");
+      newValue = newValue.replace(/\[|\]/g, "");
       theString = theString.replace(m[0], newValue);
     }
   } while (m);

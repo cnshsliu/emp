@@ -623,6 +623,9 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
   if (comment) {
     let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
     comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
+    if (comment.indexOf("[") >= 0) {
+      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
+    }
   }
 
   todo.comment = comment;
@@ -809,6 +812,9 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   let followingWorks = workNode.nextAll(`.work.ST_RUN[from_workid='${old_todo.workid}']`);
   if (comment) {
     comment = Engine.compileContent(wfRoot, {}, comment);
+    if (comment.indexOf("[") >= 0) {
+      comment = await Parser.replaceStringWithKVar(tenant, comment, null, wfid);
+    }
   }
   for (let i = followingWorks.length - 1; i >= 0; i--) {
     let afw = followingWorks.eq(i);
@@ -1050,6 +1056,9 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   workNode.attr("doneat", isoNow);
   if (comment) {
     comment = Engine.compileContent(wfRoot, kvars, comment);
+    if (comment.indexOf("[") >= 0) {
+      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
+    }
     /* workNode.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`); */
   }
   await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, fact_doer);
@@ -1181,9 +1190,15 @@ Client.yarkNode = async function (obj) {
         let all_kvars = await Parser.userGetVars(obj.tenant, doers[i].uid, obj.wfid, "workflow");
         if (Tools.hasValue(tmp_subject)) {
           mail_subject = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_subject));
+          if (mail_subject.indexOf("[") >= 0) {
+            mail_subject = await Parser.replaceStringWithKVar(tenant, mail_subject, null, obj.wfid);
+          }
         }
         if (Tools.hasValue(tmp_body)) {
           mail_body = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_body));
+          if (mail_body.indexOf("[") >= 0) {
+            mail_body = await Parser.replaceStringWithKVar(tenant, mail_body, null, obj.wfid);
+          }
         }
       } catch (error) {
         console.warn(error.message);
@@ -2150,6 +2165,11 @@ Engine.startWorkflow = async function (
     runmode: runmode,
   });
   wf = await wf.save();
+  for (let i = 0; i < uploadedFiles.length; i++) {
+    let fileId = uploadedFiles[i].serverId;
+    let filter = { tenant: tenant, fileId: fileId };
+    await Attachment.findOneAndUpdate(filter, { $set: { forWhat: "workflow", forWhich: wfid } });
+  }
   pbo = [...pbo, ...uploadedFiles];
   pbo = pbo.map((x) => {
     if (x.serverId) x.author = starter;
@@ -2328,7 +2348,7 @@ Engine.setPbo = async function (tenant, wfid, pbo) {
   });
   return await newPbo.save();
 };
-Engine.addFilePbo = async function (tenant, wfid, files) {
+Engine.addFilePbo = async function (tenant, forWhat, wfid, files) {
   let tmp = await WfPbo.findOne({ tenant, wfid });
   if (files.length > 0) {
     if (tmp) {
@@ -2340,6 +2360,12 @@ Engine.addFilePbo = async function (tenant, wfid, files) {
       tmp = new WfPbo({ tenant, wfid, pbo: files });
       tmp = await tmp.save();
     }
+
+    let fileIds = files.map((x) => x.serverId);
+    await Attachment.updateMany(
+      { tenant: tenant, fileId: { $in: fileIds } },
+      { $set: { forWhat: forWhat, forWhich: wfid } }
+    );
   }
   return tmp;
 };

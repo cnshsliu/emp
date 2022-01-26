@@ -7,6 +7,8 @@ var AttachmentSchema = new Schema({
   author: { type: String, required: [true, "不能为空"], index: true },
   realName: { type: String },
   contentType: { type: String },
+  forWhat: { type: String, default: "workflow" },
+  forWhich: { type: String, default: "unknown" },
   fileId: { type: String },
 });
 var Attachment = Mongoose.model("Attachment", AttachmentSchema);

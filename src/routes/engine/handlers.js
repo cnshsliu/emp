@@ -571,7 +571,7 @@ const WorkflowAddFilePbo = async function (req, h) {
         x.author = email;
         return x;
       });
-      await Engine.addFilePbo(tenant, wfid, pondfiles);
+      await Engine.addFilePbo(tenant, "workflow", wfid, pondfiles);
     }
 
     return h.response(await Engine.getPbo(tenant, wfid));
@@ -3136,6 +3136,8 @@ const FilePondProcess = async function (req, h) {
           author: myEmail,
           realName: realName,
           contentType: contentType,
+          forWhat: "workflow",
+          forWhich: "unknown",
           fileId: fileId,
         });
         await attachment.save();
