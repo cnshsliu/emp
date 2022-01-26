@@ -2391,8 +2391,12 @@ Engine.removePbo = async function (tenant, wfid, files, email) {
         });
         try {
           for (let i = 0; i < deleted.length; i++) {
-            let fileName = `${EmpConfig.attachment.folder}/${tenant}/${email}/${deleted[i].serverId}`;
-            fs.unlinkSync(fileName);
+            try {
+              let fileName = `${EmpConfig.attachment.folder}/${tenant}/${email}/${deleted[i].serverId}`;
+              fs.unlinkSync(fileName);
+            } catch (e) {
+              console.error(e);
+            }
           }
         } catch (e) {
           console.error(e);
