@@ -281,6 +281,24 @@ const Tools = {
       time.getSeconds()
     );
   },
+
+  getFilePondFile: function (tenant, uid, fileName) {
+    let relativeFolder = `${tenant}/${uid}/`;
+    let relativeFilePath = `${tenant}/${uid}/${fileName}`;
+    let storedFolder = `${EmpConfig.attachment.folder}/${relativeFolder}`;
+    let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
+    if (EmpConfig.attachment.folder.match(/.*\/$/)) {
+      storedFolder = `${EmpConfig.attachment.folder}${relativeFolder}`;
+      storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
+    }
+    return {
+      folder: storedFolder,
+      fileName: fileName,
+      tenant: tenant,
+      uid: uid,
+      fullPath: storedFileName,
+    };
+  },
 };
 console.log(Tools.makeEmailSameDomain("zhang@gmail.com", "lucas@xihuanwu.com"));
 module.exports = Tools;

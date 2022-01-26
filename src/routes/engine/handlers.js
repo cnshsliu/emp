@@ -3105,16 +3105,10 @@ const FilePondProcess = async function (req, h) {
         let contentType = filepond[i]["headers"]["content-type"];
         let realName = filepond[i]["filename"];
         let fileId = uuidv4();
-        let relativeFolder = `${tenant}/${myEmail}/`;
-        let relativeFilePath = `${tenant}/${myEmail}/${fileId}`;
-        let storedFolder = `${EmpConfig.attachment.folder}/${relativeFolder}`;
-        let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
-        if (EmpConfig.attachment.folder.match(/.*\/$/)) {
-          storedFolder = `${EmpConfig.attachment.folder}${relativeFolder}`;
-          storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
-        }
-        if (fs.existsSync(storedFolder) === false) fs.mkdirSync(storedFolder, { recursive: true });
-        fs.renameSync(filepond[i].path, storedFileName);
+        let filepondfile = Tools.getFilePondFile(tenant, myEmail, fileId);
+        if (fs.existsSync(filepondfile.folder) === false)
+          fs.mkdirSync(filepondfile.folder, { recursive: true });
+        fs.renameSync(filepond[i].path, filepondfile.fullPath);
         let attachment = new Attachment({
           tenant: tenant,
           author: myEmail,
@@ -3137,12 +3131,8 @@ const FilePondRevert = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     let fileId = req.payload;
-    let relativeFilePath = `${tenant}/${myEmail}/${fileId}`;
-    let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
-    if (EmpConfig.attachment.folder.match(/.*\/$/)) {
-      storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
-    }
-    fs.unlinkSync(storedFileName);
+    let filepondfile = Tools.getFilePondFile(tenant, myEmail, fileId);
+    fs.unlinkSync(filepondfile.fullPath);
     Attachment.deleteMany({ tenant: tenant, author: myEmail, fileId: fileId });
     return h.response(fileId);
   } catch (err) {
@@ -3158,19 +3148,18 @@ const FilePondViewer = async function (req, h) {
     let filter = { tenant, fileId };
     let attach = await Attachment.findOne(filter);
 
-    let relativeFilePath = `${tenant}/${attach.author}/${fileId}`;
-    let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
-    if (EmpConfig.attachment.folder.match(/.*\/$/)) {
-      storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
-    }
-    var readStream = fs.createReadStream(storedFileName);
+    let filepondfile = Tools.getFilePondFile(tenant, attach.author, fileId);
+    var readStream = fs.createReadStream(filepondfile.fullPath);
     return h
       .response(readStream)
       .header("cache-control", "no-cache")
       .header("Pragma", "no-cache")
       .header("Access-Control-Allow-Origin", "*")
       .header("Content-Type", attach.contentType)
-      .header("Content-Disposition", `attachment;filename="abcd.png"`);
+      .header(
+        "Content-Disposition",
+        `attachment;filename="${encodeURIComponent(filepondfile.fileName)}"`
+      );
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
