@@ -490,6 +490,7 @@ internals.endpoints = [
           wftitle: Joi.string()
             .default("")
             .allow("")
+            .max(300)
             .optional()
             .description("Same as wfid if not provided"),
           teamid: Joi.string()
@@ -677,6 +678,26 @@ internals.endpoints = [
         payload: {
           wfid: Joi.string().required(),
           op: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/workflow/set/title",
+    handler: Handlers.WorkflowSetTitle,
+    config: {
+      description: "Workflow set title",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required().trim(),
+          wftitle: Joi.string().required().trim().min(3).max(200),
         },
         validator: Joi,
       },

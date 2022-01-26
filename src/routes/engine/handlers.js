@@ -724,6 +724,28 @@ const WorkflowOP = async function (req, h) {
   }
 };
 
+const WorkflowSetTitle = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let wftitle = req.payload.wftitle;
+    if (wftitle.length < 3) {
+      throw new EmpError("TOO_SHORT", "should be more than 3 chars");
+    }
+
+    let wfid = req.payload.wfid;
+    let filter = { tenant: tenant, wfid: wfid };
+    let wf = await Workflow.findOne(filter);
+    if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "update"))
+      throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
+    wf = await Workflow.updateOne(filter, { $set: { wftitle: wftitle } });
+    return h.response(wf.wftitle);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const WorkflowList = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -3203,6 +3225,7 @@ module.exports = {
   WorkflowSetPbo,
   WorkflowGetPbo,
   WorkflowOP,
+  WorkflowSetTitle,
   WorkList,
   WorkInfo,
   WorkGetHtml,
