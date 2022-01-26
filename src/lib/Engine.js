@@ -2591,10 +2591,13 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.beginat = wfRoot.attr("at");
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
 
-  let tmp = Parser.base64ToCode(Common.getInstruct(tpRoot, work.nodeid));
+  let tmpInstruction = Parser.base64ToCode(Common.getInstruct(tpRoot, work.nodeid));
   let all_visied_kvars = await Parser.userGetVars(tenant, email, wfid, "workflow");
-  tmp = Engine.compileContent(wfRoot, all_visied_kvars, tmp);
-  ret.instruct = Parser.codeToBase64(tmp);
+  tmpInstruction = Engine.compileContent(wfRoot, all_visied_kvars, tmpInstruction);
+  if (tmpInstruction.indexOf("[") >= 0) {
+    tmpInstruction = await Parser.replaceStringWithKVar(tenant, tmpInstruction, null, wfid);
+  }
+  ret.instruct = Parser.codeToBase64(tmpInstruction);
 
   ret.routingOptions = Common.getRoutingOptions(tpRoot, work.nodeid);
   ret.from_actions = Engine._getFromActions(tpRoot, wfRoot, workNode);

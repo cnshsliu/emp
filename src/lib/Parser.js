@@ -463,7 +463,7 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
     m = theString.match(/\[(.+)\]/);
 
     if (m) {
-      let newValue = kvars[m[1]] ? kvars[m[1]].value : "NO_KVAR";
+      let newValue = kvars[m[1]] ? kvars[m[1]].value : m[1];
       //万一newValue中有【】，需要去掉，否则，do...while会死循环
       newValue = newValue.replace(/\[(.+)\]/, "");
       theString = theString.replace(m[0], newValue);
@@ -619,7 +619,14 @@ Parser.splitStringToArray = function (str, deli = null) {
 };
 
 Parser.codeToBase64 = function (code) {
-  return Buffer.from(code).toString("base64");
+  if (Tools.isEmpty(code)) return code;
+  try {
+    return Buffer.from(code).toString("base64");
+  } catch (err) {
+    console.log("code=", code);
+    console.error(err);
+    return code;
+  }
 };
 Parser.base64ToCode = function (base64) {
   return Buffer.from(base64, "base64").toString("utf-8");
