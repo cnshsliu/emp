@@ -4,7 +4,6 @@ const moment = require("moment");
 const Template = require("../database/models/Template");
 const User = require("../database/models/User");
 const Workflow = require("../database/models/Workflow");
-const Attachment = require("../database/models/Attachment");
 const Handlebars = require("handlebars");
 const SanitizeHtml = require("sanitize-html");
 const Todo = require("../database/models/Todo");
@@ -12,7 +11,6 @@ const CbPoint = require("../database/models/CbPoint");
 const Comment = require("../database/models/Comment");
 const Team = require("../database/models/Team");
 const Delegation = require("../database/models/Delegation");
-const WfPbo = require("../database/models/WfPbo");
 const KVar = require("../database/models/KVar");
 const DelayTimer = require("../database/models/DelayTimer");
 const OrgChartHelper = require("./OrgChartHelper");
@@ -2102,9 +2100,10 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     }
   } finally {
     //在最后,将临时文件删除,异步删除即可
-    fs.unlink(tmpFilename, () => {
+    /* fs.unlink(tmpFilename, () => {
       console.log(tmpFilename + "\tdeleted");
-    });
+    }); */
+    console.log(tmpFilename + "\tkept");
   }
   return ret;
 };
@@ -2128,7 +2127,7 @@ Engine.startWorkflow = async function (
   tenant,
   tplid,
   starter,
-  pbo,
+  textPbo,
   teamid,
   wfid,
   wftitle,
@@ -2164,18 +2163,18 @@ Engine.startWorkflow = async function (
     version: 2,
     runmode: runmode,
   });
-  wf = await wf.save();
-  for (let i = 0; i < uploadedFiles.length; i++) {
-    let fileId = uploadedFiles[i].serverId;
-    let filter = { tenant: tenant, fileId: fileId };
-    await Attachment.findOneAndUpdate(filter, { $set: { forWhat: "workflow", forWhich: wfid } });
-  }
-  pbo = [...pbo, ...uploadedFiles];
-  pbo = pbo.map((x) => {
-    if (x.serverId) x.author = starter;
+  let attachments = [...textPbo, ...uploadedFiles];
+  attachments = attachments.map((x) => {
+    if (x.serverId) {
+      x.author = starter;
+      x.forWhat = "workflow";
+      x.forWhich = wfid;
+      x.forKey = "pbo";
+    }
     return x;
   });
-  await Engine.setPbo(tenant, wfid, pbo);
+  wf.attachments = attachments;
+  wf = await wf.save();
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
   await Parser.setVars(tenant, wfid, "workflow", parent_vars, "EMP");
   await Engine.PUB.send([
@@ -2215,7 +2214,6 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
     await Todo.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await DelayTimer.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await CbPoint.deleteMany({ tenant: tenant, wfid: { $in: res } });
-    await WfPbo.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await KVar.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await Workflow.deleteMany(wfFilter);
   }
@@ -2318,7 +2316,6 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
   await Todo.deleteMany({ tenant: tenant, wfid: wfid });
   await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
   await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
-  await WfPbo.deleteMany({ tenant: tenant, wfid: wfid });
   await KVar.deleteMany({ tenant: tenant, wfid: wfid });
   return ret;
 };
@@ -2330,130 +2327,18 @@ Engine.setWorkflowPbo = async function (email, tenant, wfid, pbo) {
   await Engine.setPbo(tenant, wfid, pbo);
   return pbo;
 };
-Engine.setPbo = async function (tenant, wfid, pbo) {
-  let pboArray = [];
-  if (Array.isArray(pbo)) {
-    pboArray = pbo;
-  } else {
-    pboArray = [pbo];
-  }
-  await WfPbo.deleteOne({
-    tenant: tenant,
-    wfid: wfid,
-  });
-  let newPbo = new WfPbo({
-    tenant: tenant,
-    wfid: wfid,
-    pbo: pboArray,
-  });
-  return await newPbo.save();
-};
-Engine.addFilePbo = async function (tenant, forWhat, wfid, files) {
-  let tmp = await WfPbo.findOne({ tenant, wfid });
-  if (files.length > 0) {
-    if (tmp) {
-      tmp = await WfPbo.findOneAndUpdate(
-        { tenant, wfid },
-        { $addToSet: { pbo: { $each: files } } }
-      );
-    } else {
-      tmp = new WfPbo({ tenant, wfid, pbo: files });
-      tmp = await tmp.save();
-    }
-
-    let fileIds = files.map((x) => x.serverId);
-    await Attachment.updateMany(
-      { tenant: tenant, fileId: { $in: fileIds } },
-      { $set: { forWhat: forWhat, forWhich: wfid } }
-    );
-  }
-  return tmp;
-};
-Engine.removePbo = async function (tenant, wfid, files, email) {
-  if (files.length <= 0) return;
-  let tmp = await WfPbo.findOne({ tenant, wfid });
-  if (Tools.isEmpty(tmp)) return;
-  let wfPbos = tmp.pbo;
-  if (Tools.isEmpty(wfPbos)) return;
-  if (Array.isArray(wfPbos) && wfPbos.length === 0) return;
-
-  let me = await User.findOne({ email: email }).populate("tenant").lean();
-  let canDeleteAll = false;
-  let filter = { tenant: tenant, wfid: wfid };
-  if (Parser.isAdmin(me)) canDeleteAll = true;
-  else {
-    let wf = await Workflow.findOne(filter);
-    if (wf && wf.starter === email) canDeleteAll = true;
-  }
-
-  for (let i = 0; i < files.length; i++) {
-    let pbo = files[i];
-    if (typeof pbo === "string") {
-      wfPbos = wfPbos.filter((x) => {
-        return !(x === pbo);
-      });
-    } else {
-      if (canDeleteAll) {
-        wfPbos = wfPbos.filter((x) => {
-          return x.serverId !== pbo.serverId;
-        });
-        let tmp = await Attachment.find({ tenant: tenant, fileId: pbo.serverId });
-        for (let i = 0; i < tmp.length; i++) {
-          try {
-            let fileName = `${EmpConfig.attachment.folder}/${tenant}/${tmp[i].author}/${pbo.serverId}`;
-            fs.unlinkSync(fileName);
-          } catch (e) {
-            console.error(e);
-          }
-        }
-        await Attachment.deleteMany({ tenant: tenant, fileId: pbo.serverId });
-      } else {
-        wfPbos = wfPbos.filter((x) => {
-          return !(x.serverId === pbo.serverId && author === email);
-        });
-        await Attachment.delete({ tenant: teannt, fileId: pbo.serverId, author: email });
-        let deleted = wfPbos.filter((x) => {
-          return x.serverId === pbo.serverId && author === email;
-        });
-        try {
-          for (let i = 0; i < deleted.length; i++) {
-            try {
-              let fileName = `${EmpConfig.attachment.folder}/${tenant}/${email}/${deleted[i].serverId}`;
-              fs.unlinkSync(fileName);
-            } catch (e) {
-              console.error(e);
-            }
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-  }
-
-  await WfPbo.updateOne({ tenant, wfid }, { $set: { pbo: wfPbos } });
-};
 
 Engine.getPbo = async function (tenant, wfid) {
-  let ret = await WfPbo.findOne({
-    tenant: tenant,
-    wfid: wfid,
-  }).lean();
-  if (ret) {
-    for (let i = 0; i < ret.pbo.length; i++) {
-      if (ret.pbo[i].serverId) {
-        let filter = { tenant: tenant, fileId: ret.pbo[i].serverId };
-        let attach = await Attachment.findOne(filter);
-        if (attach) {
-          ret.pbo[i]["realName"] = attach.realName;
-        }
-      }
-    }
-    return ret.pbo;
-  } else {
-    return [];
-  }
+  let attachments = await Engine.getAttachments(tenant, wfid);
+  attachments = attachments.filter((x) => x.forKey === "pbo");
+  return wf.attachments;
 };
+Engine.getAttachments = async function (tenant, wfid) {
+  let filter = { tenant: tenant, wfid: wfid };
+  let wf = await Workflow.findOne(filter);
+  return wf.attachments;
+};
+
 Engine.getWorkflowPbo = async function (email, tenant, wfid) {
   return await Engine.getPbo(tenant, wfid);
 };
@@ -2616,7 +2501,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.wftitle = wfRoot.attr("wftitle");
   ret.wf.pwfid = wfRoot.attr("pwfid");
   ret.wf.pworkid = wfRoot.attr("pworkid");
-  ret.wf.pbo = await Engine.getPbo(tenant, wfid);
+  ret.wf.attachments = await Engine.getAttachments(tenant, wfid);
   ret.wf.status = Common.getWorkflowStatus(wfRoot);
   ret.wf.beginat = wfRoot.attr("at");
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);

@@ -34,6 +34,7 @@ var WorkflowSchema = new Schema(
     rehearsal: { type: Boolean, required: true, default: false, index: true },
     runmode: { type: String, default: "standalone" },
     version: { type: Number, default: 1 },
+    attachments: { type: [Schema.Types.Mixed], default: [] },
   },
   { timestamps: true }
 );

@@ -7,7 +7,6 @@ const { ZMQ } = require("../../lib/ZMQ");
 const Joi = require("joi");
 const { v4: uuidv4 } = require("uuid");
 const TimeZone = require("../../lib/timezone");
-const Attachment = require("../../database/models/Attachment");
 const Template = require("../../database/models/Template");
 const EdittingLog = require("../../database/models/EdittingLog");
 const Crypto = require("../../lib/Crypto");
@@ -502,7 +501,7 @@ const WorkflowStart = async function (req, h) {
     let wftitle = req.payload.wftitle;
     let teamid = req.payload.teamid;
     let rehearsal = req.payload.rehearsal;
-    let pbo = req.payload.pbo;
+    let textPbo = req.payload.textPbo;
     let kvars = req.payload.kvars;
     let uploadedFiles = req.payload.uploadedFiles;
 
@@ -531,18 +530,18 @@ const WorkflowStart = async function (req, h) {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
 
-    pbo = pbo ? pbo : "";
-    if (pbo.length > 0) {
-      pbo = [pbo];
+    textPbo = textPbo ? textPbo : "";
+    if (textPbo.length > 0) {
+      textPbo = [textPbo];
     } else {
-      pbo = [];
+      textPbo = [];
     }
     let wfDoc = await Engine.startWorkflow(
       rehearsal,
       tenant,
       tplid,
       starter,
-      pbo,
+      textPbo,
       teamid,
       wfid,
       wftitle,
@@ -560,7 +559,7 @@ const WorkflowStart = async function (req, h) {
   }
 };
 
-const WorkflowAddFilePbo = async function (req, h) {
+const WorkflowAddFile = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let email = req.auth.credentials.email;
@@ -569,57 +568,77 @@ const WorkflowAddFilePbo = async function (req, h) {
     if (pondfiles.length > 0) {
       pondfiles = pondfiles.map((x) => {
         x.author = email;
+        x.forKey = req.payload.forKey;
         return x;
       });
-      await Engine.addFilePbo(tenant, "workflow", wfid, pondfiles);
+      await Workflow.findOneAndUpdate(
+        { tenant, wfid },
+        { $addToSet: { attachments: { $each: pondfiles } } }
+      );
     }
 
-    return h.response(await Engine.getPbo(tenant, wfid));
+    let workflow = await Workflow.findOne({ tenant, wfid }, { doc: 0 });
+    return h.response(workflow.attachments);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
-const WorkflowRemovePbo = async function (req, h) {
+const WorkflowRemoveAttachment = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let email = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let pbo = req.payload.pbo;
-    if (Array.isArray(pbo) === false) {
-      pbo = [pbo];
+    let attachmentsToDelete = req.payload.attachments;
+    if (attachmentsToDelete.length <= 0) return h.response("Done");
+
+    let filter = { tenant: tenant, wfid: wfid };
+    let wf = await Workflow.findOne(filter);
+
+    let me = await User.findOne({ email: email }).populate("tenant").lean();
+    let canDeleteAll = false;
+    if (Parser.isAdmin(me)) canDeleteAll = true;
+    else if (wf.starter === email) canDeleteAll = true;
+
+    let wfAttachments = wf.attachments;
+    for (let i = 0; i < attachmentsToDelete.length; i++) {
+      let tobeDel = attachmentsToDelete[i];
+      if (typeof tobeDel === "string") {
+        wfAttachments = wfAttachments.filter((x) => {
+          return x !== tobeDel;
+        });
+      } else {
+        let tmp = [];
+        for (let i = 0; i < wfAttachments.length; i++) {
+          if (
+            wfAttachments[i].serverId === tobeDel.serverId &&
+            (canDeleteAll || wfAttachments[i].author === email)
+          ) {
+            try {
+              let fileInfo = Tools.getFilePondFile(
+                tenant,
+                wfAttachments[i].author,
+                wfAttachments[i].serverId
+              );
+              fs.unlinkSync(fileInfo.fullPath);
+            } catch (e) {
+              console.error(e);
+            }
+          } else {
+            tmp.push(wfAttachments[i]);
+          }
+        }
+        wfAttachments = tmp;
+      }
     }
-    await Engine.removePbo(tenant, wfid, pbo, email);
 
-    return h.response(await Engine.getPbo(tenant, wfid));
-  } catch (err) {
-    console.error(err);
-    return h.response(replyHelper.constructErrorResponse(err)).code(500);
-  }
-};
-const WorkflowSetPbo = async function (req, h) {
-  try {
-    let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
-    let wfid = req.payload.wfid;
-    let pbo = req.payload.pbo;
+    wf = await Workflow.findOneAndUpdate(
+      { tenant, wfid },
+      { $set: { attachments: wfAttachments } },
+      { new: true }
+    );
 
-    pbo = await Engine.setWorkflowPbo(email, tenant, wfid, pbo);
-    return pbo;
-  } catch (err) {
-    console.error(err);
-    return h.response(replyHelper.constructErrorResponse(err)).code(500);
-  }
-};
-const WorkflowGetPbo = async function (req, h) {
-  try {
-    let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
-    let wfid = req.payload.wfid;
-
-    let pbo = await Engine.getWorkflowPbo(email, tenant, wfid);
-
-    return pbo;
+    return h.response(wfAttachments);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3119,29 +3138,20 @@ const FilePondProcess = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    console.log("FilePond PRocesss");
+    console.log("FilePond Processs");
     let filepond = req.payload.filepond;
     let ids = "";
     for (let i = 0; i < filepond.length; i++) {
       if (filepond[i].path && filepond[i].headers) {
         let contentType = filepond[i]["headers"]["content-type"];
         let realName = filepond[i]["filename"];
-        let fileId = uuidv4();
-        let filepondfile = Tools.getFilePondFile(tenant, myEmail, fileId);
+        let serverId = uuidv4();
+        let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
         if (fs.existsSync(filepondfile.folder) === false)
           fs.mkdirSync(filepondfile.folder, { recursive: true });
         fs.renameSync(filepond[i].path, filepondfile.fullPath);
-        let attachment = new Attachment({
-          tenant: tenant,
-          author: myEmail,
-          realName: realName,
-          contentType: contentType,
-          forWhat: "workflow",
-          forWhich: "unknown",
-          fileId: fileId,
-        });
-        await attachment.save();
-        ids = fileId;
+
+        ids = serverId;
       }
     }
     return h.response(ids);
@@ -3154,11 +3164,14 @@ const FilePondRevert = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    let fileId = req.payload;
-    let filepondfile = Tools.getFilePondFile(tenant, myEmail, fileId);
-    fs.unlinkSync(filepondfile.fullPath);
-    Attachment.deleteMany({ tenant: tenant, author: myEmail, fileId: fileId });
-    return h.response(fileId);
+    let serverId = req.payload;
+    let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
+    try {
+      fs.unlinkSync(filepondfile.fullPath);
+    } catch (err) {
+      console.error(err);
+    }
+    return h.response(serverId);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3168,18 +3181,27 @@ const FilePondViewer = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    let fileId = req.params.serverId;
-    let filter = { tenant, fileId };
-    let attach = await Attachment.findOne(filter);
+    let wfid = req.params.wfid;
+    let serverId = req.params.serverId;
+    let wfFilter = { tenant, wfid, "attachments.serverId": serverId };
+    let wf = await Workflow.findOne(wfFilter, { attachments: 1 });
+    let attach = null;
+    for (let i = 0; i < wf.attachments.length; i++) {
+      if (wf.attachments[i].serverId === serverId) {
+        attach = wf.attachments[i];
+      }
+    }
+    let author = attach.author;
+    let contentType = attach.contentType;
 
-    let filepondfile = Tools.getFilePondFile(tenant, attach.author, fileId);
+    let filepondfile = Tools.getFilePondFile(tenant, author, serverId);
     var readStream = fs.createReadStream(filepondfile.fullPath);
     return h
       .response(readStream)
       .header("cache-control", "no-cache")
       .header("Pragma", "no-cache")
       .header("Access-Control-Allow-Origin", "*")
-      .header("Content-Type", attach.contentType)
+      .header("Content-Type", contentType)
       .header(
         "Content-Disposition",
         `attachment;filename="${encodeURIComponent(filepondfile.fileName)}"`
@@ -3224,10 +3246,11 @@ module.exports = {
   WorkflowList,
   WorkflowSearch,
   WorkflowGetLatest,
-  WorkflowSetPbo,
-  WorkflowGetPbo,
   WorkflowOP,
   WorkflowSetTitle,
+  WorkflowUpgrade,
+  WorkflowAddFile,
+  WorkflowRemoveAttachment,
   WorkList,
   WorkInfo,
   WorkGetHtml,
@@ -3289,9 +3312,6 @@ module.exports = {
   MemberSystemPerm,
   DemoAPI,
   SeeItWork,
-  WorkflowUpgrade,
-  WorkflowAddFilePbo,
-  WorkflowRemovePbo,
   FilePondProcess,
   FilePondRevert,
   FilePondViewer,

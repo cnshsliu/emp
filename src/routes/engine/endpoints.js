@@ -499,7 +499,7 @@ internals.endpoints = [
             .description(
               "Can be absent for test purpose, if absent, all works will be send to starter"
             ),
-          pbo: Joi.string().optional().allow("").description("Primary Business Object"),
+          textPbo: Joi.string().optional().allow("").description("Primary Business Object"),
           kvars: Joi.object().optional().default({}),
           uploadedFiles: Joi.array().optional().default([]),
         },
@@ -509,49 +509,10 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/workflow/getpbo",
-    handler: Handlers.WorkflowGetPbo,
+    path: "/workflow/addFile",
+    handler: Handlers.WorkflowAddFile,
     config: {
-      description: "Get workflow PBO",
-      tags: ["api"],
-      auth: "token",
-      validate: {
-        headers: Joi.object({
-          Authorization: Joi.string(),
-        }).unknown(),
-        payload: {
-          wfid: Joi.string().required(),
-        },
-        validator: Joi,
-      },
-    },
-  },
-  {
-    method: "POST",
-    path: "/workflow/setpbo",
-    handler: Handlers.WorkflowSetPbo,
-    config: {
-      description: "Set workflow PBO",
-      tags: ["api"],
-      auth: "token",
-      validate: {
-        headers: Joi.object({
-          Authorization: Joi.string(),
-        }).unknown(),
-        payload: {
-          wfid: Joi.string().required(),
-          pbo: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string()),
-        },
-        validator: Joi,
-      },
-    },
-  },
-  {
-    method: "POST",
-    path: "/workflow/addFilePbo",
-    handler: Handlers.WorkflowAddFilePbo,
-    config: {
-      description: "Add filepond to workflow PBO",
+      description: "Add filepond to workflow",
       tags: ["api"],
       auth: "token",
       validate: {
@@ -561,6 +522,7 @@ internals.endpoints = [
         payload: {
           wfid: Joi.string().required(),
           pondfiles: Joi.array().items(Joi.any()),
+          forKey: Joi.string().required(),
         },
         validator: Joi,
       },
@@ -568,8 +530,8 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/workflow/removePbo",
-    handler: Handlers.WorkflowRemovePbo,
+    path: "/workflow/removeAttachment",
+    handler: Handlers.WorkflowRemoveAttachment,
     config: {
       description: "Remove PBO",
       tags: ["api"],
@@ -580,7 +542,7 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           wfid: Joi.string().required(),
-          pbo: Joi.any(),
+          attachments: Joi.any(),
         },
         validator: Joi,
       },
@@ -2159,6 +2121,9 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           filepond: Joi.array().items(Joi.any()).required(),
+          forWhat: Joi.string(),
+          forWhich: Joi.string(),
+          forKey: Joi.string(),
         },
         validator: Joi,
       },
@@ -2182,7 +2147,7 @@ internals.endpoints = [
   },
   {
     method: "GET",
-    path: "/filepond/viewer/{serverId}",
+    path: "/filepond/viewer/{wfid}/{serverId}",
     handler: Handlers.FilePondViewer,
     config: {
       auth: "token",

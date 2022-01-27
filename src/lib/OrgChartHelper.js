@@ -158,7 +158,7 @@ const OrgChartHelper = {
     //如果这个人在root里，比如CEO，则只查root  OU
     //============
     if (mode === OrgChartHelper.FIND_IN_OU) {
-      ouCondition = ou;
+      ouCondition = { $regex: `^${ou}` };
     } else if (mode === OrgChartHelper.FIND_FIRST_UPPER) {
       for (let i = 0; i < ouIn.length; i++) {
         ouCondition = ouIn[i];
@@ -193,6 +193,9 @@ const OrgChartHelper = {
       //所搜索的职位
       position: { $in: posArr },
     };
+    if (posArr.includes("all") || posArr.includes("All") || posArr.includes("ALL")) {
+      delete filter.position;
+    }
     if (ouCondition === undefined) {
       delete filter.ou;
     }
