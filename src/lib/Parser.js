@@ -124,8 +124,9 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
 /**
  * Get all vars without visi checking.
  *
- * @param {...} Parser.sysGetVars = asynctenant -
- * @param {...} elem -
+ * @param {...} tenant -
+ * @param {...} wfid - The id of workflow
+ * @param {...} objid - the id of object, for whole workflow, use "workflow", for work, use it's workid
  * @param {...} doers = [] -
  * @param {...} notdoers = [] -
  *
@@ -136,9 +137,16 @@ Parser.sysGetVars = async function (tenant, wfid, objid, doers = [], notdoers = 
 };
 
 /**
+ * @param {...} tenant -
+ * @param {...} forWhom - the doer's email
+ * @param {...} wfid - The id of workflow
+ * @param {...} objid - the id of object, for whole workflow, use "workflow", for work, use it's workid
+ * @param {...} doers = [] -
+ * @param {...} notdoers = [] -
  */
 Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], notdoers = []) {
   if (typeof wfid !== "string") {
+    debugger;
     console.trace("wfid should be a string");
   }
   let retResult = {};

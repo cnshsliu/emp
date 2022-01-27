@@ -1247,7 +1247,10 @@ Client.yarkNode = async function (obj) {
     console.log("===PARSED==");
     console.log(parsed_code);
     console.log("===========");
-    let all_kvars = await Parser.sysGetVars(obj.tenant, wfRoot);
+    let all_kvars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
+    if (JSON.stringify(all_kvars) === "{}") {
+      console.error("all_kvars got {}, something must be wrong");
+    }
     let codeRetString = '{"RET":"DEFAULT"}';
     let codeRetObj = {};
     let codeRetRoute = "DEFAULT";
@@ -1408,7 +1411,7 @@ Client.yarkNode = async function (obj) {
       `<div class="work GROUND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
     );
   } else if (tpNode.hasClass("SUB")) {
-    let parent_vars = await Parser.sysGetVars(obj.tenant, wfRoot);
+    let parent_vars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
     let pbo = await Engine.getPbo(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
@@ -1478,7 +1481,7 @@ Client.yarkNode = async function (obj) {
       parent_work.removeClass("ST_RUN");
       parent_work.addClass("ST_DONE");
       //Put child kvars to parent_work node in parent workflow
-      let child_kvars = await Parser.sysGetVars(obj.tenant, wfRoot);
+      let child_kvars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
       await Parser.setVars(obj.tenant, parent_wfid, parent_workid, child_kvars, "EMP");
       //KVAR above, 在流程结束时设置父亲流程中当前节点的参数
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
