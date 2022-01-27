@@ -2146,6 +2146,25 @@ internals.endpoints = [
     },
   },
   {
+    method: "POST",
+    path: "/filepond/remove",
+    handler: Handlers.FilePondRemove,
+    config: {
+      description: "FilePond remove",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          serverId: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
     method: "GET",
     path: "/filepond/viewer/{wfid}/{serverId}",
     handler: Handlers.FilePondViewer,

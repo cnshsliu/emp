@@ -3160,6 +3160,23 @@ const FilePondProcess = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const FilePondRemove = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let serverId = req.payload.serverId;
+    let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
+    try {
+      fs.unlinkSync(filepondfile.fullPath);
+    } catch (err) {
+      console.error(err);
+    }
+    return h.response(serverId);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 const FilePondRevert = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -3314,5 +3331,6 @@ module.exports = {
   SeeItWork,
   FilePondProcess,
   FilePondRevert,
+  FilePondRemove,
   FilePondViewer,
 };
