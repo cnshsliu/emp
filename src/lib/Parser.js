@@ -425,8 +425,10 @@ Parser.setVars = async function (tenant, wfid, objid, newvars, doer) {
   if (JSON.stringify(newvars) === "{}") return;
   let oldVars = await Parser.sysGetVars(tenant, wfid, objid);
   for (const [name, valueDef] of Object.entries(newvars)) {
-    while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
-    while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+    if (typeof valueDef.value === "string") {
+      while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
+      while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+    }
   }
 
   let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
