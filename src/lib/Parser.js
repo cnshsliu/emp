@@ -411,7 +411,13 @@ Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid) 
     console.warn("COPY_VARS_FAILED", "can't find old vars");
     return null;
   }
-  let newKvar = new KVar({ tenant: tenant, wfid: toWfid, objid: toObjid, content: kvar.content });
+  let newKvar = new KVar({
+    tenant: tenant,
+    wfid: toWfid,
+    objid: toObjid,
+    doer: kvar.doer,
+    content: kvar.content,
+  });
   newKvar = await newKvar.save();
   return newKvar;
 };

@@ -706,6 +706,19 @@ const WorkflowDestroy = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const WorkflowRestartThenDestroy = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let newWf = await Engine.restartWorkflow(email, tenant, wfid);
+    await Engine.destroyWorkflow(email, tenant, wfid);
+    return h.response(newWf);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
 const WorkflowOP = async function (req, h) {
   try {
@@ -728,6 +741,10 @@ const WorkflowOP = async function (req, h) {
         break;
       case "destroy":
         ret = await Engine.destroyWorkflow(email, tenant, wfid);
+        break;
+      case "restartthendestroy":
+        ret = await Engine.restartWorkflow(email, tenant, wfid);
+        await Engine.destroyWorkflow(email, tenant, wfid);
         break;
       default:
         throw new EmpError(
@@ -3268,6 +3285,7 @@ module.exports = {
   WorkflowUpgrade,
   WorkflowAddFile,
   WorkflowRemoveAttachment,
+  WorkflowRestartThenDestroy,
   WorkList,
   WorkInfo,
   WorkGetHtml,

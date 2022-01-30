@@ -627,6 +627,25 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/workflow/restart/then/destroy",
+    handler: Handlers.WorkflowRestartThenDestroy,
+    config: {
+      description: "Destroy a workflow",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/workflow/op",
     handler: Handlers.WorkflowOP,
     config: {

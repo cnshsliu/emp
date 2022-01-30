@@ -1412,7 +1412,7 @@ Client.yarkNode = async function (obj) {
     );
   } else if (tpNode.hasClass("SUB")) {
     let parent_vars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
-    let pbo = await Engine.getPbo(obj.tenant, obj.wfid);
+    let pbo = await Engine.getPboByWfId(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
     let sub_wf_id = uuidv4();
@@ -2253,7 +2253,15 @@ Engine.stopWorkflow = async function (email, tenant, wfid) {
   }
 };
 
-Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, teamid, wftitle) {
+Engine.restartWorkflow = async function (
+  email,
+  tenant,
+  wfid,
+  starter = null,
+  pbo = null,
+  teamid = null,
+  wftitle = null
+) {
   let old_wfid = wfid;
   let old_wf = await Workflow.findOne({ tenant: tenant, wfid: old_wfid });
   if (!SystemPermController.hasPerm(email, "workflow", old_wf, "update"))
@@ -2267,7 +2275,7 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
   starter = Tools.defaultValue(starter, old_wf.starter);
   teamid = Tools.defaultValue(teamid, old_wf.teamid);
   wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
-  pbo = Tools.defaultValue(pbo, await Engine.getPbo(tenant, old_wfid));
+  pbo = Tools.defaultValue(pbo, await Engine.getPboByWfId(tenant, old_wfid));
   let new_wfid = uuidv4();
   let tplDoc = Cheerio.html(old_wfIO(".template").first());
   let tplid = old_wf.tplid;
@@ -2290,9 +2298,9 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
     version: 2, //new workflow new version 2
     runmode: old_wf.runmode ? old_wf.runmode : "standalone",
   });
+  wf.attachments = await Engine.getPbo(old_wf);
   wf = await wf.save();
   await Parser.copyVars(tenant, old_wfid, "workflow", new_wfid, "workflow");
-  await Engine.setPbo(tenant, wfid, pbo);
   await Engine.PUB.send([
     "EMP",
     JSON.stringify({
@@ -2302,7 +2310,7 @@ Engine.restartWorkflow = async function (email, tenant, wfid, starter, pbo, team
       from_nodeid: "NULL",
       from_workid: "NULL",
       tplid: tplid,
-      wfid: wfid,
+      wfid: new_wfid,
       selector: ".START",
       starter: starter,
       rehearsal: old_wf.rehearsal,
@@ -2322,28 +2330,37 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
   await KVar.deleteMany({ tenant: tenant, wfid: wfid });
   return ret;
 };
-Engine.setWorkflowPbo = async function (email, tenant, wfid, pbo) {
+Engine.setPboByWfId = async function (email, tenant, wfid, pbos) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
   if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
-  await Engine.setPbo(tenant, wfid, pbo);
-  return pbo;
-};
-
-Engine.getPbo = async function (tenant, wfid) {
-  let attachments = await Engine.getAttachments(tenant, wfid);
-  attachments = attachments.filter((x) => x.forKey === "pbo");
+  let attachments = wf.attachments;
+  attachments = attachments.filter((x) => x.forKey !== "pbo");
+  attachments = [...attachments, ...pbos];
+  wf.attachments = attachments;
+  wf = await wf.save();
   return wf.attachments;
 };
-Engine.getAttachments = async function (tenant, wfid) {
+
+Engine.getPbo = async function (wf) {
+  let attachments = wf.attachments;
+  attachments = attachments.filter((x) => x.forKey === "pbo");
+  return attachments;
+};
+Engine.getPboByWfId = async function (tenant, wfid) {
+  let attachments = await Engine.getAttachmentsByWfId(tenant, wfid);
+  attachments = attachments.filter((x) => x.forKey === "pbo");
+  return attachments;
+};
+Engine.getAttachmentsByWfId = async function (tenant, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
   return wf.attachments;
 };
 
 Engine.getWorkflowPbo = async function (email, tenant, wfid) {
-  return await Engine.getPbo(tenant, wfid);
+  return await Engine.getPboByWfId(tenant, wfid);
 };
 
 Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
@@ -2504,7 +2521,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.wftitle = wfRoot.attr("wftitle");
   ret.wf.pwfid = wfRoot.attr("pwfid");
   ret.wf.pworkid = wfRoot.attr("pworkid");
-  ret.wf.attachments = await Engine.getAttachments(tenant, wfid);
+  ret.wf.attachments = await Engine.getAttachmentsByWfId(tenant, wfid);
   ret.wf.status = Common.getWorkflowStatus(wfRoot);
   ret.wf.beginat = wfRoot.attr("at");
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
