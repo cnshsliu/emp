@@ -508,13 +508,13 @@ const WorkflowStart = async function (req, h) {
     kvars["starter"] = {
       label: "Starter",
       value: starter,
-      type: "string",
+      type: "plaintext",
       name: "starter",
     };
     kvars["starterCN"] = {
       value: await Cache.getUserName(starter),
       label: "StarterCN",
-      type: "string",
+      type: "plaintext",
       name: "starterCN",
     };
     let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
@@ -522,7 +522,7 @@ const WorkflowStart = async function (req, h) {
       kvars["ou_SOU"] = {
         label: "StarterOU",
         value: starterStaff.ou,
-        type: "string",
+        type: "plaintext",
         name: "ou_SOU",
       };
     }
