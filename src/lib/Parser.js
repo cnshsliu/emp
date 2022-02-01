@@ -572,6 +572,21 @@ Parser.kvarsToArray = function (kvars) {
   let kvarsArr = [];
   for (const [name, valueDef] of Object.entries(kvars)) {
     let tmp = { ...{ name: name }, ...valueDef };
+    //START Speculate variable type
+    //based on prefix_ of name
+    let matchResult = name.match(
+      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|radio|checkbox|cb|ou|usr|user|tbl)_"
+    );
+    tmp.type = "plaintext";
+    if (matchResult) {
+      tmp.type = matchResult[1];
+    } else {
+      //based on value type if no prefix_ in name
+      matchResult = (typeof valueDef.value).match("(number|string)");
+      if (matchResult) {
+        tmp.type = matchResult[1];
+      }
+    }
     if (tmp.type === "cb") tmp.type = "checkbox";
     if (tmp.type === "ta") tmp.type = "textarea";
     if (tmp.type === "sl" || tmp.type === "sel" || tmp.type === "ou") tmp.type = "select";
