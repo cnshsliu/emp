@@ -114,6 +114,9 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
       if (!vars[name]["label"]) {
         vars[name]["label"] = name;
       }
+      if (name.startsWith("tbl_")) {
+        vars[name]["breakrow"] = true;
+      }
     }
     return vars;
   } catch (error) {
