@@ -3143,5 +3143,91 @@ Engine.init = Engine.once(async function () {
   }, 1000);
 });
 
+Engine.formulaEval = async function (tenant, expr) {
+  let result = "DEFAULT";
+  let emp_node_modules = process.env.EMP_NODE_MODULES;
+  let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
+  let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+  if (!fs.existsSync(emp_tenant_folder))
+    fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
+  let all_code = `
+module.paths.push('${emp_node_modules}');
+module.paths.push('${emp_tenant_folder}/emplib');
+	const datediff = function (s1, s2) {
+		let d1 = Date.parse(s1);
+		let d2 = Date.parse(s2);
+		let diffInMs = Math.abs(d2 - d1);
+		return diffInMs / (1000 * 60 * 60 * 24);
+	};
+
+	const lastingdays = function (s1, s2, roundTo) {
+		let d1 = Date.parse(s1);
+		let d2 = Date.parse(s2);
+		let diffInMs = Math.abs(d2 - d1);
+		let days = diffInMs / (1000 * 60 * 60 * 24);
+		let ceil = Math.ceil(days);
+		let floor = Math.floor(days);
+		if (roundTo === 0) {
+			days = floor;
+		} else if (roundTo === 0.5) {
+			if (days === floor) {
+				days = floor;
+			} else if (days <= floor + 0.5) {
+				days = floor + 0.5;
+			} else if (days <= ceil) {
+				days = ceil;
+			}
+		} else {
+			days = ceil;
+		}
+		return days;
+	};
+
+async function runExpr() {
+  try{
+  let ret = ${expr};
+
+    return ret;
+  }catch(err){
+    console.error(err.message);
+  }
+}
+runExpr().then(async function (x) {if(typeof x === 'object') console.log(JSON.stringify(x)); else console.log(x);
+});`;
+  let tmpFilefolder = `${emp_tenant_folder}/formula`;
+  if (!fs.existsSync(tmpFilefolder)) fs.mkdirSync(tmpFilefolder, { mode: 0o700, recursive: true });
+  let tmpFilename = `${tmpFilefolder}/${lodash.uniqueId("mtc_")}.js`;
+  let cmdName = "node " + tmpFilename;
+  fs.writeFileSync(tmpFilename, all_code);
+
+  let ret = "";
+  let stdOutRet = "";
+  try {
+    const { stdout, stderr } = await Exec(cmdName, { timeout: 10000 });
+    if (stderr.trim() !== "") {
+      console.log(`[Formula EXPR] error: ${stderr}. Normally caused by proxy setting..`);
+    }
+    stdOutRet = stdout.trim();
+    ret = stdOutRet;
+    console.log("[Formula Expr] return: " + JSON.stringify(ret));
+  } catch (e) {
+    //如果在运行模式下,遇到Exception,则再控制台输出错误,并返回预设值
+    console.error(e);
+
+    ret = {
+      message: e.message,
+      error: "DEFAULT",
+    };
+  } finally {
+    //在最后,将临时文件删除,异步删除即可
+    fs.unlink(tmpFilename, () => {
+      console.log(tmpFilename + "\tdeleted");
+    });
+    //console.log(tmpFilename + "\tkept");
+    console.log(`${expr} return ${ret}`);
+  }
+  return ret;
+};
+
 Engine.init();
 module.exports = { Engine, Client };

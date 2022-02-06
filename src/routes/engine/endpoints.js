@@ -2210,6 +2210,25 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/formula/eval",
+    handler: Handlers.FormulaEval,
+    config: {
+      description: "Evaluate formula",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          expr: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
 ];
 
 module.exports = internals;

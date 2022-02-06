@@ -3246,6 +3246,19 @@ const FilePondViewer = async function (req, h) {
   }
 };
 
+const FormulaEval = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let expr = req.payload.expr;
+    let ret = await Engine.formulaEval(tenant, expr);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 module.exports = {
   TemplateCreate,
   TemplateDesc,
@@ -3351,4 +3364,5 @@ module.exports = {
   FilePondRevert,
   FilePondRemove,
   FilePondViewer,
+  FormulaEval,
 };
