@@ -1979,7 +1979,7 @@ Client.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) 
   let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
   let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
 
-  for (const [key, valueDef] of Object.entries(kvars_json)) {
+  /* for (const [key, valueDef] of Object.entries(kvars_json)) {
     if (key.startsWith("tbl_")) {
       try {
         kvars_json[key]["value"] = JSON.parse(Parser.base64ToCode(kvars_json[key]["value"]));
@@ -1987,7 +1987,7 @@ Client.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) 
         console.warn(e);
       }
     }
-  }
+  } */
   if (!fs.existsSync(emp_tenant_folder))
     fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
   let all_code = `
