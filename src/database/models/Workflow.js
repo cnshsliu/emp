@@ -24,6 +24,11 @@ var WorkflowSchema = new Schema(
       index: true,
       unique: true,
     },
+    pboat: {
+      type: String,
+      enum: ["STARTER_START", "STARTER_RUNNING", "STARTER_ANY", "ANY_RUNNING", "ANY_ANY"],
+      default: "ANY_RUNNING",
+    },
     wftitle: { type: String, required: true },
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
     teamid: { type: String, required: false, default: "" },

@@ -20,9 +20,9 @@ internals.getMyGroupPerm = function (group) {
       //对自己的对象拥有全部权限
       "owned-*-*",
       //对工作流进程不能改动
-      "-*-workflow-update",
+      //"-*-workflow-update",
       //对工作流进程不能删除
-      "-*-workflow-delete",
+      //"-*-workflow-delete",
       //对工作项不能删除
       "-*-work-delete",
     ];

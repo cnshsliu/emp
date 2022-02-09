@@ -388,6 +388,58 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/template/set/pboat",
+    handler: Handlers.TemplateSetPboAt,
+    config: {
+      description: "Set template pboat",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+          pboat: Joi.string().valid(
+            "STARTER_START",
+            "STARTER_RUNNING",
+            "STARTER_ANY",
+            "ANY_RUNNING",
+            "ANY_ANY"
+          ),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/workflow/set/pboat",
+    handler: Handlers.WorkflowSetPboAt,
+    config: {
+      description: "Set workflow pboat",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          pboat: Joi.string().valid(
+            "STARTER_START",
+            "STARTER_RUNNING",
+            "STARTER_ANY",
+            "ANY_RUNNING",
+            "ANY_ANY"
+          ),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/template/download",
     handler: Handlers.TemplateDownload,
     config: {

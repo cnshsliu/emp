@@ -6,6 +6,11 @@ var TemplateSchema = new Schema(
   {
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
     tplid: { type: String, required: [true, "不能为空"], index: true },
+    pboat: {
+      type: String,
+      enum: ["STARTER_START", "STARTER_RUNNING", "STARTER_ANY", "ANY_RUNNING", "ANY_ANY"],
+      default: "ANY_RUNNING",
+    },
     author: { type: String, required: [true, "不能为空"], index: true },
     authorName: { type: String, required: [true, "不能为空"], index: false },
     visi: { type: String },

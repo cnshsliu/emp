@@ -597,7 +597,13 @@ const WorkflowRemoveAttachment = async function (req, h) {
 
     let me = await User.findOne({ email: email }).populate("tenant").lean();
     let canDeleteAll = false;
-    if (Parser.isAdmin(me)) canDeleteAll = true;
+    let isAdmin = false;
+    try {
+      isAdmin = await Parser.isAdmin(me);
+    } catch (e) {
+      isAdmin = false;
+    }
+    if (isAdmin) canDeleteAll = true;
     else if (wf.starter === email) canDeleteAll = true;
 
     let wfAttachments = wf.attachments;
@@ -622,7 +628,7 @@ const WorkflowRemoveAttachment = async function (req, h) {
               );
               fs.unlinkSync(fileInfo.fullPath);
             } catch (e) {
-              console.error(e);
+              //console.error(e);
             }
           } else {
             tmp.push(wfAttachments[i]);
@@ -1538,6 +1544,60 @@ const TemplateSetAuthor = async function (req, h) {
     tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
 
     return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateSetPboAt = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+
+    let tplid = req.payload.tplid;
+
+    let filter = { tenant: tenant, tplid: tplid };
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") filter["author"] = myEmail;
+    let tpl = await Template.findOneAndUpdate(
+      filter,
+      { $set: { pboat: req.payload.pboat } },
+      { upsert: false, new: true }
+    );
+    if (!tpl) {
+      throw new EmpError("NO_AUTH", `Not admin or owner`);
+    }
+    tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
+
+    return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkflowSetPboAt = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+
+    let wfid = req.payload.wfid;
+
+    let filter = { tenant: tenant, wfid: wfid };
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") filter["starter"] = myEmail;
+    let wf = await Workflow.findOneAndUpdate(
+      filter,
+      { $set: { pboat: req.payload.pboat } },
+      { upsert: false, new: true }
+    );
+    if (!wf) {
+      throw new EmpError("NO_AUTH", `Not admin or owner`);
+    }
+    wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { doc: 0 });
+
+    return h.response(wf);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3279,6 +3339,7 @@ module.exports = {
   TemplateSetVisi,
   TemplateClearVisi,
   TemplateSetAuthor,
+  TemplateSetPboAt,
   WorkflowRead,
   WorkflowDumpInstemplate,
   WorkflowStart,
@@ -3299,6 +3360,7 @@ module.exports = {
   WorkflowAddFile,
   WorkflowRemoveAttachment,
   WorkflowRestartThenDestroy,
+  WorkflowSetPboAt,
   WorkList,
   WorkInfo,
   WorkGetHtml,

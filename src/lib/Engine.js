@@ -2163,9 +2163,12 @@ Engine.startWorkflow = async function (
     "</div>";
   //KVAR above
   //TODO: where to put attachments on workflow start?  in workflow object or in START work node?
+  let pboat = tpl.pboat;
+  if (!pboat) pboat = "ANY_RUNNING";
   let wf = new Workflow({
     tenant: tenant,
     wfid: wfid,
+    pboat: pboat,
     wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
@@ -2295,10 +2298,13 @@ Engine.restartWorkflow = async function (
     `<div class="workflow ST_RUN" id="${new_wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${old_pwfid}" pworkid="${old_pworkid}"></div>` +
     "</div>";
   //KVAR above
+  let pboat = old_wf.pboat;
+  if (!pboat) pboat = "ANY_RUNNING";
   let wf = new Workflow({
-    wfid: new_wfid,
-    wftitle: wftitle,
     tenant: tenant,
+    wfid: new_wfid,
+    pboat: pboat,
+    wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
     starter: starter,
