@@ -717,8 +717,8 @@ const WorkflowRestartThenDestroy = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let email = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let newWf = await Engine.restartWorkflow(email, tenant, wfid);
     await Engine.destroyWorkflow(email, tenant, wfid);
+    let newWf = await Engine.restartWorkflow(email, tenant, wfid);
     return h.response(newWf);
   } catch (err) {
     console.error(err);

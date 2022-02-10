@@ -40,6 +40,9 @@ var WorkflowSchema = new Schema(
     runmode: { type: String, default: "standalone" },
     version: { type: Number, default: 1 },
     attachments: { type: [Schema.Types.Mixed], default: [] },
+    pnodeid: { type: String, required: false, default: "" },
+    pworkid: { type: String, required: false, default: "" },
+    cselector: { type: [String], default: [] },
   },
   { timestamps: true }
 );

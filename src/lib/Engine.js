@@ -334,8 +334,6 @@ Common.checkDelayTimer = async function () {
       let timerWorkNode = wfRoot.find(`#${delayTimers[i].workid}`);
       //将节点状态改为ST_DONE
       timerWorkNode.removeClass("ST_RUN").addClass("ST_DONE");
-      wf.doc = wfIO.html();
-      await wf.save();
       //procNext, 后续节点在nexts
       await Common.procNext(
         delayTimers[i].tenant,
@@ -351,6 +349,13 @@ Common.checkDelayTimer = async function () {
       );
       //删除数据库中的DelayTimer
       await DelayTimer.deleteOne({ _id: delayTimers[i]._id });
+      if (nexts.length > 0) {
+        wf.pnodeid = nexts[0].from_nodeid;
+        wf.pworkid = nexts[0].from_workid;
+        wf.cselector = nexts.map((x) => x.selector);
+      }
+      wf.doc = wfIO.html();
+      await wf.save();
     }
 
     //将Nexts数组中的消息BODY依次发送出去
@@ -602,9 +607,6 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     }
     await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, doer);
 
-    wf.doc = wfIO.html();
-    await wf.save();
-
     await Common.procNext(
       tenant,
       teamid,
@@ -665,7 +667,14 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     for (let i = 0; i < nexts.length; i++) {
       await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
     }
+    if (nexts.length > 0) {
+      wf.pnodeid = nexts[0].from_nodeid;
+      wf.pworkid = nexts[0].from_workid;
+      wf.cselector = nexts.map((x) => x.selector);
+    }
   }
+  wf.doc = wfIO.html();
+  wf = await wf.save();
 
   return { workid: todo.workid, todoid: todo.todoid };
 };
@@ -747,9 +756,6 @@ Engine.doCallback = async function (cbp, payload) {
     await Parser.setVars(tenant, cbp.wfid, cbp.workid, payload.kvars, "EMP");
   }
 
-  wf.doc = wfIO.html();
-  await wf.save();
-
   let nexts = [];
   await Common.procNext(
     cbp.tenant,
@@ -766,6 +772,13 @@ Engine.doCallback = async function (cbp, payload) {
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
   }
+  if (nexts.length > 0) {
+    wf.pnodeid = nexts[0].from_nodeid;
+    wf.pworkid = nexts[0].from_workid;
+    wf.cselector = nexts.map((x) => x.selector);
+  }
+  wf.doc = wfIO.html();
+  await wf.save();
 
   await cbp.delete();
   return cbp.workid;
@@ -850,6 +863,11 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   };
   nexts.push(msgToSend);
 
+  if (nexts.length > 0) {
+    wf.pnodeid = nexts[0].from_nodeid;
+    wf.pworkid = nexts[0].from_workid;
+    wf.cselector = nexts.map((x) => x.selector);
+  }
   wf.doc = wfIO.html();
   await wf.save();
   Engine.procComment(tenant, email, wfid, old_todo, comment);
@@ -1060,6 +1078,12 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     /* workNode.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`); */
   }
   await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, fact_doer);
+
+  if (nexts.length > 0) {
+    wf.pnodeid = nexts[0].from_nodeid;
+    wf.pworkid = nexts[0].from_workid;
+    wf.cselector = nexts.map((x) => x.selector);
+  }
   wf.doc = wfIO.html();
   await wf.save();
 
@@ -1501,6 +1525,11 @@ Client.yarkNode = async function (obj) {
         nexts
       );
 
+      if (nexts.length > 0) {
+        parent_wf.pnodeid = nexts[0].from_nodeid;
+        parent_wf.pworkid = nexts[0].from_workid;
+        parent_wf.cselector = nexts.map((x) => x.selector);
+      }
       parent_wf.doc = parent_wfIO.html();
       await parent_wf.save();
       for (let i = 0; i < nexts.length; i++) {
@@ -1575,6 +1604,11 @@ Client.yarkNode = async function (obj) {
     });
   }
   wf.doc = wfIO.html();
+  if (nexts.length > 0) {
+    wf.pnodeid = nexts[0].from_nodeid;
+    wf.pworkid = nexts[0].from_workid;
+    wf.cselector = nexts.map((x) => x.selector);
+  }
   wf = await wf.save();
 
   //console.log("Total nexts: ", nexts.length);
@@ -2339,12 +2373,20 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
   let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
   if (!SystemPermController.hasPerm(email, "workflow", wf, "delete"))
     throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
-  let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
-  await Todo.deleteMany({ tenant: tenant, wfid: wfid });
-  await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
-  await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
-  await KVar.deleteMany({ tenant: tenant, wfid: wfid });
-  return ret;
+  let myGroup = await Cache.getMyGroup(email);
+  //管理员可以destory
+  //starter可以destroy rehearsal
+  //starter可以destroy 尚在第一个活动上的流程
+  if (myGroup === "ADMIN" || (wf.starter === email && (wf.rehearsal || wf.pnodeid === "start"))) {
+    let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
+    await Todo.deleteMany({ tenant: tenant, wfid: wfid });
+    await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
+    await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
+    await KVar.deleteMany({ tenant: tenant, wfid: wfid });
+    return ret;
+  } else {
+    throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
+  }
 };
 Engine.setPboByWfId = async function (email, tenant, wfid, pbos) {
   let filter = { tenant: tenant, wfid: wfid };
