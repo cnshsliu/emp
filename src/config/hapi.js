@@ -142,14 +142,15 @@ internals.starter = async function () {
   console.debug("Server is running: " + internals.server.info.uri);
   internals.server.events.on("response", function (request) {
     console.debug(request.headers["content-type"]);
+    let user = "Unkown";
+    if (request.payload && request.payload.token) {
+      let decoded = JasonWebToken.verify(request.payload.token, EmpConfig.crypto.privateKey);
+      user = decoded.email;
+    }
     console.debug(
-      request.info.remoteAddress +
-        ": " +
-        request.method.toUpperCase() +
-        " " +
-        request.path +
-        " --> " +
+      `${user}(${request.info.remoteAddress}): ${request.method.toUpperCase()} ${request.path} ${
         request.response.statusCode
+      }`
     );
     if (request.method.toUpperCase() === "POST") {
       console.debug(JSON.stringify(request.payload));

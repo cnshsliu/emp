@@ -2237,18 +2237,18 @@ internals.endpoints = [
   },
   {
     method: "GET",
-    path: "/filepond/viewer/{wfid}/{serverId}",
-    handler: Handlers.FilePondViewer,
+    path: "/wf/attach/viewer/{wfid}/{serverId}",
+    handler: Handlers.WorkflowAttachmentViewer,
     config: {
       auth: "token",
     },
   },
   {
     method: "POST",
-    path: "/filepond/viewer",
-    handler: Handlers.FilePondViewer,
+    path: "/wf/attach/viewer",
+    handler: Handlers.WorkflowAttachmentViewer,
     config: {
-      description: "FilePond file viewer",
+      description: "Workflow attachment file viewer",
       tags: ["api"],
       auth: "token",
       validate: {

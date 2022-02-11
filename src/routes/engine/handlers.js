@@ -3271,7 +3271,7 @@ const FilePondRevert = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
-const FilePondViewer = async function (req, h) {
+const WorkflowAttachmentViewer = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -3425,6 +3425,6 @@ module.exports = {
   FilePondProcess,
   FilePondRevert,
   FilePondRemove,
-  FilePondViewer,
+  WorkflowAttachmentViewer,
   FormulaEval,
 };

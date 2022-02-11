@@ -145,6 +145,7 @@ internals.RegisterUser = async function (req, h) {
         },
         perms: SystemPermController.getMyGroupPerm(user.group),
         avatar: "",
+        signature: "",
       },
     };
   } catch (err) {
@@ -303,6 +304,7 @@ internals.LoginUser = async function (req, h) {
               },
               perms: SystemPermController.getMyGroupPerm(user.group),
               avatar: user.avatar,
+              signature: user.signature,
             },
           };
         }
@@ -338,6 +340,7 @@ internals.RefreshUserSession = async function (req, h) {
           },
           perms: SystemPermController.getMyGroupPerm(user.group),
           avatar: user.avatar,
+          signature: user.signature,
         },
       };
     }
@@ -541,6 +544,9 @@ internals.UpdateProfile = async function (req, h) {
     if (v.avatar) {
       user.avatar = v.avatar.trim();
     }
+    if (v.signature) {
+      user.signature = v.signature.trim();
+    }
     if (v.username && v.username !== user.username) {
       user.username = v.username;
       await Cache.setUserName(user.email, v.username);
@@ -578,6 +584,7 @@ internals.UpdateProfile = async function (req, h) {
         },
         perms: SystemPermController.getMyGroupPerm(user.group),
         avatar: user.avatar,
+        signature: user.signature,
       },
     };
   } catch (err) {
@@ -1153,6 +1160,96 @@ internals.SendInvitation = async function (req, h) {
       await Tools.sendInvitationEmail(ZMQ, emails[i]);
     }
     return h.response({ ret: "done" });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+internals.SetSignatureFile = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let pondfiles = req.payload.pondfiles;
+    let user = await User.findOneAndUpdate(
+      { tenant, email },
+      { $set: { signature: pondfiles[0].serverId + "|" + pondfiles[0].contentType } },
+      { upsert: false, new: true }
+    );
+
+    return h.response(user.signature);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+internals.removeSignatureFile = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let email = req.auth.credentials.email;
+    let user = await User.findOneAndUpdate(
+      { tenant, email },
+      { $set: { signature: "" } },
+      { upsert: false, new: true }
+    );
+
+    return h.response(user.signature);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+internals.AvatarViewer = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let userEmail = req.params.email;
+    let userFilter = { tenant, email: userEmail };
+    let user = await User.findOne(userFilter);
+
+    let tmp = user.avatar.split("|");
+    let serverId = tmp[0];
+    let contentType = tmp[1];
+
+    let filepondfile = Tools.getFilePondFile(tenant, userEmail, serverId);
+    var readStream = fs.createReadStream(filepondfile.fullPath);
+    return h
+      .response(readStream)
+      .header("cache-control", "no-cache")
+      .header("Pragma", "no-cache")
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Content-Type", contentType)
+      .header(
+        "Content-Disposition",
+        `attachment;filename="${encodeURIComponent(filepondfile.fileName)}"`
+      );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+internals.SignatureViewer = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let userEmail = req.payload.email;
+    let userFilter = { tenant, email: userEmail };
+    let user = await User.findOne(userFilter);
+
+    let tmp = user.signature.split("|");
+    if (tmp.length < 2) {
+      return h.response("not found");
+    } else {
+      let serverId = tmp[0];
+      let contentType = tmp[1];
+
+      let filepondfile = Tools.getFilePondFile(tenant, userEmail, serverId);
+      var readStream = fs.createReadStream(filepondfile.fullPath);
+      return h
+        .response(readStream)
+        .header("cache-control", "no-cache")
+        .header("Pragma", "no-cache")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Content-Type", contentType);
+    }
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);

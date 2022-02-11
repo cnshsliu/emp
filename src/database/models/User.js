@@ -21,6 +21,7 @@ const UserSchema = new Schema({
     default: "ADMIN",
   },
   avatar: { type: Mongoose.Schema.Types.String },
+  signature: { type: Mongoose.Schema.Types.String, default: "" },
 });
 
 module.exports = Mongoose.model("User", UserSchema);

@@ -271,6 +271,7 @@ internals.endpoints = [
         payload: {
           //email required
           value: {
+            signature: Joi.string().optional().allow(""),
             avatar: Joi.string().optional().allow(""),
             username: Joi.string().regex(EmpConfig.validation.username).optional(),
             password: Joi.string().regex(EmpConfig.validation.password).optional(),
@@ -279,6 +280,42 @@ internals.endpoints = [
           },
           old_password: Joi.string().regex(EmpConfig.validation.password).required(),
         },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/account/set/signature",
+    handler: AccountHandlers.SetSignatureFile,
+    config: {
+      tags: ["api"],
+      description: "set signature file",
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          pondfiles: Joi.array().items(Joi.any()),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/account/remove/signature",
+    handler: AccountHandlers.removeSignatureFile,
+    config: {
+      tags: ["api"],
+      description: "remove signature file",
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {},
         validator: Joi,
       },
     },
@@ -668,6 +705,28 @@ internals.endpoints = [
       validate: {
         headers: Joi.object({ Authorization: Joi.string() }).unknown(),
         payload: { ems: Joi.string().required(), password: Joi.string().required() },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/avatar/{email}",
+    handler: AccountHandlers.AvatarViewer,
+    config: {
+      auth: "token",
+    },
+  },
+  {
+    method: "POST",
+    path: "/signature",
+
+    handler: AccountHandlers.SignatureViewer,
+    config: {
+      auth: "token",
+      validate: {
+        headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+        payload: { email: Joi.string() },
         validator: Joi,
       },
     },

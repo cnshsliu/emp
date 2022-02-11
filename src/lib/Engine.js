@@ -2691,6 +2691,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       tmpRet[i].doers.push({
         uid: tmpRet[i].doer,
         cn: await Cache.getUserName(tmpRet[i].doer),
+        signature: await Cache.getUserSignature(tmpRet[i].doer),
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
@@ -2703,6 +2704,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       ret[existing_index].doers.push({
         uid: tmpRet[i].doer,
         cn: await Cache.getUserName(tmpRet[i].doer),
+        signature: await Cache.getUserSignature(tmpRet[i].doer),
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
