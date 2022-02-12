@@ -211,6 +211,30 @@ const WorkflowUpgrade = async function (req, h) {
   }
 };
 
+const WorkflowGetFirstTodoid = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+
+    let wfid = req.payload.wfid;
+
+    let todoFilter = {
+      tenant: tenant,
+      wfid: wfid,
+      doer: myEmail,
+      status: "ST_RUN",
+    };
+
+    let todo = await Todo.findOne(todoFilter, { todoid: 1 });
+
+    if (todo) return h.response(todo.todoid);
+    else return h.response("");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const SeeItWork = async function (req, h) {
   try {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
@@ -440,15 +464,19 @@ const WorkflowRead = async function (req, h) {
     let wf = await Workflow.findOne(filter).lean();
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
-    wf.beginat = wf.createdAt;
-    wf.history = await Engine.getWfHistory(
-      myEmail,
-      req.auth.credentials.tenant._id,
-      req.payload.wfid,
-      wf
-    );
-    if (withDoc === false) delete wf.doc;
-    if (wf.status === "ST_DONE") wf.doneat = wf.updatedAt;
+    if (wf) {
+      wf.beginat = wf.createdAt;
+      wf.history = await Engine.getWfHistory(
+        myEmail,
+        req.auth.credentials.tenant._id,
+        req.payload.wfid,
+        wf
+      );
+      if (withDoc === false) delete wf.doc;
+      if (wf.status === "ST_DONE") wf.doneat = wf.updatedAt;
+    } else {
+      wf = { wftitle: "Not Found" };
+    }
     return wf;
   } catch (err) {
     console.error(err);
@@ -3361,6 +3389,7 @@ module.exports = {
   WorkflowRemoveAttachment,
   WorkflowRestartThenDestroy,
   WorkflowSetPboAt,
+  WorkflowGetFirstTodoid,
   WorkList,
   WorkInfo,
   WorkGetHtml,

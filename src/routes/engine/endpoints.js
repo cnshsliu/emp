@@ -887,6 +887,25 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/workflow/get/firsttodoid",
+    handler: Handlers.WorkflowGetFirstTodoid,
+    config: {
+      description: "get the first todoid",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/work/status",
     handler: Handlers.WorkStatus,
     config: {
