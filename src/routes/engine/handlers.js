@@ -849,7 +849,9 @@ const __GetTagsFilter = async function (tagsForFilter, myEmail) {
     tagsForFilter[0].trim() !== ""
   ) {
     let tagsMatchArr = [];
+    //组织模板的tags查询条件
     for (let i = 0; i < tagsForFilter.length; i++) {
+      //每个tag，要么是自己设的，要么是管理员设置的
       tagsMatchArr.push({
         $elemMatch: {
           $or: [{ owner: myEmail }, { group: "ADMIN" }],
@@ -862,9 +864,12 @@ const __GetTagsFilter = async function (tagsForFilter, myEmail) {
         $all: tagsMatchArr,
       },
     };
+    //把符合tags要求的模版找出来
     let taggedTpls = await Template.find(tpl_filter, { tplid: 1, _id: 0 }).lean();
+    //然后，将这些模版的tplid组成一个数组
     let taggedTplIds = taggedTpls.map((x) => x.tplid);
 
+    //那么，条件就是下面这个
     ret = { $in: taggedTplIds };
   }
   return ret;
@@ -874,39 +879,60 @@ const WorkflowSearch = async function (req, h) {
   let tenant = req.auth.credentials.tenant._id;
   let myEmail = req.auth.credentials.email;
   try {
+    //检查当前用户是否有读取进程的权限
     let me = await User.findOne({ _id: req.auth.credentials._id });
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read workflow");
+    //把sort_field做一下转换，因为在前端代码中，统一使用name，
+    //而对于进程来说，实际上是wftitle
     let mappedField = req.payload.sort_field === "name" ? "wftitle" : req.payload.sort_field;
+    //Sortby，把sort_order改成mongodb的形式，倒叙，在field名称前家-号
     let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+
+    //开始组装Filter
     let filter = { tenant: req.auth.credentials.tenant._id };
+    let todoFilter = { tenant: req.auth.credentials.tenant._id };
     let skip = 0;
     if (req.payload.skip) skip = req.payload.skip;
     let limit = 10000;
     if (req.payload.limit) limit = req.payload.limit;
+    //按正则表达式匹配wftitle
     if (req.payload.pattern) {
       filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
+      todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
     }
     if (Tools.hasValue(req.payload.starter)) {
       filter["starter"] = req.payload.starter;
+      todoFilter["starter"] = req.payload.starter;
     }
     if (Tools.hasValue(req.payload.status)) {
       filter["status"] = req.payload.status;
+      todoFilter["wfstatus"] = req.payload.status;
     }
-    //如果制定了tplid,则使用所制定的tplid
+    //如果指定了tplid,则使用所指定的tplid
     if (Tools.hasValue(req.payload.tplid)) {
       filter["tplid"] = req.payload.tplid;
+      todoFilter["tplid"] = req.payload.tplid;
     } else {
       let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
-      if (tagsFilter) filter["tplid"] = tagsFilter;
+      //tagsFilter的形式为 {$in: ARRAY OF TPLID}
+      if (tagsFilter) {
+        filter["tplid"] = tagsFilter;
+        todoFilter["tplid"] = tagsFilter;
+      }
     }
     if (req.payload.wfid) {
       filter["wfid"] = req.payload.wfid;
+      todoFilter["wfid"] = req.payload.wfid;
     }
 
-    if (Tools.isEmpty(filter.tplid)) delete filter.tplid;
+    if (Tools.isEmpty(filter.tplid)) {
+      delete filter.tplid;
+      delete todoFilter.tplid;
+    }
     if (["ST_RUN", "ST_PAUSE", "ST_DONE", "ST_STOP"].includes(filter.status) === false) {
       delete filter.status;
+      delete todoFilter.wfstatus;
     }
 
     if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
@@ -917,11 +943,13 @@ const WorkflowSearch = async function (req, h) {
       cb = `${cb}T00:00:00${tzdiff}`;
       ce = `${ce}T00:00:00${tzdiff}`;
       filter.createdAt = { $gte: new Date(moment(cb)), $lt: new Date(moment(ce).add(24, "h")) };
+      todoFilter.createdAt = filter.createdAt;
     } else {
       let tspan = req.payload.tspan;
       if (tspan !== "any") {
         let tmp11 = __GetTSpanMomentOperators(tspan);
         filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1])) };
+        todoFilter.createdAt = filter.createdAt;
       }
     }
 
@@ -933,22 +961,24 @@ const WorkflowSearch = async function (req, h) {
      */
     //如果当前用户不是ADMIN, 则需要检查进程是否与其相关
     if (me.group !== "ADMIN") {
+      todoFilter.doer = myEmail;
+      console.log(`[WfIamIn Filter]  ${JSON.stringify(todoFilter)} `);
       let todoGroup = await Todo.aggregate([
-        { $match: { doer: myEmail } },
-        { $group: { _id: "$tplid", count: { $sum: 1 } } },
+        { $match: todoFilter },
+        { $group: { _id: "$wfid", count: { $sum: 1 } } },
       ]);
-      let templatesIamIn = todoGroup.map((x) => x._id);
+      let WfsIamIn = todoGroup.map((x) => x._id);
 
       //如果没有todo与template相关,也需要看是否是启动者
       //因为,流程的启动者,也许刚好工作都是丢给别人的
-      if (templatesIamIn.length === 0) {
+      if (WfsIamIn.length === 0) {
         filter.starter = myEmail;
         //return { total: 0, objs: [] };
       } else {
         //如果有相关todo与template相关,
         //则需要同时考虑todo相关 和 starter相关
         //filter.tplid = { $in: templatesIamIn };
-        filter["$or"] = [{ tplid: { $in: templatesIamIn } }, { starter: myEmail }];
+        filter["wfid"] = { $in: WfsIamIn };
       }
     }
 
