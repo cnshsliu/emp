@@ -1087,6 +1087,10 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   wf.doc = wfIO.html();
   await wf.save();
 
+  //如果没有下面两句话，则退回的todo的comment没有了
+  todo.comment = comment;
+  todo = await todo.save();
+
   await Todo.updateMany(
     {
       workid: todo.workid,
