@@ -1607,13 +1607,21 @@ Client.yarkNode = async function (obj) {
       rehearsal: wf.rehearsal,
     });
   }
-  wf.doc = wfIO.html();
+  let updateSet = { doc: wfIO.html() };
+  //wf.doc = wfIO.html();
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
     wf.cselector = nexts.map((x) => x.selector);
+    updateSet["pnodeid"] = wf.pnodeid;
+    updateSet["pworkid"] = wf.pworkid;
+    updateSet["cselector"] = wf.cselector;
   }
-  wf = await wf.save();
+  wf = await Workflow.findOneAndUpdate(
+    { wfid: wf.wfid },
+    { $set: updateSet },
+    { upsert: false, new: true }
+  );
 
   //console.log("Total nexts: ", nexts.length);
   for (let i = 0; i < nexts.length; i++) {
