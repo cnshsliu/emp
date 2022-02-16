@@ -1680,7 +1680,7 @@ const TemplateClearVisi = async function (req, h) {
     await Cache.removeVisi(tplid);
     let tpl = await Template.findOneAndUpdate(
       { tenant: tenant, author: author, tplid: tplid },
-      { $set: { visi: undefined } },
+      { $set: { visi: "" } },
       { upsert: false, new: true }
     );
 
