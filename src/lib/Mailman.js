@@ -38,9 +38,9 @@ function getFrontEndUrl() {
   return url;
 }
 Mailman.mail = async function (smtp, from, toemail, cc, bcc, subject, mailbody) {
-  console.log(
+  /* console.log(
     `mail from ${from} to ${toemail} via host ${smtp.host} port ${smtp.port} secure${smtp.secure} auth: ${smtp.username} pwd:... body ${mailbody} `
-  );
+  ); */
   let mailOptions = {
     from: from, // sender address
     to: toemail, // list of receivers
@@ -64,7 +64,7 @@ Mailman.mail = async function (smtp, from, toemail, cc, bcc, subject, mailbody) 
   });
   transporter.sendMail(mailOptions, function (error) {
     if (error) {
-      console.error(error);
+      console.error(error.message);
     }
     /* Hoek.assert(!error, error); */
   });
@@ -90,7 +90,7 @@ Mailman.sendMailVerificationLink = function (user, token) {
     "Account Verification",
     mailbody
   );
-  console.log(mailbody);
+  //console.log(mailbody);
 };
 
 Mailman.SimpleSend = function (recipients, cc, bcc, title, mailbody) {

@@ -7,6 +7,7 @@ const Workflow = require("../database/models/Workflow");
 const Handlebars = require("handlebars");
 const SanitizeHtml = require("sanitize-html");
 const Todo = require("../database/models/Todo");
+const Work = require("../database/models/Work");
 const CbPoint = require("../database/models/CbPoint");
 const Comment = require("../database/models/Comment");
 const Team = require("../database/models/Team");
@@ -33,6 +34,15 @@ const EmpConfig = require("../config/emp");
 const Engine = {};
 const Client = {};
 const Common = {};
+
+const CF = {
+  ONE_DOER: 1,
+  BY_ANY: 21,
+  BY_ALL_ALL_DONE: 22,
+  BY_ALL_VOTE_DONE: 10,
+  CAN_DONE: 30,
+  BY_ALL_PART_DONE: 33,
+};
 
 /**
  * Ensure the function fn to be run only once
@@ -459,9 +469,9 @@ Engine.doWork = async function (email, todoid, tenant, doer, wfid, nodeid, route
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 
   if (Tools.isEmpty(todo)) {
-    console.error("Work ", nodeid, todoid, "not found, see following filter");
+    console.error("Todo ", nodeid, todoid, "not found, see following filter");
     console.error(todo_filter);
-    //return { error: "Work Not Found" };
+    //return { error: "Todo Not Found" };
     throw new EmpError(
       "WORK_RUNNING_NOT_EXIST",
       `Doable work ${nodeid}, ${todoid} ${todo_filter} not found`
@@ -509,7 +519,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
   if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
   let isoNow = Tools.toISOString(new Date());
   if (Tools.isEmpty(todo)) {
-    throw new EmpError("WORK_NOT_EXIST", "Work not exist", {
+    throw new EmpError("WORK_NOT_EXIST", "Todo not exist", {
       wfid,
       nodeid,
       workid: todo.workid,
@@ -518,19 +528,24 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     });
   }
   if (Tools.isEmpty(todo.wfid)) {
-    throw new EmpError("WORK_WFID_IS_EMPTY", "Work wfid is empty", {
+    throw new EmpError("WORK_WFID_IS_EMPTY", "Todo wfid is empty", {
       wfid,
       nodeid,
       workid: todo.workid,
       status: todo.status,
     });
   }
+  if (route) {
+    //workNode.attr("route", route);
+    //Move route from attr to mongo
+    todo.route = route;
+  }
 
   let nodeid = todo.nodeid;
   let wf_filter = { wfid: todo.wfid };
   let wf = await Workflow.findOne(wf_filter);
   if (Tools.isEmpty(wf.wftitle)) {
-    throw new EmpError("WORK_WFTITLE_IS_EMPTY", "Work wftitle is empty unexpectedly", {
+    throw new EmpError("WORK_WFTITLE_IS_EMPTY", "Todo wftitle is empty unexpectedly", {
       wfid,
       nodeid,
       workid: todo.workid,
@@ -558,18 +573,23 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       await todo.save();
       throw new EmpError(
         "WORK_UNEXPECTED_STATUS",
-        `Work node status is not ST_RUN but ${st}, set TODO to ${st} automatically`
+        `Todo node status is not ST_RUN but ${st}, set TODO to ${st} automatically`
       );
     } catch (e) {
       console.error(e);
     }
   }
 
+  let workResultRoute = route;
+
   let completeFlag = 0;
   let sameSerTodos = null;
+  //记录所有参与人共同作用的最后选择
+  let workDecision = route ? route : "";
   sameSerTodos = await Todo.find({ tenant: tenant, wfid: todo.wfid, workid: todo.workid });
   if (sameSerTodos.length === 1) {
-    completeFlag = 1; //can done worknode
+    completeFlag = CF.ONE_DOER; //can done worknode
+    workDecision = route;
     //单人Todo
   } else {
     if (tpNode.hasClass("BYALL")) {
@@ -582,29 +602,95 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
         }
       }
       if (otherAllDone) {
-        completeFlag = 22; //can done worknode
+        completeFlag = CF.BY_ALL_ALL_DONE; //can done worknode
         //有多人Todo，且多人均已完成
       } else {
-        completeFlag = 23; //NO
+        completeFlag = CF.BY_ALL_PART_DONE; //NO
         //有多人Todo，但有人尚未完成
       }
+      try {
+        // 不管是全部已完成，还是部分已完成，都要去检查投票函数
+        // 当全部完成时，投票函数可以计算总体decision是什么，比如，每个人可能的选择都不一样，此时，用哪个
+        // 来作为当前work的decision
+        // 当部分完成时，也需要计算，比如，如果投票函数为“只要有一个人不同意，则就是不同意”
+        let voteControl = {
+          vote: "",
+          vote_any: "",
+          vote_failto: "",
+          vote_percent: 60,
+          route: route,
+        };
+        let vote = tpNode.attr("vote") ? tpNode.attr("vote").trim() : "";
+        if (vote) {
+          voteControl.vote = vote;
+          voteControl.vote_any = tpNode.attr("vote_any") ? tpNode.attr("vote_any").trim() : "";
+          voteControl.vote_failto = tpNode.attr("vote_failto")
+            ? tpNode.attr("vote_failto").trim()
+            : "";
+          voteControl.vote_percent = parseInt(
+            tpNode.attr("vote_percent") ? tpNode.attr("vote_percent").trim() : "60"
+          );
+          if (voteControl.vote_percent === NaN) {
+            voteControl.vote_percent = 60;
+          }
+          let voteDecision = await Engine.calculateVote(tenant, voteControl, sameSerTodos, todo);
+          if (voteDecision === "NULL") {
+            workDecision = "VOTING";
+            voteDecision = "";
+          }
+          if (voteDecision === "WAITING") {
+            workDecision = "VOTING";
+            voteDecision = "";
+          }
+          if (voteDecision && voteDecision.length > 0) {
+            if (completeFlag === CF.BY_ALL_ALL_DONE) {
+              workResultRoute = voteDecision;
+              workDecision = workResultRoute;
+            } else {
+              workResultRoute = voteDecision;
+              completeFlag = CF.BY_ALL_VOTE_DONE;
+              workDecision = workResultRoute;
+              //WorkDecision 只用于显示中间或最终状态，不用于运行逻辑控制判断
+            }
+          }
+        } else {
+          //  如果没有投票函数，则Todo Decision就是当前用户的route，
+          //  如果还等着别人完成，那么每一个人完成后的route都会设置为Decision
+          //  在没有投票函数的情况下，这种处理就等同于，work的decision就是最后一个用户的route
+          //  应该是合理的
+          //WorkDecision 只用于显示中间或最终状态，不用于运行逻辑控制判断
+          if (completeFlag === CF.BY_ALL_ALL_DONE) workDecision = route;
+          else workDecision = "WAITING";
+        }
+      } catch (err) {
+        console.log(err);
+      }
     } else {
-      completeFlag = 21; //can done workNode
+      completeFlag = CF.BY_ANY; //can done workNode
       //有多人Todo，但不是要求ByAll，也就是，有一个人完成即可
+      //Decision 就是这个人的route选择
+      workDecision = route;
     }
   }
+  workDecision = workDecision ? workDecision : "";
+  await Work.findOneAndUpdate(
+    { tenant: tenant, wfid: todo.wfid, workid: todo.workid },
+    {
+      $set: {
+        route: route,
+        decision: workDecision,
+        status: completeFlag < CF.CAN_DONE ? "ST_DONE" : "ST_RUN",
+      },
+    },
+    { upsert: true, new: true }
+  );
 
   //如果可以完成当前节点
   let nexts = [];
-  if (completeFlag < 23) {
+  if (completeFlag < CF.CAN_DONE) {
     workNode.removeClass("ST_RUN");
     workNode.addClass("ST_DONE");
     workNode.attr("doneat", isoNow);
-    if (route) {
-      //workNode.attr("route", route);
-      //Move route from attr to mongo
-      todo.route = route;
-    }
     await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, doer);
 
     await Common.procNext(
@@ -616,38 +702,13 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       wfRoot,
       nodeid,
       todo.workid,
-      route,
+      workResultRoute,
       nexts
     );
   }
-  if (comment) {
-    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
-    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
-    if (comment.indexOf("[") >= 0) {
-      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
-    }
-  }
 
-  todo.comment = comment;
-  todo.status = "ST_DONE";
-  todo.doneat = isoNow;
-  await todo.save();
-  //如果是任一完成即完成多人Todo
-  //则将所有多人Todo一起设为完成
-  if (completeFlag === 21) {
-    let filter = { wfid: todo.wfid, workid: todo.workid, todoid: { $ne: todo.todoid } };
-    await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
-    /* let ret = await Todo.find(filter);
-    console.log(JSON.stringify(ret)); */
-  }
-
-  try {
-    Engine.procComment(tenant, doer, wfid, todo, comment);
-  } catch (e) {
-    console.error(e);
-  }
-
-  if (completeFlag < 23) {
+  let wfUpdate = { doc: wfIO.html() };
+  if (completeFlag < CF.CAN_DONE) {
     //TODO: move #end to last, to make sure #end is the last one to processed.
     let hasEnd = false;
     let nextOfEnd = null;
@@ -671,16 +732,51 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       wf.pnodeid = nexts[0].from_nodeid;
       wf.pworkid = nexts[0].from_workid;
       wf.cselector = nexts.map((x) => x.selector);
+      wfUpdate["pnodeid"] = wf.pnodeid;
+      wfUpdate["pworkid"] = wf.pworkid;
+      wfUpdate["cselector"] = wf.cselector;
     }
   }
-  wf.doc = wfIO.html();
-  wf = await wf.save();
+  wf = await Workflow.updateOne(
+    { tenant: tenant, wfid: wf.wfid },
+    { $set: wfUpdate },
+    { upsert: false, new: true }
+  );
+
+  if (comment) {
+    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
+    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
+    if (comment.indexOf("[") >= 0) {
+      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
+    }
+  }
+  todo.comment = comment;
+  todo.status = "ST_DONE";
+  todo.doneat = isoNow;
+  await todo.save();
+  //如果是任一完成即完成多人Todo
+  //则将一个人完成后，其他人的设置为ST_IGNORE
+  if (completeFlag === CF.BY_ANY || completeFlag === CF.BY_ALL_VOTE_DONE) {
+    let filter = {
+      wfid: todo.wfid,
+      workid: todo.workid,
+      todoid: { $ne: todo.todoid },
+      status: "ST_RUN", //需要加个这个
+    };
+    await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
+  }
+
+  try {
+    Engine.sendCommentNotification(tenant, doer, wfid, todo, comment);
+  } catch (e) {
+    console.error(e);
+  }
 
   return { workid: todo.workid, todoid: todo.todoid };
 };
 
 //对每个@somebody存储，供somebody反向查询comment
-Engine.procComment = async function (tenant, doer, wfid, todo, content) {
+Engine.sendCommentNotification = async function (tenant, doer, wfid, todo, content) {
   //content = "hello @liukehong @yangsiyong @linyukui @suguotai hallo abcd";
   if (typeof content !== "string") {
     return;
@@ -772,13 +868,20 @@ Engine.doCallback = async function (cbp, payload) {
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
   }
+  let wfUpdate = { doc: wfIO.html() };
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
     wf.cselector = nexts.map((x) => x.selector);
+    wfUpdate["pnodeid"] = wf.pnodeid;
+    wfUpdate["pworkid"] = wf.pworkid;
+    wfUpdate["cselector"] = wf.cselector;
   }
-  wf.doc = wfIO.html();
-  await wf.save();
+  wf = await Workflow.findOneAndUpdate(
+    { tenant: tenant, wfid: wf.wfid },
+    { $set: wfUpdate },
+    { upsert: false, new: true }
+  );
 
   await cbp.delete();
   return cbp.workid;
@@ -796,7 +899,7 @@ Engine.doCallback = async function (cbp, payload) {
 Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   let old_todo = await Todo.findOne({ todoid: todoid, status: "ST_DONE" });
   if (Tools.isEmpty(old_todo)) {
-    throw new EmpError("WORK_NOT_REVOCABLE", "Work ST_DONE does not exist", { wfid, todoid });
+    throw new EmpError("WORK_NOT_REVOCABLE", "Todo ST_DONE does not exist", { wfid, todoid });
   }
   if (old_todo.rehearsal) email = old_todo.doer;
   if (!SystemPermController.hasPerm(email, "work", old_todo, "update"))
@@ -809,7 +912,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   let wfRoot = wfIO(".workflow");
   let info = await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, wfid, old_todo);
   if (info.revocable === false) {
-    throw new EmpError("WORK_NOT_REVOCABLE", "Work is not revocable", {
+    throw new EmpError("WORK_NOT_REVOCABLE", "Todo is not revocable", {
       wfid,
       todoid,
       nodeid: info.nodeid,
@@ -863,14 +966,21 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   };
   nexts.push(msgToSend);
 
+  let wfUpdate = { doc: wfIO.html() };
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
     wf.cselector = nexts.map((x) => x.selector);
+    wfUpdate["pnodeid"] = wf.pnodeid;
+    wfUpdate["pworkid"] = wf.pworkid;
+    wfUpdate["cselector"] = wf.cselector;
   }
-  wf.doc = wfIO.html();
-  await wf.save();
-  Engine.procComment(tenant, email, wfid, old_todo, comment);
+  wf = await Workflow.findOneAndUpdate(
+    { tenant: tenant, wfid: wf.wfid },
+    { $set: wfUpdate },
+    { upsert: false, new: true }
+  );
+  Engine.sendCommentNotification(tenant, email, wfid, old_todo, comment);
 
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
@@ -1006,7 +1116,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   }
 
   if (todo.status !== "ST_RUN") {
-    throw new EmpError("WORK_UNEXPECTED_STATUS", "Work status is not ST_RUN");
+    throw new EmpError("WORK_UNEXPECTED_STATUS", "Todo status is not ST_RUN");
   }
   if (!SystemPermController.hasPerm(fact_email, "work", todo, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
@@ -1022,7 +1132,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let wfRoot = wfIO(".workflow");
   let info = await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, wfid, todo);
   if (info.returnable === false) {
-    throw new EmpError("WORK_NOT_RETURNABLE", "Work is not returnable", {
+    throw new EmpError("WORK_NOT_RETURNABLE", "Todo is not returnable", {
       wfid,
       todoid,
       nodeid: info.nodeid,
@@ -1071,11 +1181,11 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   workNode.removeClass("ST_RUN").addClass("ST_RETURNED");
   workNode.attr("doneat", isoNow);
   if (comment) {
-    comment = Engine.compileContent(wfRoot, kvars, comment);
+    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
+    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
     if (comment.indexOf("[") >= 0) {
       comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
     }
-    /* workNode.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`); */
   }
   await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, fact_doer);
 
@@ -1099,7 +1209,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     { $set: { status: "ST_RETURNED" } }
   );
 
-  Engine.procComment(tenant, doer, wfid, todo, comment);
+  Engine.sendCommentNotification(tenant, doer, wfid, todo, comment);
 
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
@@ -1160,7 +1270,7 @@ Client.yarkNode = async function (obj) {
   let from_workid = obj.from_workid;
   let prl_id = obj.parallel_id ? `prl_id="${obj.parallel_id}"` : "";
   if (tpNode.hasClass("START")) {
-    //NaW Not a Work, Not a work performed by people
+    //NaW Not a Todo, Not a work performed by people
     //TODO Add attachments on START.
     wfRoot.append(
       `<div class="work START ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
@@ -1607,19 +1717,19 @@ Client.yarkNode = async function (obj) {
       rehearsal: wf.rehearsal,
     });
   }
-  let updateSet = { doc: wfIO.html() };
+  let wfUpdate = { doc: wfIO.html() };
   //wf.doc = wfIO.html();
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
     wf.cselector = nexts.map((x) => x.selector);
-    updateSet["pnodeid"] = wf.pnodeid;
-    updateSet["pworkid"] = wf.pworkid;
-    updateSet["cselector"] = wf.cselector;
+    wfUpdate["pnodeid"] = wf.pnodeid;
+    wfUpdate["pworkid"] = wf.pworkid;
+    wfUpdate["cselector"] = wf.cselector;
   }
   wf = await Workflow.findOneAndUpdate(
     { wfid: wf.wfid },
-    { $set: updateSet },
+    { $set: wfUpdate },
     { upsert: false, new: true }
   );
 
@@ -2663,42 +2773,41 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
   //let todo_filter = { tenant: tenant, wfid: wfid, status: /ST_DONE|ST_RETURNED|ST_REVOKED/ };
   //let todo_filter = { tenant: tenant, wfid: wfid, status: { $ne: "ST_RUN" } };
   let todo_filter = { tenant: tenant, wfid: wfid };
-  let works = await Todo.find(todo_filter).sort("-updatedAt");
-  for (let i = 0; i < works.length; i++) {
-    let workNode = wfRoot.find("#" + works[i].workid);
-    let historyEntry = {};
-    historyEntry.workid = works[i].workid;
-    historyEntry.todoid = works[i].todoid;
-    historyEntry.nodeid = works[i].nodeid;
-    historyEntry.title = works[i].title;
-    historyEntry.status = works[i].status;
-    historyEntry.doer = works[i].doer;
-    historyEntry.doneby = works[i].doneby;
-    historyEntry.doneat = works[i].doneat;
-    historyEntry.comment =
-      Tools.isEmpty(works[i].comment) || Tools.isEmpty(works[i].comment.trim())
+  let todos = await Todo.find(todo_filter).sort("-updatedAt");
+  for (let i = 0; i < todos.length; i++) {
+    let todoEntry = {};
+    todoEntry.workid = todos[i].workid;
+    todoEntry.todoid = todos[i].todoid;
+    todoEntry.nodeid = todos[i].nodeid;
+    todoEntry.title = todos[i].title;
+    todoEntry.status = todos[i].status;
+    todoEntry.doer = todos[i].doer;
+    todoEntry.doneby = todos[i].doneby;
+    todoEntry.doneat = todos[i].doneat;
+    todoEntry.comment =
+      Tools.isEmpty(todos[i].comment) || Tools.isEmpty(todos[i].comment.trim())
         ? []
         : [
             {
-              doer: works[i].doer,
-              comment: works[i].comment.trim(),
-              cn: await Cache.getUserName(works[i].doer),
-              splitted: splitComment(works[i].comment.trim()),
+              doer: todos[i].doer,
+              comment: todos[i].comment.trim(),
+              cn: await Cache.getUserName(todos[i].doer),
+              splitted: splitComment(todos[i].comment.trim()),
             },
           ];
-    //if (workNode.attr("route")) historyEntry.route = workNode.attr("route");
-    //Move route from node attr to mongo
-    if (works[i].route) historyEntry.route = works[i].route;
-    let kvars = await Parser.userGetVars(tenant, email, works[i].wfid, works[i].workid);
-    historyEntry.kvarsArr = Parser.kvarsToArray(kvars);
-    historyEntry.kvarsArr = historyEntry.kvarsArr.filter((x) => x.ui.includes("input"));
-    tmpRet.push(historyEntry);
+    if (todos[i].route) todoEntry.route = todos[i].route;
+    let kvars = await Parser.userGetVars(tenant, email, todos[i].wfid, todos[i].workid);
+    todoEntry.kvarsArr = Parser.kvarsToArray(kvars);
+    todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui.includes("input"));
+    tmpRet.push(todoEntry);
   }
   //把相同workid聚合起来
   let tmp = [];
   for (let i = 0; i < tmpRet.length; i++) {
     let existing_index = tmp.indexOf(tmpRet[i].workid);
+    //如果一个workid不存在，则这是一个新的Todo
     if (existing_index < 0) {
+      //组织这个work的doers（多个用户）
       tmpRet[i].doers = [];
       tmpRet[i].doers.push({
         uid: tmpRet[i].doer,
@@ -2707,7 +2816,10 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
+        route: tmpRet[i].route,
       });
+      let work = await Work.findOne({ tenant: tenant, workid: tmpRet[i].workid });
+      tmpRet[i].workDecision = work && work.decision ? work.decision : "";
       ret.push(tmpRet[i]);
       tmp.push(tmpRet[i].workid);
     } else {
@@ -2720,10 +2832,13 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
+        route: tmpRet[i].route,
       });
+      // 如果一个活动为DONE， 而整体为IGNORE，则把整体设为DONE
       if (tmpRet[i].status === "ST_DONE" && ret[existing_index].status === "ST_IGNORE") {
         ret[existing_index].status = "ST_DONE";
       }
+      //又一个还在RUN，则整个work为RUN
       if (tmpRet[i].status === "ST_RUN") {
         ret[existing_index].status = "ST_RUN";
       }
@@ -3299,6 +3414,175 @@ runExpr().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     console.log(`${expr} return ${ret}`);
   }
   return ret;
+};
+
+Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) {
+  const EMPTY_RET = "";
+  const ERROR_RET = "ERROR:";
+  let result = EMPTY_RET;
+
+  let allTodos_number = allTodos.length;
+  allTodos = allTodos.map((x) => {
+    if (x.todoid === thisTodo.todoid) {
+      thisTodo.status = "ST_DONE";
+      return thisTodo;
+    } else {
+      if (x.status !== "ST_DONE") {
+        x.route = "UNKNOWN_" + x.status;
+      }
+      return x;
+    }
+  });
+  let doneTodos_number = allTodos.filter((x) => x.status === "ST_DONE").length;
+  let allDone = allTodos_number === doneTodos_number;
+  let people = allTodos.map((x) => x.doer);
+  let votes = allTodos.map((x) => {
+    if (x.route) return { doer: x.doer, decision: x.route };
+    else return { doer: x.doer, decision: "UNKNOWN_BLANK" };
+  });
+  let stats = {};
+  for (let i = 0; i < votes.length; i++) {
+    if (votes[i].decision) {
+      if (Object.keys(stats).includes(votes[i].decision) === false) {
+        stats[votes[i].decision] = 1;
+      } else {
+        stats[votes[i].decision] = stats[votes[i].decision] + 1;
+      }
+    }
+  }
+  let decisions = Object.keys(stats);
+  decisions = [...new Set(decisions)];
+  let pure_decisions = decisions.filter((x) => x.indexOf("UNKNOWN_") < 0);
+  let order = [];
+  for (let i = 0; i < decisions.length; i++) {
+    order.push({ decision: decisions[i], count: stats[decisions[i]] });
+  }
+  order.sort((a, b) => b.count - a.count);
+  let pure_order = [];
+  for (let i = 0; i < pure_decisions.length; i++) {
+    pure_order.push({ decision: pure_decisions[i], count: stats[pure_decisions[i]] });
+  }
+  pure_order.sort((a, b) => b.count - a.count);
+
+  let voteResult = "NULL";
+  try {
+    function decisionCount(what) {
+      let ret = 0;
+      for (let i = 0; i < votes.length; i++) {
+        if (votes[i].decision === what) {
+          ret++;
+        }
+      }
+      return ret;
+    }
+
+    function allVoted() {
+      return allDone;
+    }
+
+    function last() {
+      return allVoted() ? voteControl.route : "WAITING";
+    }
+
+    function most() {
+      return allVoted() ? pure_order[0].decision : "WAITING";
+    }
+    function least() {
+      return allVoted() ? pure_order[order.length - 1].decision : "WAITING";
+    }
+    function allOfValueOrFailto(allValue, failValue) {
+      if (decisions.length === 1 && decisions[0] === allValue) {
+        return allValue;
+      } else {
+        if (pure_decisions.length === decisions.length) {
+          return failValue;
+        } else {
+          return "WAITING";
+        }
+      }
+    }
+    function allOrFailto(failValue) {
+      if (decisions.length === 1) {
+        return decisions[0];
+      } else {
+        return allVoted() ? failValue : "WAITING";
+      }
+    }
+    function percentOrFailto(what, percent, failValue = "FAIL") {
+      if (allVoted()) {
+        if (decisionCount(what) / people.length >= percent / 100) {
+          return what;
+        } else {
+          return failValue;
+        }
+      } else {
+        return "WAITING";
+      }
+    }
+    function ifAny(which) {
+      if (pure_decisions.includes(which)) return which;
+      else return allVoted() ? voteControl.route : "WAITING";
+    }
+    function ifAnyThenMost(which) {
+      if (pure_decisions.includes(which)) return which;
+      else return most();
+    }
+    function ifAnyThenLeast(which) {
+      if (pure_decisions.includes(which)) return which;
+      else return least();
+    }
+    function ifAnyThenFailto(which, failValue = "FAIL") {
+      if (pure_decisions.includes(which)) return which;
+      else return allVoted() ? failValue : "WAITING";
+    }
+    function ifAnyThenAllThenMost(anyValue) {
+      if (pure_decisions.includes(anyValue)) return anyValue;
+      return allOrFailto(most());
+    }
+
+    switch (voteControl.vote) {
+      case "":
+      case "last":
+        voteResult = last();
+        break;
+      case "most":
+        voteResult = most();
+        break;
+      case "least":
+        voteResult = least();
+        break;
+      case "allOrFailto":
+        voteResult = allOrFailto(voteControl.vote_failto);
+        break;
+      case "percentOrFailto":
+        voteResult = percentOrFailto(
+          voteControl.vote_any,
+          voteControl.vote_percent,
+          voteControl.vote_failto
+        );
+        break;
+      case "ifAny":
+        voteResult = ifAny(voteControl.vote_any);
+        break;
+      case "ifAnyThenMost":
+        voteResult = ifAnyThenMost(voteControl.vote_any);
+        break;
+      case "ifAnyThenLeast":
+        voteResult = ifAnyThenLeast(voteControl.vote_any);
+        break;
+      case "ifAnyThenAllThenMost":
+        voteResult = ifAnyThenAllThenMost(voteControl.vote_any);
+        break;
+      case "ifAnyThenFailto":
+        voteResult = ifAnyThenFailto(voteControl.vote_any, voteControl.vote_failto);
+        break;
+    }
+    console.log("voteResult result:", voteResult);
+    return voteResult;
+  } catch (err) {
+    console.error(err.message);
+    return "NULL";
+  }
 };
 
 Engine.init();
