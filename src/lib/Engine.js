@@ -95,10 +95,13 @@ Client.clientInit = async function () {
  */
 Client.formatRoute = function (route) {
   let ret = route;
-  if (route === undefined) ret = "DEFAULT";
-  else if (route == null) ret = "DEFAULT";
-  else if (route === "") ret = "DEFAULT";
-  else ret = `${route}`;
+  if (Array.isArray(route)) return route;
+  else if (route === undefined) ret = ["DEFAULT"];
+  else if (route === null) ret = ["DEFAULT"];
+  else if (route === "") ret = ["DEFAULT"];
+  else if (typeof route === "string") {
+    ret = route.split(",");
+  } else ret = [`${route}`];
 
   return ret;
 };
@@ -1733,7 +1736,7 @@ Client.yarkNode = async function (obj) {
     { upsert: false, new: true }
   );
 
-  //console.log("Total nexts: ", nexts.length);
+  console.log("Total nexts: ", nexts.length);
   for (let i = 0; i < nexts.length; i++) {
     await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
   }
@@ -1863,7 +1866,6 @@ Common.procNext = async function (
 ) {
   let route_param = route;
   let linkSelector = '.link[from="' + from_nodeid + '"]';
-  route = Client.formatRoute(route);
   let routingOptions = [];
   tpRoot.find(linkSelector).each(function (i, el) {
     //SEE HERE
@@ -1877,59 +1879,60 @@ Common.procNext = async function (
     //See last SEE HERE comment
     return;
   }
-  let foundRoute = false;
-  for (let i = 0; i < routingOptions.length; i++) {
-    if (route === routingOptions[i]) {
-      foundRoute = true;
-      break;
-    }
+  routes = Client.formatRoute(route);
+  if (Array.isArray(routes) === false) {
+    routes = [route];
   }
-  if (!foundRoute) {
+  let foundRoutes = lodash.intersection(routes, routingOptions);
+  if (foundRoutes.length === 0) {
     console.error(
       "route '" + JSON.stringify(route) + "' not found in next links " + routingOptions.toString()
     );
     console.error("route '" + JSON.stringify(route) + "' is replaced with DEFAULT");
-    route = "DEFAULT";
+    routes = ["DEFAULT"];
   }
   let nodes = tpRoot.find(linkSelector);
-  let parallel_number = 0;
-  let parallel_id = uuidv4();
-  nodes.each(function (i, el) {
-    let linkObj = Cheerio(el);
-    let option = linkObj.attr("case");
-    option = Tools.isEmpty(option) ? "DEFAULT" : option;
-    if (option === route) {
-      //相同option的后续节点的个数
-      parallel_number++;
-    }
-  });
-  nodes.each(function (i, el) {
-    let linkObj = Cheerio(el);
-    let option = linkObj.attr("case");
-    option = Tools.isEmpty(option) ? "DEFAULT" : option;
-    if (option === route) {
-      let toid = linkObj.attr("to");
-      let selector = "#" + toid;
-      //构建一个zeroMQ 消息 body， 放在nexts数组中
-      let an = {
-        CMD: "yarkNode",
-        tenant: tenant,
-        teamid: teamid,
-        from_nodeid: from_nodeid,
-        from_workid: from_workid,
-        tplid: tplid,
-        wfid: wfid,
-        selector: selector,
-      };
-      //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
-      if (parallel_number > 1) {
-        //需要设置parallel_id
-        an.parallel_id = parallel_id;
+  for (let i = 0; i < foundRoutes.length; i++) {
+    let route = foundRoutes[i];
+    let parallel_number = 0;
+    let parallel_id = uuidv4();
+    nodes.each(function (i, el) {
+      let linkObj = Cheerio(el);
+      let option = linkObj.attr("case");
+      option = Tools.isEmpty(option) ? "DEFAULT" : option;
+      if (option === route) {
+        //相同option的后续节点的个数
+        parallel_number++;
       }
-      nexts.push(an);
-    } else {
-    }
-  });
+    });
+    nodes.each(function (i, el) {
+      let linkObj = Cheerio(el);
+      let option = linkObj.attr("case");
+      option = Tools.isEmpty(option) ? "DEFAULT" : option;
+      if (option === route) {
+        let toid = linkObj.attr("to");
+        let selector = "#" + toid;
+        //构建一个zeroMQ 消息 body， 放在nexts数组中
+        let an = {
+          CMD: "yarkNode",
+          tenant: tenant,
+          teamid: teamid,
+          from_nodeid: from_nodeid,
+          from_workid: from_workid,
+          tplid: tplid,
+          wfid: wfid,
+          selector: selector,
+        };
+        //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
+        if (parallel_number > 1) {
+          //需要设置parallel_id
+          an.parallel_id = parallel_id;
+        }
+        nexts.push(an);
+      } else {
+      }
+    });
+  }
 };
 
 Engine.transferWork = async function (tenant, whom, myEmail, workid) {
