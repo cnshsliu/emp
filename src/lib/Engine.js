@@ -1722,13 +1722,18 @@ Client.yarkNode = async function (obj) {
   }
   let wfUpdate = { doc: wfIO.html() };
   //wf.doc = wfIO.html();
+
   if (nexts.length > 0) {
+    //当前工作的 前node
     wf.pnodeid = nexts[0].from_nodeid;
+    //前work
     wf.pworkid = nexts[0].from_workid;
+    //当前工作的selector
     wf.cselector = nexts.map((x) => x.selector);
     wfUpdate["pnodeid"] = wf.pnodeid;
     wfUpdate["pworkid"] = wf.pworkid;
     wfUpdate["cselector"] = wf.cselector;
+    //以上需要记录到workflow对象上
   }
   wf = await Workflow.findOneAndUpdate(
     { wfid: wf.wfid },
@@ -1891,48 +1896,44 @@ Common.procNext = async function (
     console.error("route '" + JSON.stringify(route) + "' is replaced with DEFAULT");
     routes = ["DEFAULT"];
   }
-  let nodes = tpRoot.find(linkSelector);
-  for (let i = 0; i < foundRoutes.length; i++) {
-    let route = foundRoutes[i];
-    let parallel_number = 0;
-    let parallel_id = uuidv4();
-    nodes.each(function (i, el) {
-      let linkObj = Cheerio(el);
-      let option = linkObj.attr("case");
-      option = Tools.isEmpty(option) ? "DEFAULT" : option;
-      if (option === route) {
-        //相同option的后续节点的个数
-        parallel_number++;
+  let links = tpRoot.find(linkSelector);
+  let parallel_number = 0;
+  let parallel_id = uuidv4();
+  links.each(function (i, el) {
+    let linkObj = Cheerio(el);
+    let option = linkObj.attr("case");
+    option = Tools.isEmpty(option) ? "DEFAULT" : option;
+    if (foundRoutes.includes(option)) {
+      //相同option的后续节点的个数
+      parallel_number++;
+    }
+  });
+  links.each(function (i, el) {
+    let linkObj = Cheerio(el);
+    let option = linkObj.attr("case");
+    option = Tools.isEmpty(option) ? "DEFAULT" : option;
+    if (foundRoutes.includes(option)) {
+      let toid = linkObj.attr("to");
+      let selector = "#" + toid;
+      //构建一个zeroMQ 消息 body， 放在nexts数组中
+      let an = {
+        CMD: "yarkNode",
+        tenant: tenant,
+        teamid: teamid,
+        from_nodeid: from_nodeid,
+        from_workid: from_workid,
+        tplid: tplid,
+        wfid: wfid,
+        selector: selector,
+      };
+      //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
+      if (parallel_number > 1) {
+        //需要设置parallel_id
+        an.parallel_id = parallel_id;
       }
-    });
-    nodes.each(function (i, el) {
-      let linkObj = Cheerio(el);
-      let option = linkObj.attr("case");
-      option = Tools.isEmpty(option) ? "DEFAULT" : option;
-      if (option === route) {
-        let toid = linkObj.attr("to");
-        let selector = "#" + toid;
-        //构建一个zeroMQ 消息 body， 放在nexts数组中
-        let an = {
-          CMD: "yarkNode",
-          tenant: tenant,
-          teamid: teamid,
-          from_nodeid: from_nodeid,
-          from_workid: from_workid,
-          tplid: tplid,
-          wfid: wfid,
-          selector: selector,
-        };
-        //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
-        if (parallel_number > 1) {
-          //需要设置parallel_id
-          an.parallel_id = parallel_id;
-        }
-        nexts.push(an);
-      } else {
-      }
-    });
-  }
+      nexts.push(an);
+    }
+  });
 };
 
 Engine.transferWork = async function (tenant, whom, myEmail, workid) {
