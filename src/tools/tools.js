@@ -64,6 +64,11 @@ const Tools = {
     else return val;
   },
 
+  emptyThenDefault: function (val, defaultValue) {
+    if (this.isEmpty(val)) return defaultValue;
+    else return val;
+  },
+
   cleanupDelimiteredString: function (str) {
     return str
       .split(/[ ;,]/)

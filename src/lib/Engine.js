@@ -1232,6 +1232,25 @@ Common.getEmailRecipientsFromDoers = function (doers) {
   return ret;
 };
 
+Client.setKVarFromString = async function (tenant, wfid, workid, setValueString) {
+  let tmpArr = setValueString.split(";");
+  tmpArr = tmpArr.map((x) => x.trim());
+  let kvObj = {};
+  for (let i = 0; i < tmpArr.length; i++) {
+    let kv = tmpArr[i].split("=");
+    if (kv.length === 2) {
+      let v = kv[1];
+      let m = v.match(/^"(.+)"$/);
+      if (m) {
+        v = m[1];
+      }
+      kvObj[kv[0]] = v;
+    }
+  }
+  console.log("kvObj=", kvObj);
+  await Parser.setVars(tenant, wfid, workid, kvObj, "EMP");
+};
+
 //Client是指ZMQ接受 yarkNode消息的client
 Client.yarkNode = async function (obj) {
   let nexts = [];
@@ -1468,6 +1487,7 @@ Client.yarkNode = async function (obj) {
       });
       await cbp.save();
     }
+    //设置通过kvar()方法设置的进程参数
     if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
       await Parser.setVars(tenant, obj.wfid, workid, codeRetObj, "EMP");
     }
@@ -1874,8 +1894,7 @@ Common.procNext = async function (
   let routingOptions = [];
   tpRoot.find(linkSelector).each(function (i, el) {
     //SEE HERE
-    let option = Cheerio(el).attr("case");
-    option = Tools.isEmpty(option) ? "DEFAULT" : option;
+    let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
     if (routingOptions.indexOf(option) < 0) routingOptions.push(option);
   });
   if (routingOptions.length === 0) {
@@ -1899,6 +1918,7 @@ Common.procNext = async function (
   let links = tpRoot.find(linkSelector);
   let parallel_number = 0;
   let parallel_id = uuidv4();
+  //统计需要经过的路径的数量, 同时,运行路径上的变量设置
   links.each(function (i, el) {
     let linkObj = Cheerio(el);
     let option = linkObj.attr("case");
@@ -1906,6 +1926,12 @@ Common.procNext = async function (
     if (foundRoutes.includes(option)) {
       //相同option的后续节点的个数
       parallel_number++;
+      let setValue = linkObj.attr("set");
+      if (setValue) {
+        //设置路径上的变量
+        setValue = Parser.base64ToCode(setValue);
+        Client.setKVarFromString(tenant, wfid, from_workid, setValue);
+      }
     }
   });
   links.each(function (i, el) {
