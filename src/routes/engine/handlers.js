@@ -1704,7 +1704,10 @@ const TemplateDownload = async function (req, h) {
         .header("Access-Control-Allow-Origin", "*")
         .header("Content-Type", "application/xml")
         //.header('Content-Disposition', `attachment;filename="${req.payload.tplid}.xml";filename*=utf-8''${req.payload.tplid}.xml`)
-        .header("Content-Disposition", `attachment;filename=${req.payload.tplid}.xml`)
+        .header(
+          "Content-Disposition",
+          `attachment;filename=${encodeURIComponent(req.payload.tplid + ".xml")}`
+        )
     );
   } catch (err) {
     console.error(err);
