@@ -210,7 +210,7 @@ Common.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, ro
 Common.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) {
   let ret = false;
   let route_param = route;
-  //找到指向nodeid的所有连接
+  //找到指向OR的所有连接
   let linkSelector = `.link[to="${nodeid}"]`;
   tpRoot.find(linkSelector).each(async function (i, el) {
     let linkObj = Cheerio(el);
@@ -221,6 +221,7 @@ Common.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts)
     if (work.hasClass("ST_RUN")) {
       //如果该前置节点状态为ST_RUN, 则设置其为ST_IGNORE
       work.removeClass("ST_RUN");
+      debugger;
       work.addClass("ST_IGNORE");
 
       //同时,到数据库中,把该节点对应的Todo对象状态设为ST_IGNORE
@@ -229,6 +230,7 @@ Common.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts)
         workid: work.attr("id"),
         status: "ST_RUN",
       };
+      debugger;
       await Todo.findOneAndUpdate(todoFilter, { $set: { status: "ST_IGNORE" } }, { new: true });
     }
   });
@@ -403,6 +405,7 @@ Common.endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
     work.removeClass("ST_RUN");
     work.addClass("ST_END");
   });
+  debugger;
   await Todo.updateMany(
     {
       tenant: tenant,
@@ -586,11 +589,11 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
   let workResultRoute = route;
 
   let completeFlag = 0;
-  let sameSerTodos = null;
+  let sameWorkTodos = null;
   //记录所有参与人共同作用的最后选择
   let workDecision = route ? route : "";
-  sameSerTodos = await Todo.find({ tenant: tenant, wfid: todo.wfid, workid: todo.workid });
-  if (sameSerTodos.length === 1) {
+  sameWorkTodos = await Todo.find({ tenant: tenant, wfid: todo.wfid, workid: todo.workid });
+  if (sameWorkTodos.length === 1) {
     completeFlag = CF.ONE_DOER; //can done worknode
     workDecision = route;
     //单人Todo
@@ -598,8 +601,8 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     if (tpNode.hasClass("BYALL")) {
       //lab test  complete_1_among_many_doers.js
       let otherAllDone = true;
-      for (let i = 0; i < sameSerTodos.length; i++) {
-        if (sameSerTodos[i].todoid !== todo.todoid && sameSerTodos[i].status === "ST_RUN") {
+      for (let i = 0; i < sameWorkTodos.length; i++) {
+        if (sameWorkTodos[i].todoid !== todo.todoid && sameWorkTodos[i].status === "ST_RUN") {
           otherAllDone = false;
           break;
         }
@@ -636,7 +639,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
           if (voteControl.vote_percent === NaN) {
             voteControl.vote_percent = 60;
           }
-          let voteDecision = await Engine.calculateVote(tenant, voteControl, sameSerTodos, todo);
+          let voteDecision = await Engine.calculateVote(tenant, voteControl, sameWorkTodos, todo);
           if (voteDecision === "NULL") {
             workDecision = "VOTING";
             voteDecision = "";
@@ -759,6 +762,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
   await todo.save();
   //如果是任一完成即完成多人Todo
   //则将一个人完成后，其他人的设置为ST_IGNORE
+  //忽略同一个节点上，其他人的todo
   if (completeFlag === CF.BY_ANY || completeFlag === CF.BY_ALL_VOTE_DONE) {
     let filter = {
       wfid: todo.wfid,
@@ -766,6 +770,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       todoid: { $ne: todo.todoid },
       status: "ST_RUN", //需要加个这个
     };
+    debugger;
     await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
   }
 
@@ -1549,6 +1554,23 @@ Client.yarkNode = async function (obj) {
         nexts
       );
     }
+  } else if (tpNode.hasClass("THROUGH")) {
+    wfRoot.append(
+      `<div class="work THROUGH ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+    );
+    //Common.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
+    await Common.procNext(
+      obj.tenant,
+      teamid,
+      obj.tplid,
+      obj.wfid,
+      tpRoot,
+      wfRoot,
+      nodeid,
+      workid,
+      "DEFAULT",
+      nexts
+    );
   } else if (tpNode.hasClass("TIMER")) {
     wfRoot.append(
       `<div class="work TIMER ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
@@ -2202,7 +2224,7 @@ const kvalue = function(key){
       return retkvars[key].value;
     }else{
        if(kvars[key] === undefined){
-         return "DKV"; //DefaultKVARVALUE
+         return undefined; //DefaultKVARVALUE
        }else{
          return kvars[key].value;
        }
