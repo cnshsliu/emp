@@ -2935,7 +2935,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
               splitted: splitComment(todos[i].comment.trim()),
             },
           ];
-    if (todos[i].route) todoEntry.route = todos[i].route;
+    if (todos[i].decision) todoEntry.decision = todos[i].decision;
     let kvars = await Parser.userGetVars(tenant, email, todos[i].wfid, todos[i].workid);
     todoEntry.kvarsArr = Parser.kvarsToArray(kvars);
     todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui.includes("input"));
@@ -2956,7 +2956,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
-        route: tmpRet[i].route,
+        decision: tmpRet[i].decision,
       });
       let work = await Work.findOne({ tenant: tenant, workid: tmpRet[i].workid });
       tmpRet[i].workDecision = work && work.decision ? work.decision : "";
@@ -2972,7 +2972,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
-        route: tmpRet[i].route,
+        decision: tmpRet[i].decision,
       });
       // 如果一个活动为DONE， 而整体为IGNORE，则把整体设为DONE
       if (tmpRet[i].status === "ST_DONE" && ret[existing_index].status === "ST_IGNORE") {
