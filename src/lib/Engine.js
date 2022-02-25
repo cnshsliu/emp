@@ -134,6 +134,7 @@ Common.checkAnd = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, r
     }
   });
   */
+  debugger;
   let from_work = wfRoot.find("#" + from_workid);
   let prl_id = from_work.attr("prl_id");
   let parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, from_work);
@@ -378,7 +379,7 @@ Common.checkDelayTimer = async function () {
     if (nexts.length > 0) {
       for (let i = 0; i < nexts.length; i++) {
         //推入处理队列
-        await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
+        await Engine.sendNext(nexts[i]);
       }
     }
   } catch (err) {
@@ -405,7 +406,6 @@ Common.endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
     work.removeClass("ST_RUN");
     work.addClass("ST_END");
   });
-  debugger;
   await Todo.updateMany(
     {
       tenant: tenant,
@@ -458,7 +458,17 @@ Engine.__hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
  *
  * @return {...}
  */
-Engine.doWork = async function (email, todoid, tenant, doer, wfid, nodeid, route, kvars, comment) {
+Engine.doWork = async function (
+  email,
+  todoid,
+  tenant,
+  doer,
+  wfid,
+  nodeid,
+  userDecision,
+  kvars,
+  comment
+) {
   //workid, 如提供，按workid查节点，如未提供，按nodeid查节点
   let fact_doer = doer;
   let fact_email = email;
@@ -491,7 +501,16 @@ Engine.doWork = async function (email, todoid, tenant, doer, wfid, nodeid, route
     throw new EmpError("NO_PERM_TO_DO", "Not doer/No Delegation");
   }
   // 调用Engine方法，完成本Todo
-  return await Engine.__doneTodo(tenant, todo, fact_doer, wfid, todo.workid, route, kvars, comment);
+  return await Engine.__doneTodo(
+    tenant,
+    todo,
+    fact_doer,
+    wfid,
+    todo.workid,
+    userDecision,
+    kvars,
+    comment
+  );
 };
 
 Engine.getWorkDoer = async function (tenant, work, currentUser) {
@@ -521,7 +540,16 @@ Engine.getWorkDoer = async function (tenant, work, currentUser) {
  *
  * @return {...}
  */
-Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kvars, comment) {
+Engine.__doneTodo = async function (
+  tenant,
+  todo,
+  doer,
+  wfid,
+  workid,
+  userDecision,
+  kvars,
+  comment
+) {
   if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
   let isoNow = Tools.toISOString(new Date());
   if (Tools.isEmpty(todo)) {
@@ -541,10 +569,10 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       status: todo.status,
     });
   }
-  if (route) {
+  if (userDecision) {
     //workNode.attr("route", route);
     //Move route from attr to mongo
-    todo.route = route;
+    todo.decision = userDecision;
   }
 
   let nodeid = todo.nodeid;
@@ -586,16 +614,16 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     }
   }
 
-  let workResultRoute = route;
+  let workResultRoute = userDecision;
 
   let completeFlag = 0;
   let sameWorkTodos = null;
   //记录所有参与人共同作用的最后选择
-  let workDecision = route ? route : "";
+  let workDecision = userDecision ? userDecision : "";
   sameWorkTodos = await Todo.find({ tenant: tenant, wfid: todo.wfid, workid: todo.workid });
   if (sameWorkTodos.length === 1) {
     completeFlag = CF.ONE_DOER; //can done worknode
-    workDecision = route;
+    workDecision = userDecision;
     //单人Todo
   } else {
     if (tpNode.hasClass("BYALL")) {
@@ -624,7 +652,7 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
           vote_any: "",
           vote_failto: "",
           vote_percent: 60,
-          route: route,
+          userDecision: userDecision,
         };
         let vote = tpNode.attr("vote") ? tpNode.attr("vote").trim() : "";
         if (vote) {
@@ -660,12 +688,12 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
             }
           }
         } else {
-          //  如果没有投票函数，则Todo Decision就是当前用户的route，
-          //  如果还等着别人完成，那么每一个人完成后的route都会设置为Decision
-          //  在没有投票函数的情况下，这种处理就等同于，work的decision就是最后一个用户的route
+          //  如果没有投票函数，则Todo Decision就是当前用户的userDecision，
+          //  如果还等着别人完成，那么每一个人完成后的userDecision都会设置为Decision
+          //  在没有投票函数的情况下，这种处理就等同于，work的decision就是最后一个用户的userDecision
           //  应该是合理的
           //WorkDecision 只用于显示中间或最终状态，不用于运行逻辑控制判断
-          if (completeFlag === CF.BY_ALL_ALL_DONE) workDecision = route;
+          if (completeFlag === CF.BY_ALL_ALL_DONE) workDecision = userDecision;
           else workDecision = "WAITING";
         }
       } catch (err) {
@@ -674,75 +702,77 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
     } else {
       completeFlag = CF.BY_ANY; //can done workNode
       //有多人Todo，但不是要求ByAll，也就是，有一个人完成即可
-      //Decision 就是这个人的route选择
-      workDecision = route;
+      //Decision 就是这个人的userDecision选择
+      workDecision = userDecision;
     }
   }
   workDecision = workDecision ? workDecision : "";
-  await Work.findOneAndUpdate(
-    { tenant: tenant, wfid: todo.wfid, workid: todo.workid },
-    {
-      $set: {
-        route: route,
-        decision: workDecision,
-        status: completeFlag < CF.CAN_DONE ? "ST_DONE" : "ST_RUN",
-      },
-    },
-    { upsert: true, new: true }
-  );
 
   //如果可以完成当前节点
   let nexts = [];
+  let wfUpdate = {};
   if (completeFlag < CF.CAN_DONE) {
+    await Work.findOneAndUpdate(
+      { tenant: tenant, wfid: todo.wfid, workid: todo.workid },
+      {
+        $set: {
+          decision: workDecision,
+          status: "ST_DONE",
+          doneat: isoNow,
+        },
+      },
+      { upsert: false, new: true }
+    );
     workNode.removeClass("ST_RUN");
     workNode.addClass("ST_DONE");
+    workNode.attr("decision", workDecision);
     workNode.attr("doneat", isoNow);
     await Parser.setVars(tenant, todo.wfid, todo.workid, kvars, doer);
 
-    await Common.procNext(
-      tenant,
-      teamid,
-      todo.tplid,
-      todo.wfid,
-      tpRoot,
-      wfRoot,
-      nodeid,
-      todo.workid,
-      workResultRoute,
-      nexts
-    );
-  }
-
-  let wfUpdate = { doc: wfIO.html() };
-  if (completeFlag < CF.CAN_DONE) {
-    //TODO: move #end to last, to make sure #end is the last one to processed.
-    let hasEnd = false;
-    let nextOfEnd = null;
-    for (let i = 0; i < nexts.length; i++) {
-      if (nexts[i].selector === "#end") {
-        hasEnd = true;
-        nextOfEnd = nexts[i];
+    if (workNode.hasClass("ADHOC") === false) {
+      await Common.procNext(
+        tenant,
+        teamid,
+        todo.tplid,
+        todo.wfid,
+        tpRoot,
+        wfRoot,
+        nodeid,
+        todo.workid,
+        workResultRoute,
+        nexts
+      );
+      //TODO: move #end to last, to make sure #end is the last one to processed.
+      let hasEnd = false;
+      let nextOfEnd = null;
+      for (let i = 0; i < nexts.length; i++) {
+        if (nexts[i].selector === "#end") {
+          hasEnd = true;
+          nextOfEnd = nexts[i];
+        }
+      }
+      //If hasEnd, then make sure there is only one #end in the nexts array
+      if (hasEnd) {
+        nexts = nexts.filter((x) => {
+          return x.selector !== "#end";
+        });
+        nexts.push(nextOfEnd);
+      }
+      for (let i = 0; i < nexts.length; i++) {
+        await Engine.sendNext(nexts[i]);
+      }
+      if (nexts.length > 0) {
+        wf.pnodeid = nexts[0].from_nodeid;
+        wf.pworkid = nexts[0].from_workid;
+        wf.cselector = nexts.map((x) => x.selector);
+        wfUpdate["pnodeid"] = wf.pnodeid;
+        wfUpdate["pworkid"] = wf.pworkid;
+        wfUpdate["cselector"] = wf.cselector;
       }
     }
-    //If hasEnd, then make sure there is only one #end in the nexts array
-    if (hasEnd) {
-      nexts = nexts.filter((x) => {
-        return x.selector !== "#end";
-      });
-      nexts.push(nextOfEnd);
-    }
-    for (let i = 0; i < nexts.length; i++) {
-      await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
-    }
-    if (nexts.length > 0) {
-      wf.pnodeid = nexts[0].from_nodeid;
-      wf.pworkid = nexts[0].from_workid;
-      wf.cselector = nexts.map((x) => x.selector);
-      wfUpdate["pnodeid"] = wf.pnodeid;
-      wfUpdate["pworkid"] = wf.pworkid;
-      wfUpdate["cselector"] = wf.cselector;
-    }
   }
+
+  wfUpdate["doc"] = wfIO.html();
   wf = await Workflow.updateOne(
     { tenant: tenant, wfid: wf.wfid },
     { $set: wfUpdate },
@@ -770,7 +800,6 @@ Engine.__doneTodo = async function (tenant, todo, doer, wfid, workid, route, kva
       todoid: { $ne: todo.todoid },
       status: "ST_RUN", //需要加个这个
     };
-    debugger;
     await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
   }
 
@@ -874,7 +903,7 @@ Engine.doCallback = async function (cbp, payload) {
     nexts
   );
   for (let i = 0; i < nexts.length; i++) {
-    await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
+    await Engine.sendNext(nexts[i]);
   }
   let wfUpdate = { doc: wfIO.html() };
   if (nexts.length > 0) {
@@ -938,6 +967,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       comment = await Parser.replaceStringWithKVar(tenant, comment, null, wfid);
     }
   }
+  //把已经启动的后续节点标注为ST_REVOKED
   for (let i = followingWorks.length - 1; i >= 0; i--) {
     let afw = followingWorks.eq(i);
     afw.removeClass("ST_RUN").addClass("ST_REVOKED");
@@ -945,12 +975,17 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       afw.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`);
     } */
     await Todo.updateMany(
-      { workid: afw.attr("id"), status: "ST_RUN" },
+      { tenant: tenant, wfid: wfid, workid: afw.attr("id"), status: "ST_RUN" },
+      { $set: { status: "ST_REVOKED" } }
+    );
+    await Work.updateMany(
+      { tenant: tenant, wfid: wfid, workid: afw.attr("id"), status: "ST_RUN" },
       { $set: { status: "ST_REVOKED" } }
     );
   }
 
   //Clone worknode
+  debugger;
   let clone_workNode = workNode.clone();
   let clone_workid = uuidv4();
   clone_workNode.attr("id", clone_workid);
@@ -970,6 +1005,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
     wfid: wfid,
     rehearsal: wf.rehearsal,
     selector: `#${clone_workNode.attr("nodeid")}`,
+    byroute: old_todo.byroute,
     starter: wf.starter,
   };
   nexts.push(msgToSend);
@@ -991,7 +1027,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   Engine.sendCommentNotification(tenant, email, wfid, old_todo, comment);
 
   for (let i = 0; i < nexts.length; i++) {
-    await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
+    await Engine.sendNext(nexts[i]);
   }
 
   return todoid;
@@ -1036,11 +1072,21 @@ Engine.addAdhoc = async function (payload) {
     tpNodeTitle: payload.title,
     comment: payload.comment,
     transferable: false,
+    byroute: "DEFAULT",
     teamid: wf.teamid,
     rehearsal: payload.rehearsal,
   };
   //create adhoc todo
   todoObj = await Engine.createTodo(todoObj);
+  let adhocWork = new Work({
+    tenant: payload.tenant,
+    wfid: wf.wfid,
+    workid: workid,
+    title: "Adhoc Task",
+    byroute: "DEFAULT",
+    status: "ST_RUN",
+  });
+  await adhocWork.save();
   wf.doc = wfIO.html();
   await wf.save();
   return todoObj;
@@ -1157,13 +1203,13 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     /* from_workNode.removeClass("ST_DONE").removeClass("ST_IGNORE").addClass("ST_RUN");
     await Todo.updateMany({ workid: from_workid }, { $set: { status: "ST_RUN" } }); */
     //Clone worknode
-    let clone_workNode = from_workNode.clone();
+    /* let clone_workNode = from_workNode.clone();
     let clone_workid = uuidv4();
     clone_workNode.attr("id", clone_workid);
     clone_workNode.attr("at", isoNow);
     clone_workNode.removeAttr("doneat");
-    clone_workNode.removeClass("ST_DONE").removeClass("ST_IGNORE").addClass("ST_RUN");
-    wfRoot.append(clone_workNode);
+    clone_workNode.removeClass("ST_DONE").removeClass("ST_IGNORE").addClass("ST_RUN"); */
+    //wfRoot.append(clone_workNode);
 
     //Clone todos
     /* let from_todo = await Todo.findOne({ todoid: todoid });
@@ -1173,12 +1219,13 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
       CMD: "yarkNode",
       tenant: tenant,
       teamid: wf.teamid,
-      from_nodeid: clone_workNode.attr("from_nodeid"),
-      from_workid: clone_workNode.attr("from_workid"),
+      from_nodeid: from_workNode.attr("from_nodeid"),
+      from_workid: from_workNode.attr("from_workid"),
       tplid: wf.tplid,
       wfid: wfid,
       rehearsal: wf.rehearsal,
-      selector: `#${clone_workNode.attr("nodeid")}`,
+      selector: `#${from_workNode.attr("nodeid")}`,
+      byroute: from_workNode.attr("byroute"),
       starter: wf.starter,
     };
     nexts.push(msgToSend);
@@ -1220,7 +1267,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   Engine.sendCommentNotification(tenant, doer, wfid, todo, comment);
 
   for (let i = 0; i < nexts.length; i++) {
-    await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
+    await Engine.sendNext(nexts[i]);
   }
   return todoid;
 };
@@ -1285,9 +1332,12 @@ Client.yarkNode = async function (obj) {
       from_workid: obj.from_workid,
       tplid: obj.tplid,
       wfid: obj.wfid,
+      rehearsal: obj.rehearsal,
+      byroute: "DEFAULT",
       selector: "#end",
+      starter: obj.starter,
     };
-    await Engine.PUB.send(["EMP", JSON.stringify(an)]);
+    await Engine.sendNext(an);
     return;
   }
   let nodeid = tpNode.attr("id");
@@ -1298,9 +1348,8 @@ Client.yarkNode = async function (obj) {
   let prl_id = obj.parallel_id ? `prl_id="${obj.parallel_id}"` : "";
   if (tpNode.hasClass("START")) {
     //NaW Not a Todo, Not a work performed by people
-    //TODO Add attachments on START.
     wfRoot.append(
-      `<div class="work START ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+      `<div class="work START ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="DEFAULT" at="${isoNow}"></div>`
     );
     await Common.procNext(
       obj.tenant,
@@ -1311,8 +1360,10 @@ Client.yarkNode = async function (obj) {
       wfRoot,
       nodeid,
       workid,
-      "DEFAULT",
-      nexts
+      "DEFAULT", //START 后面这根线一定是DEFAULT
+      nexts,
+      obj.rehearsal,
+      obj.starter
     );
   } else if (tpNode.hasClass("INFORM")) {
     //TODO: INFORM email implementation
@@ -1389,7 +1440,7 @@ Client.yarkNode = async function (obj) {
       }
     }
     wfRoot.append(
-      `<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+      `<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" route="${obj.route}" at="${isoNow}"></div>`
     );
     await Common.procNext(
       obj.tenant,
@@ -1400,8 +1451,10 @@ Client.yarkNode = async function (obj) {
       wfRoot,
       nodeid,
       workid,
-      "DEFAULT",
-      nexts
+      "DEFAULT", //INFORM后面的route也是DEFAULT
+      nexts,
+      obj.rehearsal,
+      obj.starter
     );
   } else if (tpNode.hasClass("SCRIPT")) {
     let code = tpNode.find("code").first().text().trim();
@@ -1463,7 +1516,7 @@ Client.yarkNode = async function (obj) {
     }
     if (runInSyncMode) {
       wfRoot.append(
-        `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
+        `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
       );
       await Common.procNext(
         obj.tenant,
@@ -1474,12 +1527,14 @@ Client.yarkNode = async function (obj) {
         wfRoot,
         nodeid,
         workid,
-        codeRetRoute,
-        nexts
+        codeRetRoute, //SCRIPT后面的连接是SCRIPT的返回
+        nexts,
+        obj.rehearsal,
+        obj.starter
       );
     } else {
       wfRoot.append(
-        `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
+        `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
       );
       //异步回调不会调用procNext， 而是新建一个Callback Point
       //需要通过访问callbackpoint，来推动流程向后运行
@@ -1509,7 +1564,7 @@ Client.yarkNode = async function (obj) {
     );
     if (andDone) {
       wfRoot.append(
-        `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+        `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
       );
       //tpRoot.find(`.link[from="${from_nodeid}"][to="${nodeid}"]`).addClass("ST_DONE");
       await Common.procNext(
@@ -1521,8 +1576,10 @@ Client.yarkNode = async function (obj) {
         wfRoot,
         nodeid,
         workid,
-        "DEFAULT",
-        nexts
+        "DEFAULT", //AND 后面的连接的值也是DEFAULT
+        nexts,
+        obj.rehearsal,
+        obj.starter
       );
     }
   } else if (tpNode.hasClass("OR")) {
@@ -1538,7 +1595,7 @@ Client.yarkNode = async function (obj) {
     );
     if (orDone) {
       wfRoot.append(
-        `<div class="work OR ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+        `<div class="work OR ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
       );
       Common.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
       await Common.procNext(
@@ -1550,13 +1607,15 @@ Client.yarkNode = async function (obj) {
         wfRoot,
         nodeid,
         workid,
-        "DEFAULT",
-        nexts
+        "DEFAULT", //or 后面的连接是DEFAULT
+        nexts,
+        obj.rehearsal,
+        obj.starter
       );
     }
   } else if (tpNode.hasClass("THROUGH")) {
     wfRoot.append(
-      `<div class="work THROUGH ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+      `<div class="work THROUGH ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
     );
     //Common.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
     await Common.procNext(
@@ -1569,11 +1628,13 @@ Client.yarkNode = async function (obj) {
       nodeid,
       workid,
       "DEFAULT",
-      nexts
+      nexts,
+      obj.rehearsal,
+      obj.starter
     );
   } else if (tpNode.hasClass("TIMER")) {
     wfRoot.append(
-      `<div class="work TIMER ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+      `<div class="work TIMER ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
     );
     let nodeSelector = `.node#${nodeid}`;
     let delayString = tpRoot.find(nodeSelector).text().trim();
@@ -1591,7 +1652,7 @@ Client.yarkNode = async function (obj) {
     await delayTimer.save();
   } else if (tpNode.hasClass("GROUND")) {
     wfRoot.append(
-      `<div class="work GROUND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+      `<div class="work GROUND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
     );
   } else if (tpNode.hasClass("SUB")) {
     let parent_vars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
@@ -1620,7 +1681,7 @@ Client.yarkNode = async function (obj) {
     );
     if (isStandalone) {
       wfRoot.append(
-        `<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} at="${isoNow}"></div>`
+        `<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}" at="${isoNow}"></div>`
       );
       await Common.procNext(
         obj.tenant,
@@ -1632,16 +1693,18 @@ Client.yarkNode = async function (obj) {
         nodeid,
         workid,
         "DEFAULT",
-        nexts
+        nexts,
+        obj.rehearsal,
+        obj.starter
       );
     } else {
       wfRoot.append(
-        `<div class="work SUB ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} at="${isoNow}"></div>`
+        `<div class="work SUB ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  at="${isoNow}"></div>`
       );
     }
   } else if (tpNode.hasClass("END")) {
     wfRoot.append(
-      `<div class="work END ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" at="${isoNow}"></div>`
+      `<div class="work END ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}"  byroute="${obj.byroute}" at="${isoNow}"></div>`
     );
     await Common.endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
     await Engine.stopDelayTimers(obj.tenant, obj.wfid);
@@ -1681,7 +1744,9 @@ Client.yarkNode = async function (obj) {
         parent_node_id,
         parent_workid,
         child_route,
-        nexts
+        nexts,
+        obj.rehearsal,
+        obj.starter
       );
 
       if (nexts.length > 0) {
@@ -1692,12 +1757,12 @@ Client.yarkNode = async function (obj) {
       parent_wf.doc = parent_wfIO.html();
       await parent_wf.save();
       for (let i = 0; i < nexts.length; i++) {
-        await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
+        await Engine.sendNext(nexts[i]);
       }
     }
   } else {
-    //An Action node which should be done by person
     //ACTION
+    //An Action node which should be done by person
     //Reset team if there is team defination in tpNode.attr("role");
     let teamInPDS = Parser.getTeamInPDS(tpNode.attr("role"));
     teamid = teamInPDS ? teamInPDS : teamid;
@@ -1722,7 +1787,7 @@ Client.yarkNode = async function (obj) {
     let roleInNode = tpNode.attr("role");
     if (roleInNode === undefined) roleInNode = "DEFAULT";
     wfRoot.append(
-      `<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`
+      `<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`
     );
     // console.log(
     //   "wfRoot append",
@@ -1746,6 +1811,15 @@ Client.yarkNode = async function (obj) {
     }
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
     //TODO TO THINK, adhoctask直接添加了comment，这里没有添加，主要是从模板过来的任务项，comment没有来源
+    let newWork = new Work({
+      tenant: obj.tenant,
+      wfid: wf.wfid,
+      workid: workid,
+      title: tpNodeTitle,
+      byroute: obj.byroute,
+      status: "ST_RUN",
+    });
+    await newWork.save();
     await Engine.createTodo({
       tenant: obj.tenant,
       doer: doerOrDoers,
@@ -1757,6 +1831,7 @@ Client.yarkNode = async function (obj) {
       workid: workid,
       tpNodeTitle: tpNodeTitle,
       comment: "",
+      byroute: obj.byroute,
       transferable: transferable,
       teamid: teamid,
       rehearsal: wf.rehearsal,
@@ -1785,9 +1860,10 @@ Client.yarkNode = async function (obj) {
 
   console.log("Total nexts: ", nexts.length);
   for (let i = 0; i < nexts.length; i++) {
-    await Engine.PUB.send(["EMP", JSON.stringify(nexts[i])]);
+    await Engine.sendNext(nexts[i]);
   }
 };
+
 Engine.createTodo = async function (obj) {
   if (lodash.isArray(obj.doer) === false) {
     obj.doer = [obj.doer];
@@ -1817,6 +1893,7 @@ Engine.createTodo = async function (obj) {
         obj.comment,
         obj.transferable,
         obj.teamid,
+        obj.byroute,
         obj.rehearsal
       );
     } // if exist
@@ -1909,11 +1986,14 @@ Common.procNext = async function (
   from_nodeid,
   from_workid,
   route,
-  nexts
+  nexts,
+  rehearsal,
+  starter
 ) {
   let route_param = route;
   let linkSelector = '.link[from="' + from_nodeid + '"]';
   let routingOptions = [];
+  let links = tpRoot.find(linkSelector);
   tpRoot.find(linkSelector).each(function (i, el) {
     //SEE HERE
     let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
@@ -1937,7 +2017,6 @@ Common.procNext = async function (
     console.error("route '" + JSON.stringify(route) + "' is replaced with DEFAULT");
     routes = ["DEFAULT"];
   }
-  let links = tpRoot.find(linkSelector);
   let parallel_number = 0;
   let parallel_id = uuidv4();
   //统计需要经过的路径的数量, 同时,运行路径上的变量设置
@@ -1973,6 +2052,9 @@ Common.procNext = async function (
         tplid: tplid,
         wfid: wfid,
         selector: selector,
+        byroute: option,
+        rehearsal: rehearsal,
+        starter: starter,
       };
       //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
       if (parallel_number > 1) {
@@ -2078,6 +2160,7 @@ Client.newTodo = async function (
   comment,
   transferable,
   teamid,
+  byroute,
   rehearsal
 ) {
   let todoid = uuidv4();
@@ -2098,6 +2181,7 @@ Client.newTodo = async function (
     comment: comment,
     transferable: transferable,
     teamid: teamid,
+    byroute: byroute,
     rehearsal: rehearsal,
   });
   await todo.save();
@@ -2157,6 +2241,8 @@ Client.cloneTodo = function (from_todo, newValues) {
     "comment",
     "transferable",
     "teamid",
+    "byroute",
+    "option",
     "rehearsal",
   ];
   let clone_obj = {};
@@ -2401,21 +2487,20 @@ Engine.startWorkflow = async function (
   wf = await wf.save();
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
   await Parser.setVars(tenant, wfid, "workflow", parent_vars, "EMP");
-  await Engine.PUB.send([
-    "EMP",
-    JSON.stringify({
-      CMD: "yarkNode",
-      tenant: tenant,
-      teamid: teamid,
-      from_nodeid: "NULL",
-      from_workid: "NULL",
-      tplid: tplid,
-      wfid: wfid,
-      rehearsal: rehearsal,
-      selector: ".START",
-      starter: starter,
-    }),
-  ]);
+  let an = {
+    CMD: "yarkNode",
+    tenant: tenant,
+    teamid: teamid,
+    from_nodeid: "NULL",
+    from_workid: "NULL",
+    tplid: tplid,
+    wfid: wfid,
+    rehearsal: rehearsal,
+    selector: ".START",
+    byroute: "DEFAULT",
+    starter: starter,
+  };
+  await Engine.sendNext(an);
 
   Engine.clearOlderRehearsal(tenant, starter, 5, "m");
 
@@ -2525,21 +2610,20 @@ Engine.restartWorkflow = async function (
   wf.attachments = await Engine.getPbo(old_wf);
   wf = await wf.save();
   await Parser.copyVars(tenant, old_wfid, "workflow", new_wfid, "workflow");
-  await Engine.PUB.send([
-    "EMP",
-    JSON.stringify({
-      CMD: "yarkNode",
-      tenant: tenant,
-      teamid: teamid,
-      from_nodeid: "NULL",
-      from_workid: "NULL",
-      tplid: tplid,
-      wfid: new_wfid,
-      selector: ".START",
-      starter: starter,
-      rehearsal: old_wf.rehearsal,
-    }),
-  ]);
+  let an = {
+    CMD: "yarkNode",
+    tenant: tenant,
+    teamid: teamid,
+    from_nodeid: "NULL",
+    from_workid: "NULL",
+    tplid: tplid,
+    wfid: new_wfid,
+    selector: ".START",
+    byroute: "DEFAULT",
+    starter: starter,
+    rehearsal: old_wf.rehearsal,
+  };
+  await Engine.sendNext(an);
   return wf;
 };
 
@@ -2557,6 +2641,9 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
     await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
     await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
     await KVar.deleteMany({ tenant: tenant, wfid: wfid });
+    await Work.deleteMany({ tenant: tenant, wfid: wfid });
+    //TODO
+    //await Route.deleteMany({ tenant: tenant, wfid: wfid });
     return ret;
   } else {
     throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
@@ -2638,17 +2725,17 @@ Engine.workflowGetLatest = async function (email, tenant, filter) {
 
 Engine.getWorkInfo = async function (email, tenant, todoid) {
   let todo_filter = { tenant: tenant, todoid: todoid };
-  let work = await Todo.findOne(todo_filter);
-  if (!work) {
+  let todo = await Todo.findOne(todo_filter);
+  if (!todo) {
     return {};
   }
   //如果是Rehearsal，则使用真实人的邮箱
-  if (work.rehearsal) {
-    email = work.doer;
+  if (todo.rehearsal) {
+    email = todo.doer;
   }
-  if (!SystemPermController.hasPerm(email, "work", work, "read"))
+  if (!SystemPermController.hasPerm(email, "work", todo, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this work");
-  let filter = { tenant: tenant, wfid: work.wfid };
+  let filter = { tenant: tenant, wfid: todo.wfid };
   let wf = await Workflow.findOne(filter);
   if (!wf) {
     await Todo.deleteOne(todo_filter);
@@ -2659,7 +2746,7 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
 
-  return await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, work.wfid, work);
+  return await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, todo.wfid, todo);
 };
 
 Engine.getWfHistory = async function (email, tenant, wfid, wf) {
@@ -2693,50 +2780,51 @@ const splitComment = function (str) {
  *
  * @return {...}
  */
-Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, work) {
-  if (work.rehearsal) email = work.doer;
-  let workNode = wfRoot.find("#" + work.workid);
+Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, todo) {
+  if (todo.rehearsal) email = todo.doer;
+  let workNode = wfRoot.find("#" + todo.workid);
   let ret = {};
-  ret.todoid = work.todoid;
-  ret.tenant = work.tenant;
-  ret.doer = work.doer;
-  ret.wfid = work.wfid;
-  ret.nodeid = work.nodeid;
-  ret.workid = work.workid;
-  ret.title = work.title;
+  ret.todoid = todo.todoid;
+  ret.tenant = todo.tenant;
+  ret.doer = todo.doer;
+  ret.wfid = todo.wfid;
+  ret.nodeid = todo.nodeid;
+  ret.byroute = todo.byroute;
+  ret.workid = todo.workid;
+  ret.title = todo.title;
   if (ret.title.indexOf("[") >= 0) {
     ret.title = await Parser.replaceStringWithKVar(tenant, ret.title, null, wfid);
   }
-  ret.status = work.status;
-  ret.wfstarter = work.wfstarter;
-  ret.wfstatus = work.wfstatus;
-  ret.rehearsal = work.rehearsal;
-  ret.createdAt = work.createdAt;
-  ret.updatedAt = work.updatedAt;
+  ret.status = todo.status;
+  ret.wfstarter = todo.wfstarter;
+  ret.wfstatus = todo.wfstatus;
+  ret.rehearsal = todo.rehearsal;
+  ret.createdAt = todo.createdAt;
+  ret.updatedAt = todo.updatedAt;
   ret.from_workid = workNode.attr("from_workid");
   ret.from_nodeid = workNode.attr("from_nodeid");
   ret.doneat = workNode.attr("doneat");
-  ret.transferable = work.transferable;
+  ret.transferable = todo.transferable;
   ret.role = workNode.attr("role");
   ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
   ret.doer_string = workNode.attr("doer");
   ret.comment =
-    Tools.isEmpty(work.comment) || Tools.isEmpty(work.comment.trim())
+    Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
       ? []
       : [
           {
-            doer: work.doer,
-            comment: work.comment.trim(),
-            cn: await Cache.getUserName(work.doer),
-            splitted: splitComment(work.comment.trim()),
+            doer: todo.doer,
+            comment: todo.comment.trim(),
+            cn: await Cache.getUserName(todo.doer),
+            splitted: splitComment(todo.comment.trim()),
           },
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
-  ret.kvars = await Parser.userGetVars(tenant, email, work.wfid, work.workid);
+  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid);
   let existingVars = await Parser.userGetVars(
     tenant,
     email,
-    work.wfid,
+    todo.wfid,
     "workflow",
     [email],
     ["EMP"]
@@ -2758,7 +2846,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.beginat = wfRoot.attr("at");
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
 
-  let tmpInstruction = Parser.base64ToCode(Common.getInstruct(tpRoot, work.nodeid));
+  let tmpInstruction = Parser.base64ToCode(Common.getInstruct(tpRoot, todo.nodeid));
   let all_visied_kvars = await Parser.userGetVars(tenant, email, wfid, "workflow");
   tmpInstruction = Engine.compileContent(wfRoot, all_visied_kvars, tmpInstruction);
   if (tmpInstruction.indexOf("[") >= 0) {
@@ -2766,12 +2854,12 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   }
   ret.instruct = Parser.codeToBase64(tmpInstruction);
 
-  ret.routingOptions = Common.getRoutingOptions(tpRoot, work.nodeid);
+  ret.routingOptions = Common.getRoutingOptions(tpRoot, todo.nodeid);
   ret.from_actions = Engine._getFromActions(tpRoot, wfRoot, workNode);
   ret.following_actions = Engine._getFollowingActions(tpRoot, wfRoot, workNode);
   ret.parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, workNode);
 
-  if (work.nodeid === "ADHOC") {
+  if (todo.nodeid === "ADHOC") {
     ret.revocable = false;
     ret.returnable = false;
   } else {
@@ -2932,6 +3020,8 @@ Engine._getFollowingActions = function (tpRoot, wfRoot, workNode, level = 0) {
         ret.push({
           nodeid: tmpWork.attr("nodeid"),
           workid: tmpWork.attr("id"),
+          route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
+          byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           status: st,
         });
       } else if (
@@ -2961,6 +3051,8 @@ Engine._getParallelActions = function (tpRoot, wfRoot, workNode, level = 0) {
         ret.push({
           nodeid: tmpWork.attr("nodeid"),
           workid: tmpWork.attr("id"),
+          route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
+          byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           status: st,
         });
       }
@@ -2988,6 +3080,8 @@ Engine._getFromActions = function (tpRoot, wfRoot, workNode, level = 0) {
           ret.push({
             nodeid: tmpWork.attr("nodeid"),
             workid: tmpWork.attr("id"),
+            route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
+            byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           });
         } else {
           let tmp = Engine._getFromActions(tpRoot, wfRoot, tmpWork, level + 1);
@@ -3533,7 +3627,7 @@ Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) 
     }
 
     function last() {
-      return allVoted() ? voteControl.route : "WAITING";
+      return allVoted() ? voteControl.userDecision : "WAITING";
     }
 
     function most() {
@@ -3573,7 +3667,7 @@ Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) 
     }
     function ifAny(which) {
       if (pure_decisions.includes(which)) return which;
-      else return allVoted() ? voteControl.route : "WAITING";
+      else return allVoted() ? voteControl.userDecision : "WAITING";
     }
     function ifAnyThenMost(which) {
       if (pure_decisions.includes(which)) return which;
@@ -3635,6 +3729,20 @@ Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) 
     console.error(err.message);
     return "NULL";
   }
+};
+
+Engine.sendNext = async function (an) {
+  await Engine.PUB.send(["EMP", JSON.stringify(an)]);
+  /* let an = {
+    CMD: "yarkNode",
+    tenant: tenant,
+    teamid: teamid,
+    from_nodeid: from_nodeid,
+    from_workid: from_workid,
+    tplid: tplid,
+    wfid: wfid,
+    selector: selector,
+  }; */
 };
 
 Engine.init();

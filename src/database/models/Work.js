@@ -20,9 +20,11 @@ var WorkSchema = new Schema({
   tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
   wfid: { type: String, required: [true, "不能为空"], index: true },
   workid: { type: String, required: [true, "不能为空"], index: true },
-  route: { type: String },
+  title: { type: String },
+  byroute: { type: String },
   decision: { type: String },
   status: { type: String, required: true, index: true },
+  doneat: { type: String, required: false },
 });
 var Work = Mongoose.model("Work", WorkSchema);
 
