@@ -522,6 +522,25 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/workflow/route/status",
+    handler: Handlers.WorkflowRouteStatus,
+    config: {
+      description: "Read workflow content",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/workflow/start",
     handler: Handlers.WorkflowStart,
     config: {

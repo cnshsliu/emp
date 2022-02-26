@@ -13,6 +13,7 @@ const Crypto = require("../../lib/Crypto");
 const Workflow = require("../../database/models/Workflow");
 const User = require("../../database/models/User");
 const Todo = require("../../database/models/Todo");
+const Route = require("../../database/models/Route");
 const List = require("../../database/models/List");
 const Comment = require("../../database/models/Comment");
 const CbPoint = require("../../database/models/CbPoint");
@@ -484,6 +485,17 @@ const WorkflowRead = async function (req, h) {
   }
 };
 
+const WorkflowRouteStatus = async function (req, h) {
+  try {
+    let myEmail = req.auth.credentials.email;
+    let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    return await Route.find(filter);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const WorkflowDumpInstemplate = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
@@ -745,8 +757,8 @@ const WorkflowRestartThenDestroy = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let email = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    await Engine.destroyWorkflow(email, tenant, wfid);
     let newWf = await Engine.restartWorkflow(email, tenant, wfid);
+    await Engine.destroyWorkflow(email, tenant, wfid);
     return h.response(newWf);
   } catch (err) {
     console.error(err);
@@ -3402,6 +3414,7 @@ module.exports = {
   TemplateSetAuthor,
   TemplateSetPboAt,
   WorkflowRead,
+  WorkflowRouteStatus,
   WorkflowDumpInstemplate,
   WorkflowStart,
   WorkflowPause,
