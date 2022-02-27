@@ -322,6 +322,7 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           tplid: Joi.string().required(),
+          updatedAt: Joi.string().optional(),
         },
         validator: Joi,
       },
@@ -522,8 +523,28 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/workflow/route/status",
-    handler: Handlers.WorkflowRouteStatus,
+    path: "/workflow/check/status",
+    handler: Handlers.WorkflowCheckStatus,
+    config: {
+      description: "Read workflow content",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          updatedAt: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/workflow/routes",
+    handler: Handlers.WorkflowRoutes,
     config: {
       description: "Read workflow content",
       tags: ["api"],

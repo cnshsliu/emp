@@ -319,7 +319,7 @@ const TemplatePut = async function (req, h) {
       editorName: await Cache.getUserName(author),
     });
     edittingLog = await edittingLog.save();
-    return h.response({ _id: obj._id, tplid: obj.tplid });
+    return h.response({ _id: obj._id, tplid: obj.tplid, updatedAt: obj.updatedAt });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -484,8 +484,36 @@ const WorkflowRead = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const WorkflowCheckStatus = async function (req, h) {
+  try {
+    let myEmail = req.auth.credentials.email;
+    let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    let wf = await Workflow.findOne(filter).lean();
+    let ret = {};
+    if (!wf) {
+      ret = "NOTFOUND";
+    } else {
+      if (wf.updatedAt.toISOString() !== req.payload.updatedAt) {
+        ret["wfid"] = wf.wfid;
+        ret["nodeStatus"] = await Engine.getNodeStatus(wf);
+        ret["doc"] = wf.doc;
+        ret["routeStatus"] = await Route.find({
+          tenant: req.auth.credentials.tenant._id,
+          wfid: wf.wfid,
+        });
+        ret["updatedAt"] = wf.updatedAt;
+      } else {
+        ret = "NOCHANGE";
+      }
+      return ret;
+    }
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
-const WorkflowRouteStatus = async function (req, h) {
+const WorkflowRoutes = async function (req, h) {
   try {
     let myEmail = req.auth.credentials.email;
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
@@ -1511,9 +1539,15 @@ const TemplateSearch = async function (req, h) {
 const TemplateRead = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
+
     let tpl = await Template.findOne(filter);
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    if (req.payload.updatedAt) {
+      if (tpl.updatedAt.toISOString() === req.payload.updatedAt) {
+        return "NOCHANGE";
+      }
+    }
     return tpl;
   } catch (err) {
     console.error(err);
@@ -3414,7 +3448,8 @@ module.exports = {
   TemplateSetAuthor,
   TemplateSetPboAt,
   WorkflowRead,
-  WorkflowRouteStatus,
+  WorkflowCheckStatus,
+  WorkflowRoutes,
   WorkflowDumpInstemplate,
   WorkflowStart,
   WorkflowPause,

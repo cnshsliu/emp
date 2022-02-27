@@ -1589,7 +1589,8 @@ Client.yarkNode = async function (obj) {
       nexts
     );
     if (andDone) {
-      let workNode = wfRoot.find("#" + workid);
+      //let workNode = wfRoot.find("#" + workid);
+      /* let workNode = wfRoot.find(`.work[nodeid="${nodeid}"]`).last();
       if (workNode) {
         workNode.removeClass("ST_RUN");
         workNode.addClass("ST_DONE");
@@ -1598,7 +1599,10 @@ Client.yarkNode = async function (obj) {
         wfRoot.append(
           `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
         );
-      }
+      } */
+      wfRoot.append(
+        `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
+      );
       //tpRoot.find(`.link[from="${from_nodeid}"][to="${nodeid}"]`).addClass("ST_DONE");
       await Common.procNext(
         obj.tenant,
@@ -3806,6 +3810,28 @@ Engine.sendNext = async function (an) {
     wfid: wfid,
     selector: selector,
   }; */
+};
+
+Engine.getNodeStatus = async function (wf) {
+  let wfIO = await Parser.parse(wf.doc);
+  let tpRoot = wfIO(".template");
+  let wfRoot = wfIO(".workflow");
+  let works = wfRoot.find(".work");
+  let ret = [];
+  works.each(function (i, el) {
+    let workObj = Cheerio(el);
+    let classArray = workObj
+      .attr("class")
+      .split(/\s/)
+      .filter((x) => x.startsWith("ST_"));
+    let stClass = classArray.length > 0 ? classArray[0] : "";
+    ret.push({
+      nodeid: workObj.attr("nodeid"),
+      status: stClass,
+    });
+  });
+  console.log(ret);
+  return ret;
 };
 
 Engine.init();
