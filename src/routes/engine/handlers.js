@@ -502,6 +502,7 @@ const WorkflowCheckStatus = async function (req, h) {
           wfid: wf.wfid,
         });
         ret["updatedAt"] = wf.updatedAt;
+        ret["status"] = wf.status;
       } else {
         ret = "NOCHANGE";
       }
