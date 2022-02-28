@@ -143,8 +143,8 @@ Common.checkAnd = async function (tenant, wfid, tpRoot, wfRoot, nodeid, from_wor
     to_nodeid: nodeid,
     status: "ST_PASS",
   };
-  let passedRoutes = await Route.find(routeFilter);
-  return passedRoutes.length === fromNodeIds.length;
+  let passedNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
+  return passedNodes.length === fromNodeIds.length;
 };
 
 /**
