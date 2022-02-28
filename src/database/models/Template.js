@@ -25,6 +25,7 @@ var TemplateSchema = new Schema(
         text: { type: String },
       },
     ],
+    worklog: { type: String, default: "full" },
   },
   { timestamps: true }
 );
