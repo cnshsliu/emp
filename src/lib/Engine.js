@@ -972,10 +972,12 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   }
   // 撤回 doc 中的 RUNNING node
   //把已经启动的后续节点标注为ST_REVOKED
-  let followingWorks = workNode.nextAll(`.work.ST_RUN[from_workid='${old_todo.workid}']`);
-  for (let i = followingWorks.length - 1; i >= 0; i--) {
-    let afw = followingWorks.eq(i);
-    afw.removeClass("ST_RUN").addClass("ST_REVOKED");
+  let followingActions = Engine._getFollowingActions(tpRoot, wfRoot, workNode, true);
+  //let followingWorks = workNode.nextAll(`.work.ST_RUN[from_workid='${old_todo.workid}']`);
+  for (let i = followingActions.length - 1; i >= 0; i--) {
+    //let afw = followingWorks.eq(i);
+    let afw = followingActions[i].work;
+    afw.removeClass(Engine.getStatusFromClass(afw)).addClass("ST_REVOKED");
     /* if (comment) {
       afw.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`);
     } */
@@ -990,10 +992,21 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
     await Route.deleteMany({
       tenant: tenant,
       wfid: wfid,
-      from_workid: old_todo.workid,
+      to_workid: afw.attr("id"),
       status: "ST_PASS",
     });
+    await KVar.deleteMany({
+      tenant: tenant,
+      wfid: wfid,
+      objid: afw.attr("id"),
+    });
   }
+  await Route.deleteMany({
+    tenant: tenant,
+    wfid: wfid,
+    from_workid: old_todo.workid,
+    status: "ST_PASS",
+  });
 
   //Clone worknode
   let clone_workNode = workNode.clone();
@@ -1210,13 +1223,13 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let workNode = wfRoot.find(`#${todo.workid}`);
   let nexts = [];
 
+  /*
   let fromRoutes = await Route.find({
     tenant: tenant,
     wfid: wfid,
     to_workid: todo.workid,
     status: "ST_PASS",
   });
-
   for (let i = 0; i < fromRoutes.length; i++) {
     let from_workid = fromRoutes[i].from_workid;
     let from_workNode = wfRoot.find(`#${from_workid}`);
@@ -1236,9 +1249,36 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     };
     nexts.push(msgToSend);
   }
+  */
 
-  //workNode.remove();
-  //await Todo.deleteMany({ tenant: tenant, workid: workid });
+  let fromWorks = await Engine._getFromActionsWithRoutes(tenant, tpRoot, wfRoot, workNode);
+  for (let i = 0; i < fromWorks.length; i++) {
+    let workid = fromWorks[i].workid;
+    console.log(workid, fromWorks[i].nodeType);
+    await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: workid });
+    await KVar.deleteMany({ tenant: tenant, wfid: wfid, objid: workid });
+    let from_workNode = wfRoot.find(`#${workid}`);
+    if (fromWorks[i].nodeType === "ACTION") {
+      let msgToSend = {
+        CMD: "yarkNode",
+        tenant: tenant,
+        teamid: wf.teamid,
+        from_nodeid: from_workNode.attr("from_nodeid"),
+        from_workid: from_workNode.attr("from_workid"),
+        tplid: wf.tplid,
+        wfid: wfid,
+        rehearsal: wf.rehearsal,
+        selector: `#${from_workNode.attr("nodeid")}`,
+        byroute: from_workNode.attr("byroute"),
+        parallel_id: from_workNode.attr("prl_id"),
+        starter: wf.starter,
+      };
+      nexts.push(msgToSend);
+    } else {
+      from_workNode.removeClass(Engine.getStatusFromClass(from_workNode)).addClass("ST_RETURNED");
+    }
+  }
+
   workNode.removeClass("ST_RUN").addClass("ST_RETURNED");
   workNode.attr("doneat", isoNow);
   if (comment) {
@@ -1265,6 +1305,15 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   //如果没有下面两句话，则退回的todo的comment没有了
 
   await Todo.updateMany(
+    {
+      tenant: tenant,
+      wfid: todo.wfid,
+      workid: todo.workid,
+      status: "ST_RUN",
+    },
+    { $set: { status: "ST_RETURNED" } }
+  );
+  await Work.updateMany(
     {
       tenant: tenant,
       wfid: todo.wfid,
@@ -1311,6 +1360,28 @@ Client.setKVarFromString = async function (tenant, wfid, workid, setValueString)
   }
   console.log("kvObj=", kvObj);
   await Parser.setVars(tenant, wfid, workid, kvObj, "EMP");
+};
+
+const supportedClasses = [
+  "ACTION",
+  "SCRIPT",
+  "AND",
+  "OR",
+  "TIMER",
+  "GROUND",
+  "START",
+  "END",
+  "INFORM",
+  "THROUGH",
+];
+Client.getNodeType = function (jq) {
+  for (let i = 0; i < supportedClasses.length; i++) {
+    if (jq.hasClass(supportedClasses[i])) {
+      return supportedClasses[i];
+    }
+  }
+  console.warn("unknown nodeTpe", jq.attr("class"));
+  return "UNKNOWN";
 };
 
 //Client是指ZMQ接受 yarkNode消息的client
@@ -2915,7 +2986,10 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
       all_following_are_running = false;
     } else {
       for (let i = 0; i < ret.following_actions.length; i++) {
-        if (ret.following_actions[i].status !== "ST_RUN") {
+        if (
+          ret.following_actions[i].nodeType === "ACTION" &&
+          ret.following_actions[i].status !== "ST_RUN"
+        ) {
           all_following_are_running = false;
           break;
         }
@@ -3044,7 +3118,7 @@ Engine.__getTodosByWorkid = async function (tenant, workid, full) {
   return todos;
 };
 
-Engine._getFollowingActions = function (tpRoot, wfRoot, workNode, level = 0) {
+Engine._getFollowingActions = function (tpRoot, wfRoot, workNode, withWork = false, level = 0) {
   if (Tools.isEmpty(workNode)) return [];
   let tplNodeId = workNode.attr("nodeid");
   let workid = workNode.attr("id");
@@ -3060,20 +3134,33 @@ Engine._getFollowingActions = function (tpRoot, wfRoot, workNode, level = 0) {
       tmpWork = tmpWork.eq(0);
       let st = Engine.getStatusFromClass(tmpWork);
       if (tmpWork.hasClass("ACTION")) {
-        ret.push({
+        let action = {
           nodeid: tmpWork.attr("nodeid"),
           workid: tmpWork.attr("id"),
+          nodeType: "ACTION",
           route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
           byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           status: st,
-        });
+        };
+        withWork && (action["work"] = tmpWork);
+        ret.push(action);
       } else if (
         st === "ST_DONE" &&
         tmpWork.hasClass("ACTION") === false &&
         tmpWork.hasClass("END") === false
         //非END的逻辑节点
       ) {
-        ret = ret.concat(Engine._getFollowingActions(tpRoot, wfRoot, tmpWork));
+        let action = {
+          nodeid: tmpWork.attr("nodeid"),
+          workid: tmpWork.attr("id"),
+          nodeType: Client.getNodeType(tmpWork),
+          route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
+          byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
+          status: st,
+        };
+        withWork && (action["work"] = tmpWork);
+        ret.push(action);
+        ret = ret.concat(Engine._getFollowingActions(tpRoot, wfRoot, tmpWork, withWork, level + 1));
       }
     }
   });
@@ -3123,16 +3210,56 @@ Engine._getFromActions = function (tpRoot, wfRoot, workNode, level = 0) {
           ret.push({
             nodeid: tmpWork.attr("nodeid"),
             workid: tmpWork.attr("id"),
+            nodeType: "ACTION",
             route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
             byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           });
         } else {
+          ret.push({
+            nodeid: tmpWork.attr("nodeid"),
+            workid: tmpWork.attr("id"),
+            nodeType: Client.getNodeType(tmpWork),
+            route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
+            byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
+          });
           let tmp = Engine._getFromActions(tpRoot, wfRoot, tmpWork, level + 1);
           ret = ret.concat(tmp);
         }
       }
     }
   });
+  return ret;
+};
+
+Engine._getFromActionsWithRoutes = async function (tenant, tpRoot, wfRoot, workNode, level = 0) {
+  if (Tools.isEmpty(workNode)) return [];
+  let tplNodeId = workNode.attr("nodeid");
+  if (Tools.isEmpty(tplNodeId)) return [];
+  let ret = [];
+
+  let routeFilter = {
+    tenant: tenant,
+    wfid: wfRoot.attr("id"),
+    to_workid: workNode.attr("id"),
+  };
+  let routes = await Route.find(routeFilter);
+  for (let i = 0; i < routes.length; i++) {
+    let fromWork = wfRoot.find("#" + routes[i].from_workid);
+    let fromNodeType = Client.getNodeType(fromWork);
+    if (fromNodeType !== "START") {
+      ret.push({
+        nodeid: routes[i].from_nodeid,
+        workid: routes[i].from_workid,
+        nodeType: fromNodeType,
+        route: routes[i].route,
+      });
+      if (fromNodeType !== "ACTION" && fromNodeType !== "END") {
+        ret = ret.concat(
+          await Engine._getFromActionsWithRoutes(tenant, tpRoot, wfRoot, fromWork, level + 1)
+        );
+      }
+    }
+  }
   return ret;
 };
 
