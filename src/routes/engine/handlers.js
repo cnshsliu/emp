@@ -1611,6 +1611,7 @@ const TemplateSetVisi = async function (req, h) {
       { upsert: false, new: true }
     );
     if (!tpl) {
+      console.log({ tenant: tenant, author: author, tplid: tplid });
       throw new EmpError("NO_TPL", "No owned template found");
     }
     tpl = await Template.findOne({ tenant: tenant, author: author, tplid: tplid }, { doc: 0 });
