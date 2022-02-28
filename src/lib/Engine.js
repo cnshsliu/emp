@@ -1231,6 +1231,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
       rehearsal: wf.rehearsal,
       selector: `#${from_workNode.attr("nodeid")}`,
       byroute: from_workNode.attr("byroute"),
+      parallel_id: from_workNode.attr("prl_id"),
       starter: wf.starter,
     };
     nexts.push(msgToSend);
