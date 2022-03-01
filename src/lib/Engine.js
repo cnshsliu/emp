@@ -36,6 +36,30 @@ const Engine = {};
 const Client = {};
 const Common = {};
 
+const supportedClasses = [
+  "ACTION",
+  "SCRIPT",
+  "AND",
+  "OR",
+  "TIMER",
+  "GROUND",
+  "START",
+  "END",
+  "INFORM",
+  "THROUGH",
+];
+
+const supportedSTStatus = [
+  "ST_RUN",
+  "ST_PAUSE",
+  "ST_DONE",
+  "ST_STOP",
+  "ST_IGNORE",
+  "ST_RETURNED",
+  "ST_REVOKED",
+  "ST_END",
+];
+
 const CF = {
   ONE_DOER: 1,
   BY_ANY: 21,
@@ -108,7 +132,7 @@ Client.formatRoute = function (route) {
 };
 
 /**
- * Common.checkAnd() Check whether the status of all previous nodes were ST_DONE
+ * Check whether the status of all previous nodes were ST_DONE
  *
  * @param {...} tenant - Tenant
  * @param {...} wfid - workflow id
@@ -631,7 +655,6 @@ Engine.__doneTodo = async function (
   } else {
     if (tpNode.hasClass("BYALL")) {
       //lab test  complete_1_among_many_doers.js
-      debugger;
       let otherAllDone = true;
       for (let i = 0; i < sameWorkTodos.length; i++) {
         if (sameWorkTodos[i].todoid !== todo.todoid && sameWorkTodos[i].status === "ST_RUN") {
@@ -1362,25 +1385,12 @@ Client.setKVarFromString = async function (tenant, wfid, workid, setValueString)
   await Parser.setVars(tenant, wfid, workid, kvObj, "EMP");
 };
 
-const supportedClasses = [
-  "ACTION",
-  "SCRIPT",
-  "AND",
-  "OR",
-  "TIMER",
-  "GROUND",
-  "START",
-  "END",
-  "INFORM",
-  "THROUGH",
-];
 Client.getNodeType = function (jq) {
   for (let i = 0; i < supportedClasses.length; i++) {
     if (jq.hasClass(supportedClasses[i])) {
       return supportedClasses[i];
     }
   }
-  console.warn("unknown nodeTpe", jq.attr("class"));
   return "UNKNOWN";
 };
 
@@ -1404,7 +1414,10 @@ Client.yarkNode = async function (obj) {
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
+  let fromNode = tpRoot.find("#" + obj.from_nodeid);
   let tpNode = tpRoot.find(obj.selector);
+  let fromNodeTitle = fromNode.find("p").text().trim();
+  let tpNodeTitle = tpNode.find("p").text().trim();
   if (tpNode.length < 1) {
     console.error(obj.selector, " not found, direct to #end");
     let an = {
@@ -1433,6 +1446,8 @@ Client.yarkNode = async function (obj) {
   let newRoute = new Route({
     tenant: obj.tenant,
     wfid: obj.wfid,
+    from_title: fromNodeTitle ? fromNodeTitle : Client.getNodeType(fromNode),
+    to_title: tpNodeTitle ? tpNodeTitle : Client.getNodeType(tpNode),
     from_nodeid: obj.from_nodeid,
     from_workid: obj.from_workid,
     to_nodeid: nodeid,
@@ -1441,7 +1456,6 @@ Client.yarkNode = async function (obj) {
     status: "ST_PASS",
     doneat: isoNow,
   });
-
   newRoute = await newRoute.save();
 
   if (tpNode.hasClass("START")) {
@@ -1660,22 +1674,37 @@ Client.yarkNode = async function (obj) {
       "DEFAULT",
       nexts
     );
+    let andNodeExisting = wfRoot.find(`.work[nodeid="${nodeid}"]`).last();
     if (andDone) {
-      //let workNode = wfRoot.find("#" + workid);
-      /* let workNode = wfRoot.find(`.work[nodeid="${nodeid}"]`).last();
-      if (workNode) {
-        workNode.removeClass("ST_RUN");
-        workNode.addClass("ST_DONE");
-        workNode.attr("doneat", isoNow);
+      // 如果 AND 完成
+      if (andNodeExisting.length > 0) {
+        // 如果AND完成且存在旧节点
+        Common.clearSTClass(andNodeExisting);
+        andNodeExisting.addClass("ST_DONE");
+        andNodeExisting.attr("doneat", isoNow);
+        andNodeExisting.attr("byroute", obj.byroute);
+
+        // 把刚刚新建的Roue的to_workid改为已存在的节点的workid
+        // 也就是说，最后一条线ROUTE过来后，还是指向单一的AND节点
+        await Route.findOneAndUpdate(
+          {
+            tenant: tenant,
+            wfid: obj.wfid,
+            to_nodeid: nodeid,
+            to_workid: workid,
+          },
+          { $set: { to_workid: andNodeExisting.attr("id") } }
+        );
+        workid = andNodeExisting.attr("id");
       } else {
+        // 如果 AND 完成 但不存在旧节点
+        // 有可能AND前面只有一个节点，那么就应该直接完成
         wfRoot.append(
           `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
         );
-      } */
-      wfRoot.append(
-        `<div class="work AND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
-      );
-      //tpRoot.find(`.link[from="${from_nodeid}"][to="${nodeid}"]`).addClass("ST_DONE");
+        //刚刚新建的ROUTE，to_workid不用改
+      }
+      //既然AND已经完成，那么，就可以继续处理AND后面的节点
       await Common.procNext(
         obj.tenant,
         teamid,
@@ -1691,9 +1720,33 @@ Client.yarkNode = async function (obj) {
         obj.starter
       );
     } else {
-      wfRoot.append(
-        `<div class="work AND ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
-      );
+      // 如果 AND 没有完成
+      if (andNodeExisting.length > 0) {
+        // 如果AND没有完成且存在旧节点
+        // 不管状态是什么，设为RUN
+        Common.clearSTClass(andNodeExisting);
+        andNodeExisting.addClass("ST_RUN");
+        //byroute应该没有什么用
+        andNodeExisting.attr("byroute", obj.byroute);
+
+        // 把刚刚新建的Roue的to_workid改为已存在的节点的workid
+        // 也就是说，最后一条线ROUTE过来后，还是指向单一的AND节点
+        await Route.findOneAndUpdate(
+          {
+            tenant: tenant,
+            wfid: obj.wfid,
+            to_nodeid: nodeid,
+            to_workid: workid, //刚刚新建的route的workid
+          },
+          { $set: { to_workid: andNodeExisting.attr("id") } }
+        );
+        workid = andNodeExisting.attr("id");
+      } else {
+        //如果AND没有完成切不存在旧节点
+        wfRoot.append(
+          `<div class="work AND ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}" at="${isoNow}"></div>`
+        );
+      }
     }
   } else if (tpNode.hasClass("OR")) {
     /* let orDone = Common.checkOr(
@@ -1909,7 +1962,6 @@ Client.yarkNode = async function (obj) {
     console.log(JSON.stringify(varsFromTemplateNode, null, 2));
     await Parser.setVars(obj.tenant, obj.wfid, workid, varsFromTemplateNode, "EMP");
     //建立worklist中的work
-    let tpNodeTitle = tpNode.find("p").text().trim();
     if (tpNodeTitle.length === 0) {
       tpNodeTitle = tpNode.text().trim();
       if (tpNodeTitle.length === 0) {
@@ -3272,6 +3324,15 @@ Engine._getFromNodeIds = function (tpRoot, thisNodeId) {
     ret.push(fromid);
   });
   return [...new Set(ret)];
+};
+
+Common.removeSTClasses = function (jq, classesToRemove) {
+  classesToRemove.map((x) => {
+    jq.removeClass(x);
+  });
+};
+Common.clearSTClass = function (jq) {
+  Common.removeSTClasses(jq, supportedSTStatus);
 };
 
 Engine.getStatusFromClass = function (node) {
