@@ -12,6 +12,8 @@ var TemplateSchema = new Schema(
       default: "ANY_RUNNING",
     },
     author: { type: String, required: [true, "不能为空"], index: true },
+    lastUpdateBy: String,
+    lastUpdateBwid: String, //Browser window it;
     authorName: { type: String, required: [true, "不能为空"], index: false },
     visi: { type: String },
     desc: { type: String, required: false, index: false },

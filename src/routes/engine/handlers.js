@@ -280,8 +280,7 @@ const TemplatePut = async function (req, h) {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
-    let author = req.auth.credentials.email;
-    let authorName = req.auth.credentials.username;
+    let myEmail = req.auth.credentials.email;
     if (Tools.isEmpty(req.payload.doc)) {
       throw new EmpError("NO_CONTENT", "Template content can not be empty");
     }
@@ -296,7 +295,8 @@ const TemplatePut = async function (req, h) {
         update = {
           $set: {
             doc: req.payload.doc,
-            //bdoc: bdoc,
+            lastUpdateBy: myEmail,
+            lastUpdateBwid: req.payload.bwid,
           },
         },
         options = { upsert: false, new: true };
@@ -305,9 +305,12 @@ const TemplatePut = async function (req, h) {
       obj = new Template({
         tenant: tenant,
         tplid: tplid,
-        author: author,
-        authorName: await Cache.getUserName(author),
+        author: myEmail,
+        authorName: await Cache.getUserName(myEmail),
+
         doc: req.payload.doc,
+        lastUpdateBy: myEmail,
+        lastUpdateBwid: req.payload.bwid,
       });
       obj = await obj.save();
     }
@@ -315,8 +318,8 @@ const TemplatePut = async function (req, h) {
       tenant: tenant,
       objtype: "Template",
       objid: obj.tplid,
-      editor: author,
-      editorName: await Cache.getUserName(author),
+      editor: myEmail,
+      editorName: await Cache.getUserName(myEmail),
     });
     edittingLog = await edittingLog.save();
     return h.response({ _id: obj._id, tplid: obj.tplid, updatedAt: obj.updatedAt });
@@ -1540,16 +1543,25 @@ const TemplateSearch = async function (req, h) {
 const TemplateRead = async function (req, h) {
   try {
     let filter = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
+    if (req.payload.bwid) {
+      filter["lastUpdateBwid"] = { $ne: req.payload.bwid };
+    }
 
     let tpl = await Template.findOne(filter);
-    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
-      throw new EmpError("NO_PERM", "You don't have permission to read this template");
-    if (req.payload.updatedAt) {
-      if (tpl.updatedAt.toISOString() === req.payload.updatedAt) {
-        return "NOCHANGE";
+    if (req.payload.bwid && !tpl) {
+      return "MAYBE_LASTUPDATE_BY_YOUSELF";
+    } else {
+      if (
+        !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read"))
+      )
+        throw new EmpError("NO_PERM", "You don't have permission to read this template");
+      if (req.payload.checkUpdatedAt) {
+        if (tpl.updatedAt.toISOString() === req.payload.checkUpdatedAt) {
+          return "NOCHANGE";
+        }
       }
+      return tpl;
     }
-    return tpl;
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);

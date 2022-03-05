@@ -112,6 +112,7 @@ internals.endpoints = [
         payload: {
           doc: Joi.string().required(),
           tplid: Joi.string().optional(),
+          bwid: Joi.string().optional(),
         },
         validator: Joi,
       },
@@ -322,7 +323,8 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           tplid: Joi.string().required(),
-          updatedAt: Joi.string().optional(),
+          checkUpdatedAt: Joi.string().optional(),
+          bwid: Joi.string().optional(),
         },
         validator: Joi,
       },
