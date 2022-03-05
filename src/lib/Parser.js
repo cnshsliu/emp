@@ -533,7 +533,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
     } else if (rdsPart.startsWith("Q:")) {
       tmp = await Parser.getStaffByQuery(tenant, starter, rdsPart);
     } else if (rdsPart.startsWith("@")) {
-      let tmpEmail = rdsPart.substring(1);
+      let tmpEmail = rdsPart.substring(1).toLowerCase();
       let email = null;
       if (tmpEmail.indexOf("@") > 0) {
         email = tmpEmail;
