@@ -493,19 +493,19 @@ const WorkflowCheckStatus = async function (req, h) {
     if (!wf) {
       ret = "NOTFOUND";
     } else {
-      if (wf.updatedAt.toISOString() !== req.payload.updatedAt) {
-        ret["wfid"] = wf.wfid;
-        ret["nodeStatus"] = await Engine.getNodeStatus(wf);
-        ret["doc"] = wf.doc;
-        ret["routeStatus"] = await Route.find({
-          tenant: req.auth.credentials.tenant._id,
-          wfid: wf.wfid,
-        });
-        ret["updatedAt"] = wf.updatedAt;
-        ret["status"] = wf.status;
-      } else {
+      /* if (wf.updatedAt.toISOString() === req.payload.updatedAt) {
         ret = "NOCHANGE";
-      }
+      } else { */
+      ret["wfid"] = wf.wfid;
+      ret["nodeStatus"] = await Engine.getNodeStatus(wf);
+      ret["doc"] = wf.doc;
+      ret["routeStatus"] = await Route.find({
+        tenant: req.auth.credentials.tenant._id,
+        wfid: wf.wfid,
+      });
+      ret["updatedAt"] = wf.updatedAt;
+      ret["status"] = wf.status;
+      //}
       return ret;
     }
   } catch (err) {

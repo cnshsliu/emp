@@ -22,6 +22,8 @@ var RouteSchema = new Schema({
   from_nodeid: { type: String }, // 从那个node过来
   from_title: { type: String }, // 从那个node过来
   to_title: { type: String }, // 从那个node过来
+  from_nodetype: { type: String },
+  to_nodetype: { type: String },
   to_nodeid: { type: String }, //到哪个node
   from_workid: { type: String }, //从哪个work过来
   to_workid: { type: String }, //到哪个work

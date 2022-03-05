@@ -1000,10 +1000,8 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   for (let i = followingActions.length - 1; i >= 0; i--) {
     //let afw = followingWorks.eq(i);
     let afw = followingActions[i].work;
+    /*
     afw.removeClass(Engine.getStatusFromClass(afw)).addClass("ST_REVOKED");
-    /* if (comment) {
-      afw.append(`<div class="comment">${Parser.codeToBase64(comment)}</div>`);
-    } */
     await Todo.updateMany(
       { tenant: tenant, wfid: wfid, workid: afw.attr("id"), status: "ST_RUN" },
       { $set: { status: "ST_REVOKED" } }
@@ -1012,12 +1010,17 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       { tenant: tenant, wfid: wfid, workid: afw.attr("id"), status: "ST_RUN" },
       { $set: { status: "ST_REVOKED" } }
     );
-    await Route.deleteMany({
+    */
+    afw.remove();
+    await Todo.deleteMany({ tenant: tenant, wfid: wfid, workid: afw.attr("id") });
+    await Work.deleteMany({ tenant: tenant, wfid: wfid, workid: afw.attr("id") });
+    /* await Route.deleteMany({
       tenant: tenant,
       wfid: wfid,
+      from_workid: old_todo.workid,
       to_workid: afw.attr("id"),
       status: "ST_PASS",
-    });
+    }); */
     await KVar.deleteMany({
       tenant: tenant,
       wfid: wfid,
@@ -1418,6 +1421,8 @@ Client.yarkNode = async function (obj) {
   let tpNode = tpRoot.find(obj.selector);
   let fromNodeTitle = fromNode.find("p").text().trim();
   let tpNodeTitle = tpNode.find("p").text().trim();
+  let fromType = Client.getNodeType(fromNode);
+  let toType = Client.getNodeType(tpNode);
   if (tpNode.length < 1) {
     console.error(obj.selector, " not found, direct to #end");
     let an = {
@@ -1446,8 +1451,10 @@ Client.yarkNode = async function (obj) {
   let newRoute = new Route({
     tenant: obj.tenant,
     wfid: obj.wfid,
-    from_title: fromNodeTitle ? fromNodeTitle : Client.getNodeType(fromNode),
-    to_title: tpNodeTitle ? tpNodeTitle : Client.getNodeType(tpNode),
+    from_title: fromNodeTitle ? fromNodeTitle : fromType,
+    to_title: tpNodeTitle ? tpNodeTitle : toType,
+    from_nodetype: fromType,
+    to_nodetype: toType,
     from_nodeid: obj.from_nodeid,
     from_workid: obj.from_workid,
     to_nodeid: nodeid,
@@ -3022,7 +3029,8 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
 
   ret.routingOptions = Common.getRoutingOptions(tpRoot, todo.nodeid);
   ret.from_actions = Engine._getFromActions(tpRoot, wfRoot, workNode);
-  ret.following_actions = Engine._getFollowingActions(tpRoot, wfRoot, workNode);
+  //ret.following_actions = Engine._getFollowingActions(tpRoot, wfRoot, workNode);
+  ret.following_actions = await Engine._getRoutedWorks(tenant, tpRoot, wfRoot, workNode);
   ret.parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, workNode);
 
   if (todo.nodeid === "ADHOC") {
@@ -3050,9 +3058,10 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
 
     //revocable only when all following actions are RUNNING, NOT DONE.
     ret.revocable =
-      workNode.hasClass("ACTION") && ret.status === "ST_DONE" && all_following_are_running
-        ? true
-        : false;
+      workNode.hasClass("ACTION") &&
+      ret.status === "ST_DONE" &&
+      all_following_are_running &&
+      (await Engine.notRouteTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
   }
 
   ret.wf.history = await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
@@ -3219,7 +3228,113 @@ Engine._getFollowingActions = function (tpRoot, wfRoot, workNode, withWork = fal
   return ret;
 };
 
+Engine._getRoutedWorks = async function (
+  tenant,
+  tpRoot,
+  wfRoot,
+  workNode,
+  withWork = false,
+  level = 0
+) {
+  if (Tools.isEmpty(workNode)) return [];
+  let tplNodeId = workNode.attr("nodeid");
+  let workid = workNode.attr("id");
+  if (Tools.isEmpty(tplNodeId)) return [];
+  let ret = [];
+  let routes = await Route.find({
+    tenant: tenant,
+    wfid: wfRoot.attr("id"),
+    from_workid: workid,
+  });
+  for (let i = 0; i < routes.length; i++) {
+    let workSelector = `.work[id="${routes[i].to_workid}"]`;
+    let routedWork = workNode.nextAll(workSelector);
+    if (routedWork.length < 1) {
+      continue;
+    }
+    routedWork = routedWork.eq(0);
+    let st = Engine.getStatusFromClass(routedWork);
+    if (routedWork.hasClass("ACTION")) {
+      let action = {
+        nodeid: routedWork.attr("nodeid"),
+        workid: routedWork.attr("id"),
+        nodeType: "ACTION",
+        route: Tools.emptyThenDefault(routedWork.attr("route"), "DEFAULT"),
+        byroute: Tools.emptyThenDefault(routedWork.attr("byroute"), "DEFAULT"),
+        status: st,
+      };
+      withWork && (action["work"] = routedWork);
+      ret.push(action);
+    } else if (
+      st === "ST_DONE" &&
+      routedWork.hasClass("ACTION") === false &&
+      routedWork.hasClass("END") === false
+      //非END的逻辑节点
+    ) {
+      let action = {
+        nodeid: routedWork.attr("nodeid"),
+        workid: routedWork.attr("id"),
+        nodeType: Client.getNodeType(routedWork),
+        route: Tools.emptyThenDefault(routedWork.attr("route"), "DEFAULT"),
+        byroute: Tools.emptyThenDefault(routedWork.attr("byroute"), "DEFAULT"),
+        status: st,
+      };
+      withWork && (action["work"] = routedWork);
+      ret.push(action);
+      ret = ret.concat(
+        await Engine._getRoutedWorks(tenant, tpRoot, wfRoot, routedWork, withWork, level + 1)
+      );
+    }
+  }
+  return ret;
+};
+
 Engine._getParallelActions = function (tpRoot, wfRoot, workNode, level = 0) {
+  if (Tools.isEmpty(workNode)) return [];
+  let ret = [];
+  let parallel_id = workNode.attr("prl_id");
+  if (parallel_id) {
+    let workSelector = `.work[prl_id="${parallel_id}"]`;
+    let tmpWorks = wfRoot.find(workSelector);
+    for (let i = 0; i < tmpWorks.length; i++) {
+      let tmpWork = tmpWorks.eq(i);
+      let st = Engine.getStatusFromClass(tmpWork);
+      if (tmpWork.hasClass("ST_END") === false) {
+        ret.push({
+          nodeid: tmpWork.attr("nodeid"),
+          workid: tmpWork.attr("id"),
+          route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
+          byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
+          status: st,
+        });
+      }
+    }
+  }
+  return ret;
+};
+
+Engine.notRouteTo = async function (tenant, wfid, workid, checkType, dests) {
+  return !(await Engine.isRouteTo(tenant, wfid, workid, checkType, dests));
+};
+Engine.isRouteTo = async function (tenant, wfid, workid, checkType, dests) {
+  if (["NODETYPE", "WORKID", "NODEID"].includes(checkType) === false)
+    throw new EmpError("NOT_SUPPORT", "isRouteTo " + checkType);
+  let tmp = await Route.findOne({
+    tenant: tenant,
+    wfid: wfid,
+    from_workid: workid,
+    status: "ST_PASS",
+  });
+  if (checkType === "NODETYPE") {
+    return dests.includes(tmp.to_nodetype);
+  } else if (checkType === "WORKID") {
+    return dests.includes(tmp.to_workid);
+  } else if (checkType === "NODEID") {
+    return dests.includes(tmp.to_nodeid);
+  }
+};
+
+Engine._isOneBeforeAnd = function (tpRoot, wfRoot, workNode, level = 0) {
   if (Tools.isEmpty(workNode)) return [];
   let ret = [];
   let parallel_id = workNode.attr("prl_id");
@@ -4019,7 +4134,6 @@ Engine.getNodeStatus = async function (wf) {
       status: stClass,
     });
   });
-  console.log(ret);
   return ret;
 };
 
