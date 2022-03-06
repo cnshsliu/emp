@@ -1963,13 +1963,10 @@ Client.yarkNode = async function (obj) {
     if (await Work.findOne({ tenant: tenant, wfid: wf.wfid, nodeid: nodeid, round: thisRound })) {
       thisRound = thisRound + 1;
     }
-    wfRoot.append(
-      `<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${thisRound}"  at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`
-    );
-    let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode);
-    console.log(JSON.stringify(varsFromTemplateNode, null, 2));
-    await Parser.setVars(obj.tenant, obj.round, obj.wfid, workid, varsFromTemplateNode, "EMP");
-    //建立worklist中的work
+    //
+    //
+    //
+    // 整理 nodeTitle
     if (tpNodeTitle.length === 0) {
       tpNodeTitle = tpNode.text().trim();
       if (tpNodeTitle.length === 0) {
@@ -1979,37 +1976,60 @@ Client.yarkNode = async function (obj) {
     if (tpNodeTitle.indexOf("[") >= 0) {
       tpNodeTitle = await Parser.replaceStringWithKVar(tenant, tpNodeTitle, null, wf.wfid);
     }
+    //
+    //
+    //
+
+    let singleRunning = Tools.blankToDefault(tpNode.attr("sr"), "false") === "true";
+    //TODO: singleRunning
+    let existingRunningNodeWork = wfRoot.find(`.work.ST_RUN[nodeid="${nodeid}"]`);
+    if (!(singleRunning && existingRunningNodeWork.length > 0)) {
+      wfRoot.append(
+        `<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${thisRound}"  at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`
+      );
+    }
+    let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode);
+    console.log(JSON.stringify(varsFromTemplateNode, null, 2));
+    await Parser.setVars(obj.tenant, obj.round, obj.wfid, workid, varsFromTemplateNode, "EMP");
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
-    let newWork = new Work({
+    let existingSameNodeWorks = await Work.find({
       tenant: obj.tenant,
-      round: thisRound,
       wfid: wf.wfid,
-      workid: workid,
       nodeid: nodeid,
-      from_workid: from_workid,
-      from_nodeid: from_nodeid,
-      title: tpNodeTitle,
-      byroute: obj.byroute,
       status: "ST_RUN",
     });
-    await newWork.save();
-    await Engine.createTodo({
-      tenant: obj.tenant,
-      round: thisRound,
-      doer: doerOrDoers,
-      tplid: wf.tplid,
-      wfid: wf.wfid,
-      wftitle: wfRoot.attr("wftitle"),
-      starter: wfRoot.attr("starter"),
-      nodeid: nodeid,
-      workid: workid,
-      tpNodeTitle: tpNodeTitle,
-      comment: "",
-      byroute: obj.byroute,
-      transferable: transferable,
-      teamid: teamid,
-      rehearsal: wf.rehearsal,
-    });
+    if (!(singleRunning && existingSameNodeWorks.length > 0)) {
+      let newWork = new Work({
+        tenant: obj.tenant,
+        round: thisRound,
+        wfid: wf.wfid,
+        workid: workid,
+        nodeid: nodeid,
+        from_workid: from_workid,
+        from_nodeid: from_nodeid,
+        title: tpNodeTitle,
+        byroute: obj.byroute,
+        status: "ST_RUN",
+      });
+      await newWork.save();
+      await Engine.createTodo({
+        tenant: obj.tenant,
+        round: thisRound,
+        doer: doerOrDoers,
+        tplid: wf.tplid,
+        wfid: wf.wfid,
+        wftitle: wfRoot.attr("wftitle"),
+        starter: wfRoot.attr("starter"),
+        nodeid: nodeid,
+        workid: workid,
+        tpNodeTitle: tpNodeTitle,
+        comment: "",
+        byroute: obj.byroute,
+        transferable: transferable,
+        teamid: teamid,
+        rehearsal: wf.rehearsal,
+      });
+    }
   }
   wfUpdate["doc"] = wfIO.html();
 
@@ -3159,6 +3179,7 @@ const splitComment = function (str) {
  */
 Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, todo) {
   if (todo.rehearsal) email = todo.doer;
+  let tpNode = tpRoot.find("#" + todo.nodeid);
   let workNode = wfRoot.find("#" + todo.workid);
   let ret = {};
   ret.todoid = todo.todoid;
@@ -3181,6 +3202,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.from_workid = workNode.attr("from_workid");
   ret.from_nodeid = workNode.attr("from_nodeid");
   ret.doneat = workNode.attr("doneat");
+  ret.sr = tpNode.attr("sr");
   ret.transferable = todo.transferable;
   ret.role = workNode.attr("role");
   ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
