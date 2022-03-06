@@ -1353,6 +1353,7 @@ Client.setKVarFromString = async function (tenant, round, wfid, workid, setValue
     let kv = tmpArr[i].split("=");
     if (kv.length === 2) {
       let v = kv[1];
+      //去掉引号,如果有
       let m = v.match(/^"(.+)"$/);
       if (m) {
         v = m[1];
@@ -2129,6 +2130,9 @@ Common.getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) 
     let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
     if (routings.indexOf(option) < 0) routings.push(option);
   });
+  if (routings.length > 1 && routings.includes("DEFAULT")) {
+    routings = routings.filter((x) => x !== "DEFAULT");
+  }
   //前端会自动判断如果routings数组为空，则自动显示为一个按钮DONE
   //但前面一个注释掉的语句，不能放开注释
   //因为当除了DEFAULT以外，还有一个选项时，DEFAULT是需要出现的
@@ -2192,8 +2196,9 @@ Common.procNext = async function (
         routingOptionsInTemplate.toString()
     );
     console.error("route '" + JSON.stringify(route) + "' is replaced with DEFAULT");
-    routes = ["DEFAULT"];
+    foundRoutes = ["DEFAULT"];
   }
+  if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
   let parallel_number = 0;
   let parallel_id = uuidv4();
   //统计需要经过的路径的数量, 同时,运行路径上的变量设置
