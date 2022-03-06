@@ -19,6 +19,7 @@ var Mongoose = require("mongoose"),
 var RouteSchema = new Schema({
   tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
   wfid: { type: String, required: [true, "不能为空"], index: true },
+  round: { type: Number, default: 0 },
   from_nodeid: { type: String }, // 从那个node过来
   from_title: { type: String }, // 从那个node过来
   to_title: { type: String }, // 从那个node过来

@@ -18,6 +18,8 @@ var Mongoose = require("mongoose"),
 var KVarSchema = new Schema(
   {
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+    //TODO: KVar Round
+    round: { type: Number, default: 0 },
     wfid: { type: String, required: [true, "不能为空"] },
     objid: { type: String, required: [true, "不能为空"] },
     doer: { type: String, required: [true, "不能为空"] },

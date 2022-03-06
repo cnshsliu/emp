@@ -18,13 +18,14 @@ var Mongoose = require("mongoose"),
 //Same fields as Parse.com
 var CbPointSchema = new Schema(
   {
-    tenant: {type: Mongoose.Schema.Types.ObjectId, ref: "Tenant"},
-    tplid: {type: String, required: [true, "不能为空"], index: true},
-    wfid: {type: String, required: [true, "不能为空"], index: true},
-    nodeid: {type: String, required: [true, "不能为空"], index: true},
-    workid: {type: String, required: [true, "不能为空"], index: true},
+    tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+    tplid: { type: String, required: [true, "不能为空"], index: true },
+    wfid: { type: String, required: [true, "不能为空"], index: true },
+    nodeid: { type: String, required: [true, "不能为空"], index: true },
+    workid: { type: String, required: [true, "不能为空"], index: true },
+    round: { type: Number, default: 0 },
   },
-  {timestamps: true}
+  { timestamps: true }
 );
 var CbPoint = Mongoose.model("CbPoint", CbPointSchema);
 

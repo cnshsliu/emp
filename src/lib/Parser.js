@@ -407,7 +407,7 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   }
   return ret;
 };
-Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid) {
+Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid, newRound = -1) {
   let filter = { tenant: tenant, wfid: fromWfid, objid: fromObjid };
   let kvar = await KVar.findOne(filter);
   if (!kvar) {
@@ -416,6 +416,7 @@ Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid) 
   }
   let newKvar = new KVar({
     tenant: tenant,
+    round: newRound > -1 ? newRound : kvar.round,
     wfid: toWfid,
     objid: toObjid,
     doer: kvar.doer,
@@ -424,7 +425,7 @@ Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid) 
   newKvar = await newKvar.save();
   return newKvar;
 };
-Parser.setVars = async function (tenant, wfid, objid, newvars, doer) {
+Parser.setVars = async function (tenant, round, wfid, objid, newvars, doer) {
   if (JSON.stringify(newvars) === "{}") return;
   let oldVars = await Parser.sysGetVars(tenant, wfid, objid);
   for (const [name, valueDef] of Object.entries(newvars)) {
@@ -441,6 +442,7 @@ Parser.setVars = async function (tenant, wfid, objid, newvars, doer) {
   await KVar.deleteMany(filter);
   let kvar = new KVar({
     tenant: tenant,
+    round: round,
     wfid: wfid,
     objid: objid,
     doer: doer,

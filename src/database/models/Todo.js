@@ -19,6 +19,7 @@ var Mongoose = require("mongoose"),
 var TodoSchema = new Schema(
   {
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+    round: { type: Number, default: 0 },
     todoid: { type: String, required: [true, "不能为空"], index: true },
     wfid: { type: String, required: [true, "不能为空"], index: true },
     nodeid: { type: String, required: [true, "不能为空"], index: true },
