@@ -144,7 +144,17 @@ Client.formatRoute = function (route) {
  *
  * @return {...} true if the status of all previous nodes are ST_DONE, false if the status of any previous node is not ST_DONE
  */
-Common.checkAnd = async function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, route, nexts) {
+Common.checkAnd = async function (
+  tenant,
+  wfid,
+  round,
+  tpRoot,
+  wfRoot,
+  nodeid,
+  from_workid,
+  route,
+  nexts
+) {
   let ret = true;
   /*
   let route_param = route;
@@ -163,6 +173,7 @@ Common.checkAnd = async function (tenant, wfid, tpRoot, wfRoot, nodeid, from_wor
   let routeFilter = {
     tenant: tenant,
     wfid: wfid,
+    round,
     from_nodeid: { $in: fromNodeIds },
     to_nodeid: nodeid,
     status: "ST_PASS",
@@ -1658,6 +1669,7 @@ Client.yarkNode = async function (obj) {
     let andDone = await Common.checkAnd(
       obj.tenant,
       obj.wfid,
+      obj.round,
       tpRoot,
       wfRoot,
       nodeid,
