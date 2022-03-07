@@ -60,6 +60,7 @@ const TemplateCreate = async function (req, h) {
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
+    let myUid = myEmail.substring(0, myEmail.indexOf("@"));
     let myGroup = await Cache.getMyGroup(myEmail);
     let author = myEmail;
     let authorName = req.auth.credentials.username;
@@ -89,6 +90,7 @@ const TemplateCreate = async function (req, h) {
       //bdoc: bdoc,
       desc: desc ? desc : "",
       tags: theTags,
+      visi: "@" + myUid,
     });
     obj = await obj.save();
     return h.response(obj);
@@ -405,6 +407,8 @@ const TemplateCopyto = async function (req, h) {
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let me = await User.findOne({ _id: req.auth.credentials._id });
     let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myUid = myEmail.substring(0, myEmail.indexOf("@"));
     let filter = { tenant: tenant, tplid: req.payload.fromid };
     let new_tplid = req.payload.tplid;
     let oldTpl = await Template.findOne(filter);
@@ -416,6 +420,7 @@ const TemplateCopyto = async function (req, h) {
       doc: oldTpl.doc,
       ins: oldTpl.ins,
       tags: oldTpl.tags,
+      visi: "@" + myUid,
     });
     newObj = await newObj.save();
 
