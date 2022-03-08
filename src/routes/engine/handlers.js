@@ -1647,7 +1647,10 @@ const TemplateSetAuthor = async function (req, h) {
 
     let tplid = req.payload.tplid;
 
-    let toWhomEmail = Tools.makeEmailSameDomain(req.payload.author, myEmail);
+    let newAuthorPrefix = req.payload.author.trim();
+    if (newAuthorPrefix.length > 0 && newAuthorPrefix[0] === "@")
+      newAuthorPrefix = newAuthorPrefix.substring(1);
+    let toWhomEmail = Tools.makeEmailSameDomain(newAuthorPrefix, myEmail);
     let newOwner = await User.findOne({ tenant: tenant, email: toWhomEmail });
     if (!newOwner) {
       throw new EmpError("NO_USER", `User ${toWhomEmail} not found`);
