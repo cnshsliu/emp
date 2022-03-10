@@ -276,7 +276,7 @@ internals.endpoints = [
             username: Joi.string().regex(EmpConfig.validation.username).optional(),
             password: Joi.string().regex(EmpConfig.validation.password).optional(),
             ew: Joi.boolean().optional(),
-            ps: Joi.number().min(10).max(100).optional(),
+            ps: Joi.number().min(5).max(100).optional(),
           },
           old_password: Joi.string().regex(EmpConfig.validation.password).required(),
         },
