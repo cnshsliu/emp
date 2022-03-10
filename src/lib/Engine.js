@@ -3097,7 +3097,10 @@ Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
   filter.tenant = tenant;
   let option = {};
   if (sortdef) option.sort = sortdef;
-  let wfs = await Workflow.find(filter, { doc: 0 }, option);
+  let wfs = await Workflow.find(filter, { doc: 0 }, option).lean();
+  for (let i = 0; i < wfs.length; i++) {
+    wfs[i].starterCN = await Cache.getUserName(wfs[i].starter);
+  }
   return wfs;
 };
 

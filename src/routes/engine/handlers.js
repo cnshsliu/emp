@@ -1022,7 +1022,6 @@ const WorkflowSearch = async function (req, h) {
       //因为,流程的启动者,也许刚好工作都是丢给别人的
       if (WfsIamIn.length === 0) {
         filter.starter = myEmail;
-        //return { total: 0, objs: [] };
       } else {
         //如果有相关todo与template相关,
         //则需要同时考虑todo相关 和 starter相关
@@ -1036,20 +1035,21 @@ const WorkflowSearch = async function (req, h) {
     console.log(
       `[Workflow Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
     );
-    /* let total = await Workflow.find(filter).countDocuments();
-    let ret = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit); */
 
     let allObjs = await Workflow.find(filter, { doc: 0 });
     allObjs = await asyncFilter(allObjs, async (x) => {
       return await Engine.checkVisi(tenant, x.tplid, myEmail);
     });
     let total = allObjs.length;
-    let ret = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit);
-    ret = await asyncFilter(ret, async (x) => {
+    let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
+    retObjs = await asyncFilter(retObjs, async (x) => {
       return await Engine.checkVisi(tenant, x.tplid, myEmail);
     });
 
-    return { total, objs: ret };
+    for (let i = 0; i < retObjs.length; i++) {
+      retObjs[i].starterCN = await Cache.getUserName(retObjs[i].starter);
+    }
+    return { total, objs: retObjs };
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
