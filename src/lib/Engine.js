@@ -1045,6 +1045,8 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
     from_workid: old_todo.workid,
     //status: "ST_PASS",
   });
+  //delete old_todo related kvars
+  await KVar.deleteMany({ tenant: tenant, wfid: wfid, objid: old_todo.workid });
 
   //Clone worknode
   let clone_workNode = workNode.clone();
@@ -1264,7 +1266,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 
   let fromWorks = await Engine._getFromActionsWithRoutes(tenant, tpRoot, wfRoot, workNode);
   for (let i = 0; i < fromWorks.length; i++) {
-    let prevWorkid = fromWorks[i].prevWorkid;
+    let prevWorkid = fromWorks[i].workid;
     console.log(prevWorkid, fromWorks[i].nodeType);
     //await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid, status: "ST_PASS" });
     await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid });
