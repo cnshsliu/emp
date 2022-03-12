@@ -1364,17 +1364,16 @@ Client.setKVarFromString = async function (tenant, round, wfid, workid, setValue
   let kvObj = {};
   for (let i = 0; i < tmpArr.length; i++) {
     let kv = tmpArr[i].split("=");
-    if (kv.length === 2) {
-      let v = kv[1];
+    if (kv.length === 2 && kv[0].trim() && kv[1].trim()) {
+      let v = kv[1].trim();
       //去掉引号,如果有
       let m = v.match(/^"(.+)"$/);
       if (m) {
         v = m[1];
       }
-      kvObj[kv[0]] = v;
+      kvObj[kv[0].trim()] = v;
     }
   }
-  console.log("kvObj=", kvObj);
   await Parser.setVars(tenant, round, wfid, workid, kvObj, "EMP");
 };
 
