@@ -221,11 +221,9 @@ internals.getVisi = async function (tplid) {
   debugger;
   let visiKey = "visi_" + tplid;
   let visiPeople = await asyncRedisClient.get(visiKey);
-  debugger;
   return visiPeople;
 };
 internals.setVisi = async function (tplid, visiPeople) {
-  debugger;
   let visiKey = "visi_" + tplid;
   if (visiPeople.length > 0) {
     await asyncRedisClient.set(visiKey, visiPeople);

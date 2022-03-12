@@ -111,6 +111,7 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           doc: Joi.string().required(),
+          lastUpdatedAt: Joi.string(),
           tplid: Joi.string().optional(),
           bwid: Joi.string().optional(),
         },

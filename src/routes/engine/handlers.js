@@ -282,23 +282,28 @@ const TemplatePut = async function (req, h) {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let tenant = req.auth.credentials.tenant._id;
+    let lastUpdatedAt = req.payload.lastUpdatedAt;
     let myEmail = req.auth.credentials.email;
     if (Tools.isEmpty(req.payload.doc)) {
       throw new EmpError("NO_CONTENT", "Template content can not be empty");
     }
     let tplid = req.payload.tplid;
+    let bwid = req.payload.bwid;
     if (Tools.isEmpty(tplid)) {
       throw new EmpError("NO_TPLID", "Template id can not be empty");
     }
     let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
     if (obj) {
+      if (obj.updatedAt.toISOString() !== lastUpdatedAt) {
+        throw new EmpError("CHECK_LASTUPDATEDAT_FAILED", "Editted by other or in other window");
+      }
       //let bdoc = await Tools.zipit(req.payload.doc, {});
       let filter = { tenant: tenant, tplid: tplid },
         update = {
           $set: {
             doc: req.payload.doc,
             lastUpdateBy: myEmail,
-            lastUpdateBwid: req.payload.bwid,
+            lastUpdateBwid: bwid,
           },
         },
         options = { upsert: false, new: true };
