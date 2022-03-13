@@ -677,7 +677,7 @@ const WorkflowRemoveAttachment = async function (req, h) {
     let filter = { tenant: tenant, wfid: wfid };
     let wf = await Workflow.findOne(filter);
 
-    let me = await User.findOne({ email: email }).populate("tenant").lean();
+    let me = await User.findOne({ tenant: tenant, email: email }).populate("tenant").lean();
     let canDeleteAll = false;
     let isAdmin = false;
     try {
@@ -3172,6 +3172,40 @@ const GetTodosByWorkid = async function (req, h) {
   }
 };
 
+const TodoSetDoer = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("NOT_ADMIN", "Only Administrators can change doer");
+    }
+    let todoid = req.payload.todoid;
+    let doer = req.payload.doer;
+    let newDoer = req.payload.newdoer;
+    let forAll = req.payload.forall;
+    if (newDoer[0] === "@") newDoer = newDoer.substring(1);
+    if (newDoer.indexOf("@") > 0) newDoer = newDoer.substring(0, newDoer.indexOf("@"));
+    let newDoerEmail = Tools.makeEmailSameDomain(newDoer, myEmail);
+    let newDoerObj = await User.findOne({ tenant: tenant, email: newDoerEmail });
+    if (!newDoerObj) {
+      throw new EmpError("NO_USER", `User ${toWhomEmail} not found`);
+    }
+
+    let filter = { tenant: tenant, todoid: todoid, doer: doer, status: "ST_RUN" };
+    if (forAll) {
+      filter = { tenant: tenant, doer: doer, status: "ST_RUN" };
+    }
+
+    await Todo.updateMany(filter, { $set: { doer: newDoerEmail } });
+
+    return h.response({ newdoer: newDoerEmail, newcn: await Cache.getUserName(newDoerEmail) });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const ListSet = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -3548,6 +3582,7 @@ module.exports = {
   GetCallbackPoints,
   GetLatestCallbackPoint,
   GetTodosByWorkid,
+  TodoSetDoer,
   ListSet,
   ListList,
   ListDelListOrKey,

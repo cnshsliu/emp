@@ -2117,6 +2117,28 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/todo/set/doer",
+    handler: Handlers.TodoSetDoer,
+    config: {
+      description: "Set new doer for todos",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          todoid: Joi.string().required(),
+          doer: Joi.string().required(),
+          newdoer: Joi.string().required(),
+          forall: Joi.boolean().default("false"),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/list/set",
     handler: Handlers.ListSet,
     config: {
