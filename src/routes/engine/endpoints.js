@@ -119,6 +119,25 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/template/editlog",
+    handler: Handlers.TemplateEditLog,
+    config: {
+      description: "Get  template edit log",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().optional(),
+        },
+        validator: Joi,
+      },
+    },
+  },
   /* {
     method: "POST",
     path: "/template/list",

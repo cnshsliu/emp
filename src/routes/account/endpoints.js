@@ -278,7 +278,7 @@ internals.endpoints = [
             ew: Joi.boolean().optional(),
             ps: Joi.number().min(5).max(100).optional(),
           },
-          old_password: Joi.string().regex(EmpConfig.validation.password).required(),
+          old_password: Joi.string().allow("").regex(EmpConfig.validation.password).optional(),
         },
         validator: Joi,
       },

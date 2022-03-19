@@ -336,6 +336,24 @@ const TemplatePut = async function (req, h) {
   }
 };
 
+const TemplateEditLog = async function (req, h) {
+  try {
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+
+    let filter = { tenant: tenant, objtype: "Template", objid: tplid };
+    return h.response(
+      await EdittingLog.find(filter, { editor: 1, editorName: 1, updatedAt: 1 }).lean()
+    );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 /**
  * Rename Template from tplid: fromid to tplid: tplid
  */
@@ -3508,6 +3526,7 @@ module.exports = {
   TemplateClearVisi,
   TemplateSetAuthor,
   TemplateSetPboAt,
+  TemplateEditLog,
   WorkflowRead,
   WorkflowCheckStatus,
   WorkflowRoutes,

@@ -536,9 +536,6 @@ internals.UpdateProfile = async function (req, h) {
   try {
     let tenant_id = req.auth.credentials.tenant._id;
     let user = await User.findById(req.auth.credentials._id);
-    if (Crypto.decrypt(user.password) != req.payload.old_password) {
-      throw new EmpError("wrong_password", "You are using a wrong password");
-    }
     let tenant = await Tenant.findOne({ _id: tenant_id });
     let v = req.payload.value;
     if (v.avatar) {
@@ -552,6 +549,9 @@ internals.UpdateProfile = async function (req, h) {
       await Cache.setUserName(user.email, v.username);
     }
     if (v.password) {
+      if (Crypto.decrypt(user.password) != req.payload.old_password) {
+        throw new EmpError("wrong_password", "You are using a wrong password");
+      }
       user.password = Crypto.encrypt(v.password);
     }
     if (v.ew !== undefined && v.ew !== user.ew) {
