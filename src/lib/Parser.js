@@ -136,7 +136,11 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
  * @return {...}
  */
 Parser.sysGetVars = async function (tenant, wfid, objid, doers = [], notdoers = []) {
-  return await Parser.userGetVars(tenant, "EMP", wfid, objid, doers, notdoers);
+  return await Parser._GetVars(tenant, "any", "EMP", wfid, objid, doers, notdoers);
+};
+
+Parser.sysGetEfficientVars = async function (tenant, wfid, objid, doers = [], notdoers = []) {
+  return await Parser._GetVars(tenant, "any", "EMP", wfid, objid, doers, notdoers);
 };
 
 /**
@@ -148,6 +152,9 @@ Parser.sysGetVars = async function (tenant, wfid, objid, doers = [], notdoers = 
  * @param {...} notdoers = [] -
  */
 Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], notdoers = []) {
+  return await Parser._GetVars(tenant, "any", forWhom, wfid, objid, doers, notdoers);
+};
+Parser._GetVars = async function (tenant, eff, forWhom, wfid, objid, doers = [], notdoers = []) {
   if (typeof wfid !== "string") {
     debugger;
     console.trace("wfid should be a string");
@@ -169,6 +176,9 @@ Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], n
     filter = { tenant: tenant, wfid: wfid };
   } else {
     filter = { tenant: tenant, wfid: wfid, objid: objid };
+  }
+  if (eff.toLowerCase() !== "any") {
+    filter["eff"] = eff.toLowerCase();
   }
   let kvars = await KVar.find(filter).sort("createdAt");
   for (let i = 0; i < kvars.length; i++) {
@@ -407,7 +417,16 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   }
   return ret;
 };
-Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid, newRound = -1) {
+Parser.copyVars = async function (
+  tenant,
+  fromWfid,
+  fromNodeid,
+  fromObjid,
+  toWfid,
+  toNodeid,
+  toObjid,
+  newRound = -1
+) {
   let filter = { tenant: tenant, wfid: fromWfid, objid: fromObjid };
   let kvar = await KVar.findOne(filter);
   if (!kvar) {
@@ -418,14 +437,16 @@ Parser.copyVars = async function (tenant, fromWfid, fromObjid, toWfid, toObjid, 
     tenant: tenant,
     round: newRound > -1 ? newRound : kvar.round,
     wfid: toWfid,
+    nodeid: toNodeid,
     objid: toObjid,
     doer: kvar.doer,
     content: kvar.content,
+    eff: kvar.eff,
   });
   newKvar = await newKvar.save();
   return newKvar;
 };
-Parser.setVars = async function (tenant, round, wfid, objid, newvars, doer) {
+Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, doer) {
   if (JSON.stringify(newvars) === "{}") return;
   let oldVars = await Parser.sysGetVars(tenant, wfid, objid);
   for (const [name, valueDef] of Object.entries(newvars)) {
@@ -444,9 +465,11 @@ Parser.setVars = async function (tenant, round, wfid, objid, newvars, doer) {
     tenant: tenant,
     round: round,
     wfid: wfid,
+    nodeid: nodeid,
     objid: objid,
     doer: doer,
     content: base64_vars_string,
+    eff: "yes",
   });
   kvar = await kvar.save();
 

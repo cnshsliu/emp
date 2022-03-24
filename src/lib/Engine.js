@@ -223,7 +223,7 @@ Common.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, ro
   } else {
     /*
      * ParallelAction仅包含相同Route指向的节点，此时，OR之前的节点可能由于Route不同，而导致ParallelAction
-     * 只有一个，导致在procNext中不会设置 parallel_id
+     * 只有一个，导致在ProcNext中不会设置 parallel_id
      * 然后 _getParallelActions返回数组元素数为0
      */
     ret = true;
@@ -350,7 +350,7 @@ Common.__getFutureSecond = function (wfRoot, delayString) {
 };
 
 /**
- * Common.checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并procNext
+ * Common.checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
  *
  * @param {...}
  *
@@ -382,7 +382,7 @@ Common.checkDelayTimer = async function () {
       let timerWorkNode = wfRoot.find(`#${delayTimers[i].workid}`);
       //将节点状态改为ST_DONE
       timerWorkNode.removeClass("ST_RUN").addClass("ST_DONE");
-      //procNext, 后续节点在nexts
+      //ProcNext, 后续节点在nexts
       await Common.procNext(
         delayTimers[i].tenant,
         delayTimers[i].teamid,
@@ -592,6 +592,7 @@ Engine.__doneTodo = async function (
 ) {
   if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
   let isoNow = Tools.toISOString(new Date());
+  let nodeid = todo.nodeid;
   if (Tools.isEmpty(todo)) {
     throw new EmpError("WORK_NOT_EXIST", "Todo not exist", {
       wfid,
@@ -615,7 +616,6 @@ Engine.__doneTodo = async function (
     todo.decision = userDecision;
   }
 
-  let nodeid = todo.nodeid;
   let wf_filter = { tenant: tenant, wfid: todo.wfid };
   let wf = await Workflow.findOne(wf_filter);
   if (Tools.isEmpty(wf.wftitle)) {
@@ -767,7 +767,9 @@ Engine.__doneTodo = async function (
     workNode.addClass("ST_DONE");
     workNode.attr("decision", workDecision);
     workNode.attr("doneat", isoNow);
-    await Parser.setVars(tenant, todo.round, todo.wfid, todo.workid, kvars, doer);
+    //place todo decision into kvars;
+    kvars["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: workDecision };
+    await Parser.setVars(tenant, todo.round, todo.wfid, todo.nodeid, todo.workid, kvars, doer);
     if (workNode.hasClass("ADHOC") === false) {
       await Common.procNext(
         tenant,
@@ -928,7 +930,7 @@ Engine.doCallback = async function (cbp, payload) {
   workNode.addClass("ST_DONE");
   workNode.attr("doneat", isoNow);
   if (payload.kvars) {
-    await Parser.setVars(tenant, cbp.round, cbp.wfid, cbp.workid, payload.kvars, "EMP");
+    await Parser.setVars(tenant, cbp.round, cbp.wfid, cbp.nodeid, cbp.workid, payload.kvars, "EMP");
   }
 
   let nexts = [];
@@ -980,6 +982,7 @@ Engine.doCallback = async function (cbp, payload) {
  * @return {...}
  */
 Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
+  // 先找到当前的TODO
   let old_todo = await Todo.findOne({ todoid: todoid, status: "ST_DONE" });
   if (Tools.isEmpty(old_todo)) {
     throw new EmpError("WORK_NOT_REVOCABLE", "Todo ST_DONE does not exist", { wfid, todoid });
@@ -1030,6 +1033,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       { $set: { status: "ST_REVOKED" } }
     );
     */
+    //删除following works
     afw.remove();
     await Todo.deleteMany({ tenant: tenant, wfid: wfid, workid: afw.attr("id") });
     await Work.deleteMany({ tenant: tenant, wfid: wfid, workid: afw.attr("id") });
@@ -1039,6 +1043,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       objid: afw.attr("id"),
     });
   }
+  //删除routings
   await Route.deleteMany({
     tenant: tenant,
     wfid: wfid,
@@ -1048,7 +1053,18 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   //delete old_todo related kvars
   await KVar.deleteMany({ tenant: tenant, wfid: wfid, objid: old_todo.workid });
 
-  //Clone worknode
+  //把已经存在的work，todo的状态全部设置为ST_REVOKED
+  workNode.removeClass("ST_DONE").removeClass("ST_IGNORE").addClass("ST_REVOKED");
+  await Todo.updateMany(
+    { tenant: tenant, wfid: wfid, workid: old_todo.workid },
+    { $set: { status: "ST_REVOKED" } }
+  );
+  await Work.updateMany(
+    { tenant: tenant, wfid: wfid, workid: old_todo.workid },
+    { $set: { status: "ST_REVOKED" } }
+  );
+  //
+  //Clone worknode  为Running
   let clone_workNode = workNode.clone();
   let clone_workid = uuidv4();
   clone_workNode.attr("id", clone_workid);
@@ -1307,7 +1323,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
       { $set: { comment: comment } }
     );
   }
-  await Parser.setVars(tenant, todo.round, todo.wfid, todo.workid, kvars, fact_doer);
+  await Parser.setVars(tenant, todo.round, todo.wfid, todo.nodeid, todo.workid, kvars, fact_doer);
 
   if (nexts.length > 0) {
     wfUpdate["pnodeid"] = nexts[0].from_nodeid;
@@ -1358,7 +1374,7 @@ Common.getEmailRecipientsFromDoers = function (doers) {
   return ret;
 };
 
-Client.setKVarFromString = async function (tenant, round, wfid, workid, setValueString) {
+Client.setKVarFromString = async function (tenant, round, wfid, nodeid, workid, setValueString) {
   let tmpArr = setValueString.split(";");
   tmpArr = tmpArr.map((x) => x.trim());
   let kvObj = {};
@@ -1374,7 +1390,7 @@ Client.setKVarFromString = async function (tenant, round, wfid, workid, setValue
       kvObj[kv[0].trim()] = v;
     }
   }
-  await Parser.setVars(tenant, round, wfid, workid, kvObj, "EMP");
+  await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP");
 };
 
 Client.getNodeType = function (jq) {
@@ -1577,20 +1593,20 @@ Client.yarkNode = async function (obj) {
     console.log("===PARSED==");
     console.log(parsed_code);
     console.log("===========");
-    let all_kvars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
-    if (JSON.stringify(all_kvars) === "{}") {
-      console.error("all_kvars got {}, something must be wrong");
+    let all_efficient_kvars = await Parser.sysGetEfficientVars(obj.tenant, obj.wfid, "workflow");
+    if (JSON.stringify(all_efficient_kvars) === "{}") {
+      console.error("all_efficient_kvars got {}, something must be wrong");
     }
     let codeRetString = '{"RET":"DEFAULT"}';
     let codeRetObj = {};
-    let codeRetRoute = "DEFAULT";
+    let codeRetDecision = "DEFAULT";
     let runInSyncMode = true;
     let innerTeamSet = "";
     if (tpNode.attr("runmode") === "ASYNC") {
       runInSyncMode = false;
     }
     try {
-      codeRetString = await Client.runCode(obj.tenant, obj.wfid, all_kvars, parsed_code);
+      codeRetString = await Client.runCode(obj.tenant, obj.wfid, all_efficient_kvars, parsed_code);
       console.log("[Workflow SCPT] return: ", codeRetString);
     } catch (e) {
       codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
@@ -1600,7 +1616,7 @@ Client.yarkNode = async function (obj) {
       //先尝试解析JSON
       codeRetObj = JSON.parse(codeRetString);
       if (codeRetObj["RET"] !== undefined) {
-        codeRetRoute = codeRetObj["RET"];
+        codeRetDecision = codeRetObj["RET"];
       }
       if (codeRetObj["USE_TEAM"] !== undefined) {
         teamid = codeRetObj["USE_TEAM"];
@@ -1612,7 +1628,7 @@ Client.yarkNode = async function (obj) {
       //如果JSON解析失败，则表示是一个简单字符串
       //console.log(e);
       codeRetObj = {};
-      codeRetRoute = codeRetString;
+      codeRetDecision = codeRetString;
     }
     //Get a clean KVAR array
     //Script运行结束后，下面这些vars不需要被记录在节点上
@@ -1628,7 +1644,7 @@ Client.yarkNode = async function (obj) {
     }
     if (runInSyncMode) {
       wfRoot.append(
-        `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
+        `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`
       );
       await Common.procNext(
         obj.tenant,
@@ -1639,7 +1655,7 @@ Client.yarkNode = async function (obj) {
         wfRoot,
         nodeid,
         workid,
-        codeRetRoute, //SCRIPT后面的连接是SCRIPT的返回
+        codeRetDecision, //SCRIPT后面的连接是SCRIPT的返回
         nexts,
         obj.round,
         obj.rehearsal,
@@ -1647,11 +1663,12 @@ Client.yarkNode = async function (obj) {
       );
     } else {
       wfRoot.append(
-        `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetRoute}${innerTeamToAdd}</div>`
+        `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`
       );
-      //异步回调不会调用procNext， 而是新建一个Callback Point
+      //异步回调不会调用ProcNext， 而是新建一个Callback Point
       //需要通过访问callbackpoint，来推动流程向后运行
       //TODO: round in CbPoint, and callback placeround
+      //TODO: codeRetDecision should be a property of CbPoint
       let cbp = new CbPoint({
         tenant: obj.tenant,
         tplid: obj.tplid,
@@ -1663,8 +1680,9 @@ Client.yarkNode = async function (obj) {
       await cbp.save();
     }
     //设置通过kvar()方法设置的进程参数
+    codeRetObj["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: codeRetDecision };
     if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
-      await Parser.setVars(tenant, obj.round, obj.wfid, workid, codeRetObj, "EMP");
+      await Parser.setVars(tenant, obj.round, obj.wfid, nodeid, workid, codeRetObj, "EMP");
     }
   } else if (tpNode.hasClass("AND")) {
     let andDone = await Common.checkAnd(
@@ -1901,7 +1919,7 @@ Client.yarkNode = async function (obj) {
       let parent_tpRoot = parent_wfIO(".template");
       let parent_wfRoot = parent_wfIO(".workflow");
       let parent_work = parent_wfRoot.find(`#${parent_workid}`);
-      let parent_node_id = Cheerio(parent_work).attr("nodeid");
+      let parent_nodeid = Cheerio(parent_work).attr("nodeid");
       let parent_work_round = Cheerio(parent_work).attr("round");
       //TODO: workflow work round
 
@@ -1913,6 +1931,7 @@ Client.yarkNode = async function (obj) {
         obj.tenant,
         parent_work_round,
         parent_wfid,
+        parent_nodeid,
         parent_workid,
         child_kvars,
         "EMP"
@@ -1928,7 +1947,7 @@ Client.yarkNode = async function (obj) {
         parent_wfid,
         parent_tpRoot,
         parent_wfRoot,
-        parent_node_id,
+        parent_nodeid,
         parent_workid,
         child_route,
         parent_nexts,
@@ -2002,8 +2021,16 @@ Client.yarkNode = async function (obj) {
       );
     }
     let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode);
-    console.log(JSON.stringify(varsFromTemplateNode, null, 2));
-    await Parser.setVars(obj.tenant, obj.round, obj.wfid, workid, varsFromTemplateNode, "EMP");
+    //console.log(JSON.stringify(varsFromTemplateNode, null, 2));
+    await Parser.setVars(
+      obj.tenant,
+      obj.round,
+      obj.wfid,
+      nodeid,
+      workid,
+      varsFromTemplateNode,
+      "EMP"
+    );
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
     let existingSameNodeWorks = await Work.find({
       tenant: obj.tenant,
@@ -2194,15 +2221,22 @@ Common.procNext = async function (
   wfRoot,
   this_nodeid,
   this_workid,
-  route,
+  decision,
   nexts,
   round,
   rehearsal,
   starter
 ) {
-  let route_param = route;
   let linkSelector = '.link[from="' + this_nodeid + '"]';
   let routingOptionsInTemplate = [];
+  ////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////
+  //原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
+  //但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
+  //let defiedNodes = [];
+  //await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
+  ////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////
   let linksInTemplate = tpRoot.find(linkSelector);
   tpRoot.find(linkSelector).each(function (i, el) {
     //SEE HERE
@@ -2216,21 +2250,26 @@ Common.procNext = async function (
     //See last SEE HERE comment
     return;
   }
-  routes = Client.formatRoute(route);
+  //routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
+  //也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
+  let routes = Client.formatRoute(decision);
   if (Array.isArray(routes) === false) {
-    routes = [route];
+    routes = [decision];
   }
+
+  //把模版中的后续decision和ProcNext的decision数组进行交集
   let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
   if (foundRoutes.length === 0) {
     console.error(
-      "route '" +
-        JSON.stringify(route) +
+      "decision '" +
+        JSON.stringify(decision) +
         "' not found in linksInTemplate " +
         routingOptionsInTemplate.toString()
     );
-    console.error("route '" + JSON.stringify(route) + "' is replaced with DEFAULT");
+    console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
     foundRoutes = ["DEFAULT"];
   }
+  //确保DEFAULT始终存在
   if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
   let parallel_number = 0;
   let parallel_id = uuidv4();
@@ -2242,19 +2281,22 @@ Common.procNext = async function (
     let linkObj = Cheerio(el);
     let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
     if (foundRoutes.includes(option)) {
+      //将要被执行的路径
       foundNexts.push({
         option: option,
         toid: linkObj.attr("to"),
       });
       //相同option的后续节点的个数
       parallel_number++;
+      //路径上是否定义了设置值
       let setValue = linkObj.attr("set");
       if (setValue) {
         //设置路径上的变量
         setValue = Parser.base64ToCode(setValue);
-        Client.setKVarFromString(tenant, round, wfid, this_workid, setValue);
+        Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
       }
     } else {
+      //需要被忽略的路径
       ignoredNexts.push({
         option: option,
         toid: linkObj.attr("to"),
@@ -2303,7 +2345,6 @@ Common.procNext = async function (
     return x.from_workid;
   });
   */
-  //TODO: round???
   let backPath = [];
   let roundDoneWorks = [];
   let allDoneWorks = [];
@@ -2332,6 +2373,41 @@ Common.procNext = async function (
     );
   }
 };
+
+Engine.defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId, defiedNodes) {
+  if (defiedNodes.includes(afterThisNodeId)) return;
+  defiedNodes.push(afterThisNodeId);
+  let nextNodeIds = await Engine.getNextNodeIds(tpRoot, afterThisNodeId);
+  let tmp2 = await Route.find({ tenant: tenant, wfid: wfid }, { _id: 0, from_nodeid: 1 }).lean();
+  tmp2 = tmp2.map((x) => x.from_nodeid);
+  let tobeDefiedNodeIds = lodash.intersection(tmp2, nextNodeIds);
+  //console.log(JSON.stringify(tobeDefiedNodeIds, null, 2));
+
+  if (tobeDefiedNodeIds.length > 0) {
+    //Defy nodes kvars
+    let filter = {
+      tenant: tenant,
+      wfid: wfid,
+      nodeid: { $in: tobeDefiedNodeIds },
+    };
+    await KVar.updateMany(filter, { $set: { eff: "no" } });
+    //run deep further
+    for (let i = 0; i < tobeDefiedNodeIds.length; i++) {
+      await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, tobeDefiedNodeIds[i], defiedNodes);
+    }
+  }
+};
+
+Engine.getNextNodeIds = async function (tpRoot, nodeid) {
+  let ret = [];
+  let linkSelector = '.link[from="' + nodeid + '"]';
+  tpRoot.find(linkSelector).each(function (i, el) {
+    let nextToNodeId = Cheerio(el).attr("to");
+    ret.push(nextToNodeId);
+  });
+  return ret;
+};
+
 Engine.clearFollowingDoneRoute = async function (
   tenant,
   wfid,
@@ -2349,6 +2425,8 @@ Engine.clearFollowingDoneRoute = async function (
 };
 
 //TODO: ignoreRoute with round???!!!
+//添加ST_INGORED类型的route，用于标志在当前round下，哪些route即便被执行过，也要专门建立一个ST_INGORED类型的route，以便前端显示route状态。
+//之前的route不删除，否则影响运行，ingoreROute更多的作用只是用于标记route前端显示
 Engine.ignoreRoute = async function (
   tenant,
   wfid,
@@ -2391,6 +2469,7 @@ Engine.ignoreRoute = async function (
   anIgnoredRoute = await anIgnoredRoute.save();
   let continueIgnore = false;
   if (
+    //这些类型的node有Decision值
     ["ACTION", "SCRIPT", "TIMER", "INFORM"].includes(toType) &&
     allDoneWorks.filter((x) => x.nodeid === toNodeId).length < 1
   ) {
@@ -2721,6 +2800,9 @@ const kvalue = function(key){
        }
     }
 }
+const MtcGet = function(key){
+  return kvalue(key);
+}
 const kvar = function(key, value, label){
   if(retkvars[key] !== undefined){
     retkvars[key].value = value;
@@ -2729,6 +2811,15 @@ const kvar = function(key, value, label){
   }else{
     retkvars[key] = {value:value, label: label?label:key };
   }
+}
+const MtcSet = function(key, value, label){
+  kvar(key, value, label);
+}
+const MtcGetDecision=function(nodeid){
+  return MtcGet("$decision_" + nodeid);
+}
+const MtcSetDecision=function(nodeid, value){
+  return MtcSet("$decision_"+ nodeid, value, "Decision of "+nodeid);
 }
 async function runcode() {
   try{
@@ -2890,7 +2981,7 @@ Engine.startWorkflow = async function (
   wf.attachments = attachments;
   wf = await wf.save();
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
-  await Parser.setVars(tenant, 0, wfid, "workflow", parent_vars, "EMP");
+  await Parser.setVars(tenant, 0, wfid, "parent", "workflow", parent_vars, "EMP");
   let an = {
     CMD: "yarkNode",
     tenant: tenant,
@@ -3019,7 +3110,7 @@ Engine.restartWorkflow = async function (
   });
   wf.attachments = await Engine.getPbo(old_wf);
   wf = await wf.save();
-  await Parser.copyVars(tenant, old_wfid, "workflow", new_wfid, "workflow", 0);
+  await Parser.copyVars(tenant, old_wfid, "parent", "workflow", new_wfid, "parent", "workflow", 0);
   let an = {
     CMD: "yarkNode",
     tenant: tenant,
