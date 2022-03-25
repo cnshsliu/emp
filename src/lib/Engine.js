@@ -3819,10 +3819,15 @@ Engine.getStatusFromClass = function (node) {
   if (node.hasClass("ST_RETURNED")) return "ST_RETURNED";
   if (node.hasClass("ST_REVOKED")) return "ST_REVOKED";
   if (node.hasClass("ST_END")) return "ST_END";
-  throw new EmpError("WORK_NO_STATUS_CLASS", "Node status class is not found", {
-    nodeid: node.nodeid,
-    classes: node.attr("class"),
-  });
+  if (node.hasClass("ST_WAIT")) return "ST_WAIT";
+  throw new EmpError(
+    "WORK_NO_STATUS_CLASS",
+    `Node status class is not found. classes="${node.attr("class")}"`,
+    {
+      nodeid: node.nodeid,
+      classes: node.attr("class"),
+    }
+  );
 };
 /**
  * Engine.getWorkflowOrNodeStatus = async() Get status of workflow or a worknode
