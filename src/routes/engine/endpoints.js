@@ -2384,6 +2384,25 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/workflow/readlog",
+    handler: Handlers.WorkflowReadlog,
+    config: {
+      description: "Read workflow log",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
 ];
 
 module.exports = internals;

@@ -238,6 +238,23 @@ const WorkflowGetFirstTodoid = async function (req, h) {
   }
 };
 
+const WorkflowReadlog = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+
+    let wfid = req.payload.wfid;
+
+    let logFilename = Engine.getWfLogFilename(tenant, wfid);
+    const data = fs.readFileSync(logFilename);
+
+    return h.response(data);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const SeeItWork = async function (req, h) {
   try {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
@@ -3551,6 +3568,7 @@ module.exports = {
   WorkflowRestartThenDestroy,
   WorkflowSetPboAt,
   WorkflowGetFirstTodoid,
+  WorkflowReadlog,
   WorkList,
   WorkInfo,
   WorkGetHtml,
