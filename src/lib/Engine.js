@@ -69,6 +69,15 @@ const CF = {
   BY_ALL_PART_DONE: 33,
 };
 
+const CFNameMap = {
+  1: "ONE_DOER",
+  21: "BY_ANY",
+  22: "BY_ALL_ALL_DONE",
+  10: "BY_ALL_VOTE_DONE",
+  30: "CAN_DONE",
+  33: "BY_ALL_PART_DONE",
+};
+
 /**
  * Ensure the function fn to be run only once
  * @param {function} fn function to be run
@@ -747,6 +756,11 @@ Engine.__doneTodo = async function (
     }
   }
   workDecision = workDecision ? workDecision : "";
+  Engine.log(
+    tenant,
+    wfid,
+    `[DoTask] [${todo.title}] [${todo.tplid}] [${doer}] [${userDecision}] [${workDecision}] [${completeFlag}] [${CFNameMap[completeFlag]}]`
+  );
 
   //如果可以完成当前节点
   let nexts = [];
@@ -1110,6 +1124,8 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
     await Engine.sendNext(nexts[i]);
   }
 
+  Engine.log(tenant, wfid, `[Revoke] [${old_todo.title}] [${old_todo.tplid}] [${email}]`);
+
   return todoid;
 };
 
@@ -1359,6 +1375,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   for (let i = 0; i < nexts.length; i++) {
     await Engine.sendNext(nexts[i]);
   }
+  Engine.log(tenant, wfid, `[Sendback] [${todo.title}] [${todo.tplid}] [${email}]`);
   return todoid;
 };
 
@@ -1606,7 +1623,7 @@ Client.yarkNode = async function (obj) {
       runInSyncMode = false;
     }
     try {
-      codeRetString = await Client.runCode(obj.tenant, obj.wfid, all_efficient_kvars, parsed_code);
+      codeRetString = await Engine.runCode(obj.tenant, obj.wfid, all_efficient_kvars, parsed_code);
       console.log("[Workflow SCPT] return: ", codeRetString);
     } catch (e) {
       codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
@@ -2740,6 +2757,26 @@ Client.cloneTodo = function (from_todo, newValues) {
   clone_obj.todoid = uuidv4();
   return new Todo(clone_obj);
 };
+
+Engine.log = function (tenant, wfid, txt, json) {
+  let isoNow = Tools.toISOString(new Date());
+  let logfilename = Engine.getWfLogFilename(tenant, wfid);
+  fs.writeFileSync(logfilename, `${isoNow}\t${txt}\n`, { flag: "a+" });
+  if (json) {
+    fs.writeFileSync(logfilename, `${JSON.stringify(json, null, 2)}\n`, { flag: "a+" });
+  }
+};
+Engine.getWfLogFilename = function (tenant, wfid) {
+  let emp_node_modules = process.env.EMP_NODE_MODULES;
+  let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
+  let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+  if (!fs.existsSync(emp_tenant_folder))
+    fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
+  let wfidfolder = `${emp_tenant_folder}/${wfid}`;
+  if (!fs.existsSync(wfidfolder)) fs.mkdirSync(wfidfolder, { mode: 0o700, recursive: true });
+  let logfile = `${wfidfolder}/process.log`;
+  return logfile;
+};
 /**
  *
  * @param {...} tenant,
@@ -2750,12 +2787,14 @@ Client.cloneTodo = function (from_todo, newValues) {
  *
  * @return {...}
  */
-Client.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) {
+Engine.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) {
   //dev/emplabs/tenant每个租户自己的node_modules
   let result = "DEFAULT";
   let emp_node_modules = process.env.EMP_NODE_MODULES;
   let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
   let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+
+  Engine.log(tenant, wfid, "[Script]");
 
   /* for (const [key, valueDef] of Object.entries(kvars_json)) {
     if (key.startsWith("tbl_")) {
@@ -2766,8 +2805,6 @@ Client.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) 
       }
     }
   } */
-  if (!fs.existsSync(emp_tenant_folder))
-    fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
   let all_code = `
 module.paths.push('${emp_node_modules}');
 module.paths.push('${emp_tenant_folder}/emplib');
@@ -2821,6 +2858,13 @@ const MtcGetDecision=function(nodeid){
 const MtcSetDecision=function(nodeid, value){
   return MtcSet("$decision_"+ nodeid, value, "Decision of "+nodeid);
 }
+const MtcDecision = function(nodeid, value){
+  if(value){
+    return MtcSetDecision(nodeid, value);
+  }else{
+    return MtcGetDecision(nodeid);
+  }
+}
 async function runcode() {
   try{
   let ___ret___={};
@@ -2843,11 +2887,9 @@ async function runcode() {
 }
 runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.stringify(x)); else console.log(x);
 });`;
-  let tmpFilefolder = `${emp_tenant_folder}/${wfid}`;
-  if (!fs.existsSync(tmpFilefolder)) fs.mkdirSync(tmpFilefolder, { mode: 0o700, recursive: true });
-  let tmpFilename = `${tmpFilefolder}/${lodash.uniqueId("mtc_")}.js`;
-  let cmdName = "node " + tmpFilename;
-  fs.writeFileSync(tmpFilename, all_code);
+  let scriptFilename = `${emp_tenant_folder}/${wfid}/${lodash.uniqueId("mtc_")}.js`;
+  fs.writeFileSync(scriptFilename, all_code);
+  let cmdName = "node " + scriptFilename;
 
   let ret = JSON.stringify({ RET: "DEFAULT" });
   let stdOutRet = "";
@@ -2856,7 +2898,15 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     if (stderr.trim() !== "") {
       console.log(`[Workflow CODE] error: ${stderr}. Normally caused by proxy setting..`);
     }
-    stdOutRet = stdout.trim();
+    let returnedLines = stdout.trim();
+    //////////////////////////////////////////////////
+    // Write logs
+    Engine.log(tenant, wfid, returnedLines);
+
+    // write returnedLines to a file associated with wfid
+    //////////////////////////////////////////////////
+    let lines = returnedLines.split("\n");
+    stdOutRet = lines[lines.length - 1];
     ret = stdOutRet;
     console.log("[Workflow CODE] return: " + JSON.stringify(ret));
 
@@ -2903,10 +2953,10 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     }
   } finally {
     //在最后,将临时文件删除,异步删除即可
-    /* fs.unlink(tmpFilename, () => {
-      console.log(tmpFilename + "\tdeleted");
+    /* fs.unlink(scriptFilename, () => {
+      console.log(scriptFilename + "\tdeleted");
     }); */
-    console.log(tmpFilename + "\tkept");
+    console.log(scriptFilename + "\tkept");
   }
   return ret;
 };
@@ -4261,9 +4311,9 @@ runExpr().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 });`;
   let tmpFilefolder = `${emp_tenant_folder}/formula`;
   if (!fs.existsSync(tmpFilefolder)) fs.mkdirSync(tmpFilefolder, { mode: 0o700, recursive: true });
-  let tmpFilename = `${tmpFilefolder}/${lodash.uniqueId("mtc_")}.js`;
-  let cmdName = "node " + tmpFilename;
-  fs.writeFileSync(tmpFilename, all_code);
+  let exprFilename = `${tmpFilefolder}/${lodash.uniqueId("mtc_")}.js`;
+  let cmdName = "node " + exprFilename;
+  fs.writeFileSync(exprFilename, all_code);
 
   let ret = "";
   let stdOutRet = "";
@@ -4285,10 +4335,10 @@ runExpr().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     };
   } finally {
     //在最后,将临时文件删除,异步删除即可
-    fs.unlink(tmpFilename, () => {
-      console.log(tmpFilename + "\tdeleted");
+    fs.unlink(exprFilename, () => {
+      console.log(exprFilename + "\tdeleted");
     });
-    //console.log(tmpFilename + "\tkept");
+    //console.log(exprFilename + "\tkept");
     console.log(`${expr} return ${ret}`);
   }
   return ret;
