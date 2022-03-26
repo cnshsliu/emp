@@ -244,6 +244,10 @@ const WorkflowReadlog = async function (req, h) {
     let myEmail = req.auth.credentials.email;
 
     let wfid = req.payload.wfid;
+    let filter = { tenant: tenant, wfid: wfid };
+    let wf = await Workflow.findOne(filter, { doc: 0 });
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+      return "You don't have permission to read this workflow";
 
     let logFilename = Engine.getWfLogFilename(tenant, wfid);
     const data = fs.readFileSync(logFilename);
