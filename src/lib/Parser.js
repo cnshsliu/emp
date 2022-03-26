@@ -84,7 +84,7 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
         vars[name] = {};
       }
       if (valueDef.hasOwnProperty("value") === false) {
-        if (typeof valueDef === "string") valueDef = { value: valueDef, label: name };
+        if (typeof valueDef !== "object") valueDef = { value: valueDef, label: name };
       }
       vars[name] = { ...vars[name], ...valueDef };
       vars[name]["ui"] = ["input", "context"];
@@ -509,7 +509,9 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
     if (m) {
       let newValue = kvars[m[1]] ? kvars[m[1]].value : m[1];
       //万一newValue中有【】，需要去掉，否则，do...while会死循环
-      newValue = newValue.replace(/\[|\]/g, "");
+      if (typeof newValue === "string") {
+        newValue = newValue.replace(/\[|\]/g, "");
+      }
       theString = theString.replace(m[0], newValue);
     }
   } while (m);

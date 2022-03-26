@@ -2886,7 +2886,7 @@ const GetLatestCallbackPoint = async function (req, h) {
   }
 };
 
-const DoCallback = async function (req, h) {
+const OldDoCallback = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant };
@@ -2900,6 +2900,24 @@ const DoCallback = async function (req, h) {
     options.route = req.payload.route ? req.payload.route : "DEFAULT";
     if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
     if (lodash.isEmpty(req.payload.atts) === false) options.atts = req.payload.atts;
+    let ret = await Engine.doCallback(cbp, options);
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const DoCallback = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let filter = { tenant: tenant };
+
+    if (req.payload.cbpid) filter._id = req.payload.cbpid;
+    let cbp = await CbPoint.findOne(filter, { tenant: 1, tplid: 1, wfid: 1, nodeid: 1, workid: 1 });
+    let options = {};
+    options.decision = req.payload.decision ? req.payload.decision : "DEFAULT";
+    if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
     let ret = await Engine.doCallback(cbp, options);
     return h.response(ret);
   } catch (err) {

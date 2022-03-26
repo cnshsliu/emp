@@ -291,7 +291,7 @@ Common.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts)
  */
 Common.__getFutureSecond = function (wfRoot, delayString) {
   let ret = 0;
-  let g = delayString.match(/(start)?(\+?)(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+)?/);
+  let g = delayString.match(/^(start)?(\+?)(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+)?/);
   let t = [];
   let procType = "START+";
   if (g !== null) {
@@ -957,7 +957,7 @@ Engine.doCallback = async function (cbp, payload) {
     wfRoot,
     cbp.nodeid,
     cbp.workid,
-    payload.route,
+    payload.decision,
     nexts,
     cbp.round,
     wf,
@@ -1618,12 +1618,36 @@ Client.yarkNode = async function (obj) {
     let codeRetObj = {};
     let codeRetDecision = "DEFAULT";
     let runInSyncMode = true;
+    let callbackId = "";
     let innerTeamSet = "";
     if (tpNode.attr("runmode") === "ASYNC") {
       runInSyncMode = false;
     }
+    if (!runInSyncMode) {
+      //异步回调不会调用ProcNext， 而是新建一个Callback Point
+      //需要通过访问callbackpoint，来推动流程向后运行
+      //TODO: round in CbPoint, and callback placeround
+      //TODO: codeRetDecision should be a property of CbPoint
+      debugger;
+      let cbp = new CbPoint({
+        tenant: obj.tenant,
+        tplid: obj.tplid,
+        wfid: obj.wfid,
+        nodeid: nodeid,
+        workid: workid,
+        round: obj.round,
+      });
+      cbp = await cbp.save();
+      callbackId = cbp._id.toString();
+    }
     try {
-      codeRetString = await Engine.runCode(obj.tenant, obj.wfid, all_efficient_kvars, parsed_code);
+      codeRetString = await Engine.runCode(
+        obj.tenant,
+        obj.wfid,
+        all_efficient_kvars,
+        parsed_code,
+        callbackId
+      );
       console.log("[Workflow SCPT] return: ", codeRetString);
     } catch (e) {
       codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
@@ -1682,19 +1706,6 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`
       );
-      //异步回调不会调用ProcNext， 而是新建一个Callback Point
-      //需要通过访问callbackpoint，来推动流程向后运行
-      //TODO: round in CbPoint, and callback placeround
-      //TODO: codeRetDecision should be a property of CbPoint
-      let cbp = new CbPoint({
-        tenant: obj.tenant,
-        tplid: obj.tplid,
-        wfid: obj.wfid,
-        nodeid: nodeid,
-        workid: workid,
-        round: obj.round,
-      });
-      await cbp.save();
     }
     //设置通过kvar()方法设置的进程参数
     codeRetObj["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: codeRetDecision };
@@ -1848,7 +1859,7 @@ Client.yarkNode = async function (obj) {
       `<div class="work TIMER ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
     );
     let nodeSelector = `.node#${nodeid}`;
-    let delayString = tpRoot.find(nodeSelector).text().trim();
+    let delayString = tpRoot.find(nodeSelector).find("code").text().trim();
     let time = Common.__getFutureSecond(wfRoot, delayString);
     let delayTimer = new DelayTimer({
       tenant: obj.tenant,
@@ -2787,7 +2798,7 @@ Engine.getWfLogFilename = function (tenant, wfid) {
  *
  * @return {...}
  */
-Engine.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) {
+Engine.runCode = async function (tenant, wfid, kvars_json, code, callbackId, isTry = false) {
   //dev/emplabs/tenant每个租户自己的node_modules
   let result = "DEFAULT";
   let emp_node_modules = process.env.EMP_NODE_MODULES;
@@ -2808,9 +2819,9 @@ Engine.runCode = async function (tenant, wfid, kvars_json, code, isTry = false) 
   let all_code = `
 module.paths.push('${emp_node_modules}');
 module.paths.push('${emp_tenant_folder}/emplib');
-const EMP = require('metaflow');
 let innerTeam = null;
 let isTry = ${isTry};
+const MtcAPIAgent = require("axios").default;
 const kvars =  ${JSON.stringify(kvars_json)};
 let retkvars={};
 function setInnerTeam(teamConf){
@@ -2865,6 +2876,10 @@ const MtcDecision = function(nodeid, value){
     return MtcGetDecision(nodeid);
   }
 }
+const MtcSendCallbackPointId=function(url, extraPayload){
+  MtcAPIAgent.post(url, {...{cbpid: "${callbackId}"}, ...extraPayload});
+}
+const MtcSendCBPid = MtcSendCallbackPointId;
 async function runcode() {
   try{
   let ___ret___={};
