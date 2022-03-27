@@ -79,6 +79,26 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/template/delcron",
+    handler: Handlers.TemplateDelCron,
+    config: {
+      description: "Delete crontab entry",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          id: Joi.string(),
+          tplid: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/template/crons",
     handler: Handlers.TemplateGetCrons,
     config: {

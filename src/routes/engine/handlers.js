@@ -416,6 +416,23 @@ const TemplateAddCron = async function (req, h) {
   }
 };
 
+const TemplateDelCron = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+    let id = req.payload.id;
+    let filter = { tenant: tenant, _id: id, creator: myEmail };
+    await Crontab.deleteOne(filter);
+    filter = { tenant: tenant, tplid: tplid, creator: myEmail };
+    let crons = await Crontab.find(filter).lean();
+    return h.response(crons);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const TemplateGetCrons = async function (req, h) {
   try {
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
@@ -3624,6 +3641,7 @@ module.exports = {
   TemplateSetPboAt,
   TemplateEditLog,
   TemplateAddCron,
+  TemplateDelCron,
   TemplateGetCrons,
   WorkflowRead,
   WorkflowCheckStatus,

@@ -2295,6 +2295,7 @@ Engine.compileContent = function (wfRoot, all_kvars, txt) {
       "i",
       "em",
       "strong",
+      "font",
       "a",
       "blockquote",
       "li",
