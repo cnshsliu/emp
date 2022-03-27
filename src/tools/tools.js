@@ -234,6 +234,11 @@ const Tools = {
     if (tmp < 0) return "notemail";
     return email.substring(tmp);
   },
+  getEmailPrefix: function (email) {
+    let tmp = email.indexOf("@");
+    if (tmp < 0) return "notemail";
+    return email.substring(0, tmp);
+  },
   sendInvitationEmail_for_joinOrgChart: async function (ZMQ, admin_username, admin_email, email) {
     let frontendUrl = Tool.getFrontEndUrl();
     var mailbody = `<p>${admin_username} (email: ${admin_email}) </p> <br/> invite you to join his organization, <br/>

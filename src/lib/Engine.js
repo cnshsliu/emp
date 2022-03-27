@@ -1,3 +1,4 @@
+const cronEngine = require("node-cron");
 const { Cheerio, Parser } = require("./Parser");
 const { Mutex } = require("./Mutex");
 const moment = require("moment");
@@ -7,6 +8,7 @@ const Workflow = require("../database/models/Workflow");
 const Handlebars = require("handlebars");
 const SanitizeHtml = require("sanitize-html");
 const Todo = require("../database/models/Todo");
+const Crontab = require("../database/models/Crontab");
 const Work = require("../database/models/Work");
 const Route = require("../database/models/Route");
 const CbPoint = require("../database/models/CbPoint");
@@ -358,6 +360,68 @@ Common.__getFutureSecond = function (wfRoot, delayString) {
   return ret;
 };
 
+Common.setupCron = async function () {
+  if (Common.settingCron) return;
+  try {
+    Common.settingCron = true;
+    await Crontab.updateMany({}, { $set: { scheduled: false } });
+    await Engine.rescheduleCrons();
+  } finally {
+    Common.settingCron = false;
+  }
+};
+Engine.cleanupFaultCrons = async function () {
+  let crons = await Crontab.find();
+  for (let i = 0; i < crons.length; i++) {
+    console.log("Validate ", crons[i].expr);
+    let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
+    console.log(tmp);
+    if (tmp.length !== 5) {
+      await Crontab.deleteOne({ _id: crons[i]._id });
+    }
+    if (cronEngine.validate(crons[i].expr) === false) {
+      await Crontab.deleteOne({ _id: crons[i]._id });
+    }
+  }
+};
+Engine.rescheduleCrons = async function () {
+  try {
+    await Engine.cleanupFaultCrons();
+    await Engine.scheduleAllCrons();
+  } finally {
+  }
+};
+
+Engine.scheduleAllCrons = async function () {
+  try {
+    let crons = await Crontab.find({ scheduled: false });
+    for (let i = 0; i < crons.length; i++) {
+      await Engine.scheduleCron(crons[i]);
+      await Crontab.updateOne({ _id: crons[i]._id }, { $set: { scheduled: true } });
+    }
+  } finally {
+  }
+};
+
+Engine.scheduleCron = async (cron) => {
+  console.log("Schedule one cron", cron);
+  cronEngine.schedule(
+    cron.expr,
+    () => {
+      try {
+        console.log(new Date().getTime());
+        console.log(cron);
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    {
+      scheduled: true,
+      timezone: "Asia/Shanghai",
+    }
+  );
+};
+
 /**
  * Common.checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
  *
@@ -377,59 +441,93 @@ Common.checkDelayTimer = async function () {
     let filter = { wfstatus: "ST_RUN", time: { $lt: now.getTime() } };
     let delayTimers = await DelayTimer.find(filter);
     let nexts = [];
+    let tobeDeletedDelayTimerWfIds = [];
     for (let i = 0; i < delayTimers.length; i++) {
-      let wffilter = {
-        tenant: delayTimers[i].tenant,
-        wfid: delayTimers[i].wfid,
-      };
-      //打开对应的Workflow
-      let wf = await Workflow.findOne(wffilter);
-      let wfIO = await Parser.parse(wf.doc);
-      let tpRoot = wfIO(".template");
-      let wfRoot = wfIO(".workflow");
-      //定位到对应的delayTimer节点
-      let timerWorkNode = wfRoot.find(`#${delayTimers[i].workid}`);
-      //将节点状态改为ST_DONE
-      timerWorkNode.removeClass("ST_RUN").addClass("ST_DONE");
-      //ProcNext, 后续节点在nexts
-      await Common.procNext(
-        delayTimers[i].tenant,
-        delayTimers[i].teamid,
-        delayTimers[i].tplid,
-        delayTimers[i].wfid,
-        tpRoot,
-        wfRoot,
-        delayTimers[i].nodeid,
-        delayTimers[i].workid,
-        "DEFAULT",
-        nexts,
-        delayTimers[i].round,
-        wf.rehearsal,
-        wf.starter
-      );
-      //删除数据库中的DelayTimer
-      await DelayTimer.deleteOne({ _id: delayTimers[i]._id });
-      if (nexts.length > 0) {
-        wf.pnodeid = nexts[0].from_nodeid;
-        wf.pworkid = nexts[0].from_workid;
-        wf.cselector = nexts.map((x) => x.selector);
+      try {
+        await Engine.runScheduled(
+          {
+            tenant: delayTimers[i].tenant,
+            tplid: delayTimers[i].tplid,
+            teamid: delayTimers[i].teamid,
+            wfid: delayTimers[i].wfid,
+            nodeid: delayTimers[i].nodeid,
+            workid: delayTimers[i].workid,
+          },
+          tobeDeletedDelayTimerWfIds,
+          false
+        );
+      } catch (e) {
+        console.error(e);
       }
-      wf.doc = wfIO.html();
-      await wf.save();
+      await DelayTimer.deleteOne({ _id: delayTimers[i]._id });
     }
 
-    //将Nexts数组中的消息BODY依次发送出去
-    //消息BODY中的属性CMD: "yarkNode",
-    if (nexts.length > 0) {
-      for (let i = 0; i < nexts.length; i++) {
-        //推入处理队列
-        await Engine.sendNext(nexts[i]);
-      }
-    }
+    //////////////////////////////////////////////////
+    //DelayTimer每次都会被删除，因此无须最后再次清理
+    //tobeDeletedDelayTimerWfIds = [...new Set(tobeDeletedDelayTimerWfIds)];
+    //await DelayTimer.deleteMany({ wfid: { $in: tobeDeletedDelayTimerWfIds } });
+    //////////////////////////////////////////////////
   } catch (err) {
     console.error(err);
   } finally {
     Common.checkingTimer = false;
+  }
+};
+
+Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
+  let wffilter = {
+    tenant: obj.tenant,
+    wfid: obj.wfid,
+    status: "ST_RUN",
+  };
+  //打开对应的Workflow
+  let wf = await Workflow.findOne(wffilter);
+  // Delete this delayTimer is running workflow object is absent.
+  if (!wf) {
+    cleanUpIds.push(obj.wfid);
+    return;
+  }
+  let wfIO = await Parser.parse(wf.doc);
+  let tpRoot = wfIO(".template");
+  let wfRoot = wfIO(".workflow");
+
+  if (isCron === false) {
+    //定位到对应的delayTimer节点
+    let timerWorkNode = wfRoot.find(`#${obj.workid}`);
+    //将节点状态改为ST_DONE
+    timerWorkNode.removeClass("ST_RUN").addClass("ST_DONE");
+  }
+  //ProcNext, 后续节点在nexts
+  await Common.procNext(
+    obj.tenant,
+    obj.teamid,
+    obj.tplid,
+    obj.wfid,
+    tpRoot,
+    wfRoot,
+    obj.nodeid,
+    obj.workid,
+    "DEFAULT",
+    nexts,
+    obj.round,
+    wf.rehearsal,
+    wf.starter
+  );
+  //删除数据库中的DelayTimer
+  if (nexts.length > 0) {
+    wf.pnodeid = nexts[0].from_nodeid;
+    wf.pworkid = nexts[0].from_workid;
+    wf.cselector = nexts.map((x) => x.selector);
+  }
+  wf.doc = wfIO.html();
+  await wf.save();
+  //将Nexts数组中的消息BODY依次发送出去
+  //消息BODY中的属性CMD: "yarkNode",
+  if (nexts.length > 0) {
+    for (let i = 0; i < nexts.length; i++) {
+      //推入处理队列
+      await Engine.sendNext(nexts[i]);
+    }
   }
 };
 
@@ -1562,10 +1660,17 @@ Client.yarkNode = async function (obj) {
         console.warn(error.message);
       }
       try {
+        let factRecipients = recipients;
         if (wf.rehearsal) {
           mail_subject = "Rehearsal: " + mail_subject;
           recipients = wf.starter;
         }
+        Engine.log(tenant, obj.wfid, "Queue send email", {
+          fact: factRecipients,
+          to: recipients,
+          subject: mail_subject,
+          body: mail_body,
+        });
         await ZMQ.server.QueSend(
           "EmpBiz",
           JSON.stringify({
@@ -1622,13 +1727,17 @@ Client.yarkNode = async function (obj) {
     let innerTeamSet = "";
     if (tpNode.attr("runmode") === "ASYNC") {
       runInSyncMode = false;
+      Engine.log(
+        tenant,
+        obj.wfid,
+        "Caution: this script run in ASYNC mode, following actions only dispatch only by remote callback"
+      );
     }
     if (!runInSyncMode) {
       //异步回调不会调用ProcNext， 而是新建一个Callback Point
       //需要通过访问callbackpoint，来推动流程向后运行
       //TODO: round in CbPoint, and callback placeround
       //TODO: codeRetDecision should be a property of CbPoint
-      debugger;
       let cbp = new CbPoint({
         tenant: obj.tenant,
         tplid: obj.tplid,
@@ -1639,6 +1748,7 @@ Client.yarkNode = async function (obj) {
       });
       cbp = await cbp.save();
       callbackId = cbp._id.toString();
+      Engine.log(tenant, obj.wfid, "ASYNC mode, callbackID is " + callbackId);
     }
     try {
       codeRetString = await Engine.runCode(
@@ -1887,22 +1997,29 @@ Client.yarkNode = async function (obj) {
     let parent_wf_id = isStandalone ? "" : obj.wfid;
     let parent_work_id = isStandalone ? "" : workid;
     let runmode = isStandalone ? "standalone" : "sub";
-    await Engine.startWorkflow(
-      //runsub
-      wf.rehearsal,
-      obj.tenant,
-      sub_tpl_id,
-      wf.starter,
-      pbo,
-      teamid,
-      sub_wf_id,
-      sub_tpl_id + "-sub-" + Tools.timeStringTag(),
-      parent_wf_id,
-      parent_work_id,
-      parent_vars,
-      runmode,
-      []
-    );
+    try {
+      await Engine.startWorkflow(
+        //runsub
+        wf.rehearsal,
+        obj.tenant,
+        sub_tpl_id,
+        wf.starter,
+        pbo,
+        teamid,
+        sub_wf_id,
+        sub_tpl_id + "-sub-" + Tools.timeStringTag(),
+        parent_wf_id,
+        parent_work_id,
+        parent_vars,
+        runmode,
+        []
+      );
+      Engine.log(tenant, obj.wfid, `[Start Sub] [Success] [${runmode}] ${sub_tpl_id}`);
+    } catch (e) {
+      Engine.log(tenant, obj.wfid, `[Start Sub] [Failed] [${runmode}] ${sub_tpl_id}`, {
+        message: e.message,
+      });
+    }
     if (isStandalone) {
       wfRoot.append(
         `<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
@@ -1928,6 +2045,7 @@ Client.yarkNode = async function (obj) {
       );
     }
   } else if (tpNode.hasClass("END")) {
+    Engine.log(tenant, obj.wfid, "Process Ending");
     wfRoot.append(
       `<div class="work END ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}"  byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
     );
@@ -1940,6 +2058,11 @@ Client.yarkNode = async function (obj) {
     let parent_wfid = wfRoot.attr("pwfid");
     let parent_workid = wfRoot.attr("pworkid");
     if (Tools.hasValue(parent_wfid) && Tools.hasValue(parent_workid) && wf.runmode === "sub") {
+      Engine.log(
+        tenant,
+        obj.wfid,
+        `This process has parent process, continue to parent [${parent_wf.tplid}]`
+      );
       let filter = { wfid: parent_wfid };
       let parent_wf = await Workflow.findOne(filter);
       let parent_tplid = parent_wf.tplid;
@@ -1992,6 +2115,7 @@ Client.yarkNode = async function (obj) {
       parent_wf.doc = parent_wfIO.html();
       await parent_wf.save();
     }
+    Engine.log(tenant, obj.wfid, "End");
   } else {
     //ACTION
     //An Action node which should be done by person
@@ -4268,6 +4392,8 @@ Engine.init = Engine.once(async function () {
   await Engine.serverInit();
   await Client.clientInit();
   Common.checkingTimer = false;
+  Common.settingCron = false;
+  await Common.setupCron();
   setInterval(() => {
     Common.checkDelayTimer();
   }, 1000);

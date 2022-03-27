@@ -8,6 +8,7 @@ const Joi = require("joi");
 const { v4: uuidv4 } = require("uuid");
 const TimeZone = require("../../lib/timezone");
 const Template = require("../../database/models/Template");
+const Crontab = require("../../database/models/Crontab");
 const EdittingLog = require("../../database/models/EdittingLog");
 const Crypto = require("../../lib/Crypto");
 const Workflow = require("../../database/models/Workflow");
@@ -369,6 +370,62 @@ const TemplateEditLog = async function (req, h) {
     return h.response(
       await EdittingLog.find(filter, { editor: 1, editorName: 1, updatedAt: 1 }).lean()
     );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateAddCron = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+    let expr = req.payload.expr;
+    let starters = [];
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("NO_PERM", "Only Admin can set crontab");
+    }
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    if (req.payload.starters) {
+      starters = Parser.splitStringToArray(req.payload.starters, /[\s;,\.@]/);
+      starters = starters.filter((x) => x.length > 3);
+    }
+    if (starters.length < 1) {
+      starters = [Tools.getEmailPrefix(myEmail)];
+    }
+    let cronTab = new Crontab({
+      tenant: tenant,
+      tplid: tplid,
+      expr: expr,
+      starters: starters,
+      creator: myEmail,
+      scheduled: false,
+      method: "STARTWORKFLOW",
+    });
+    cronTab = await cronTab.save();
+    Engine.rescheduleCrons();
+    let filter = { tenant: tenant, tplid: tplid, creator: myEmail };
+    let crons = await Crontab.find(filter).lean();
+    return h.response(crons);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateGetCrons = async function (req, h) {
+  try {
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+      throw new EmpError("NO_PERM", "You don't have permission to read this template");
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+    let filter = { tenant: tenant, tplid: tplid, creator: myEmail };
+    let crons = await Crontab.find(filter).lean();
+    return h.response(crons);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3566,6 +3623,8 @@ module.exports = {
   TemplateSetAuthor,
   TemplateSetPboAt,
   TemplateEditLog,
+  TemplateAddCron,
+  TemplateGetCrons,
   WorkflowRead,
   WorkflowCheckStatus,
   WorkflowRoutes,

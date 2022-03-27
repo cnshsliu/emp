@@ -37,7 +37,7 @@ const Inert = require("@hapi/inert");
 //Template rendering support for hapi.js.
 //https://hapi.dev/module/vision
 const Vision = require("@hapi/vision");
-const HapiSwagger = require("hapi-swagger");
+//const HapiSwagger = require("hapi-swagger");
 
 const swaggerOptions = {
   info: {
@@ -117,13 +117,13 @@ async function register_authBasic() {
   });
 }
 
-async function register_swagger() {
+/* async function register_swagger() {
   await internals.server.register([
     Inert,
     Vision,
     { plugin: HapiSwagger, options: swaggerOptions },
   ]);
-}
+} */
 
 internals.starter = async function () {
   if (internals.server.initialized) {
@@ -132,7 +132,7 @@ internals.starter = async function () {
   await register_Good();
   await register_authJwt();
   await register_authBasic();
-  await register_swagger();
+  //await register_swagger();
 
   // await internals.server.register(hapiWebSocket);
   await JwtAuth.setStrategy(internals.server);
@@ -167,7 +167,7 @@ internals.init = async function () {
   await register_Good();
   await register_authJwt();
   await register_authBasic();
-  await register_swagger();
+  //await register_swagger();
 
   // await internals.server.register(hapiWebSocket);
 

@@ -58,6 +58,69 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/template/addcron",
+    handler: Handlers.TemplateAddCron,
+    config: {
+      description: "Add crontab entry for one template",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+          starters: Joi.string().optional().allow(""),
+          expr: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/template/crons",
+    handler: Handlers.TemplateGetCrons,
+    config: {
+      description: "Get crons",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/template/tag",
+    handler: Handlers.TemplateDesc,
+    config: {
+      description: "Set template description",
+      notes: "Set tempalte description",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string()
+            .required()
+            .description("The id of a template, should not be an exists one."),
+          desc: Joi.string().required().allow(""),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/template/basic",
     handler: Handlers.TemplateBasic,
     config: {
