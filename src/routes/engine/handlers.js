@@ -384,18 +384,42 @@ const TemplateAddCron = async function (req, h) {
     let expr = req.payload.expr;
     let starters = [];
     let myGroup = await Cache.getMyGroup(myEmail);
-    if (myGroup !== "ADMIN") {
-      throw new EmpError("NO_PERM", "Only Admin can set crontab");
-    }
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
-    if (req.payload.starters) {
-      starters = Parser.splitStringToArray(req.payload.starters, /[\s;,\.@]/);
-      starters = starters.filter((x) => x.length > 3);
-    }
-    if (starters.length < 1) {
+    //////////////////////////////////////////////////
+    // ADMIN unlimited, normal user 3
+    //////////////////////////////////////////////////
+    let allowedCronNumber = myGroup !== "ADMIN" ? 3 : -1;
+    //
+    //
+    //////////////////////////////////////////////////
+    //ADMIN can add cron for other users
+    //////////////////////////////////////////////////
+    if (myGroup === "ADMIN") {
+      if (req.payload.starters) {
+        starters = Parser.splitStringToArray(req.payload.starters, /[\s;,\.@]/);
+        starters = starters.filter((x) => x.length > 3);
+      }
+      if (starters.length < 1) {
+        starters = [Tools.getEmailPrefix(myEmail)];
+      }
+      //TODO: starts support regexp and exlude with -
+      //TODO: or make list blacklist/whitelist with special name
+      //CRON_WHITELIST/CRON_BLACKLIST
+    } else {
+      //Normal user only add cron for himeself
       starters = [Tools.getEmailPrefix(myEmail)];
+      //////////////////////////////////////////////////
+      //Check normal user's limitation
+      ////////////////////////////////////////////////////
+      let cnt = await Crontab.countDocuments({ tenant: tenant, creator: myEmail });
+      if (cnt >= allowedCronNumber) {
+        throw new EmpError("QUOTA EXCEEDED", `Exceed cron entry quota ${allowedCronNumber}`);
+      }
     }
+    //
+    //////////////////////////////////////////////////
+    //
     let cronTab = new Crontab({
       tenant: tenant,
       tplid: tplid,
@@ -424,6 +448,7 @@ const TemplateDelCron = async function (req, h) {
     let id = req.payload.id;
     let filter = { tenant: tenant, _id: id, creator: myEmail };
     await Crontab.deleteOne(filter);
+    Engine.stopCronTask(id);
     filter = { tenant: tenant, tplid: tplid, creator: myEmail };
     let crons = await Crontab.find(filter).lean();
     return h.response(crons);

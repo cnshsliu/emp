@@ -80,6 +80,8 @@ const CFNameMap = {
   33: "BY_ALL_PART_DONE",
 };
 
+const crontabsMap = {};
+
 /**
  * Ensure the function fn to be run only once
  * @param {function} fn function to be run
@@ -387,17 +389,22 @@ Engine.cleanupFaultCrons = async function () {
 Engine.rescheduleCrons = async function () {
   try {
     await Engine.cleanupFaultCrons();
-    await Engine.scheduleAllCrons();
+    await Engine.scheduleAllValidCrons();
   } finally {
   }
 };
 
-Engine.scheduleAllCrons = async function () {
+Engine.scheduleAllValidCrons = async function () {
   try {
     let crons = await Crontab.find({ scheduled: false });
     for (let i = 0; i < crons.length; i++) {
-      await Engine.scheduleCron(crons[i]);
-      await Crontab.updateOne({ _id: crons[i]._id }, { $set: { scheduled: true } });
+      if (cronEngine.validate(crons[i].expr) === true) {
+        if (crontabsMap[crons[i]._id]) {
+          await Engine.stopCronTask(crons[i]._id);
+        }
+        await Engine.scheduleCron(crons[i]);
+        await Crontab.updateOne({ _id: crons[i]._id }, { $set: { scheduled: true } });
+      }
     }
   } finally {
   }
@@ -405,7 +412,7 @@ Engine.scheduleAllCrons = async function () {
 
 Engine.scheduleCron = async (cron) => {
   console.log("Schedule one cron", cron);
-  cronEngine.schedule(
+  let task = cronEngine.schedule(
     cron.expr,
     () => {
       try {
@@ -420,6 +427,16 @@ Engine.scheduleCron = async (cron) => {
       timezone: "Asia/Shanghai",
     }
   );
+  crontabsMap[cron._id] = task;
+};
+
+Engine.stopCronTask = async function (cronId) {
+  try {
+    let my_job = crontabsMap[cronId];
+    my_job.stop();
+  } catch (e) {
+    console.error(e);
+  }
 };
 
 /**
