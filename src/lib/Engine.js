@@ -719,6 +719,7 @@ Engine.__doneTodo = async function (
   kvars,
   comment
 ) {
+  let logMsg = "";
   if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
   let isoNow = Tools.toISOString(new Date());
   let nodeid = todo.nodeid;
@@ -915,7 +916,8 @@ Engine.__doneTodo = async function (
     //////////////////////////////////////////////////
     // 发送WeComBotMessage
     if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
-      console.log(`This node ${theWork.title} need to send wecom`);
+      logMsg = `This node ${theWork.title} need to send wecom`;
+      Engine.log(tenant, todo.wfid, logMsg);
       let template = await Template.findOne(
         { tenat: tenant, tplid: wf.tplid },
         { _id: 0, author: 1 }
@@ -930,7 +932,8 @@ Engine.__doneTodo = async function (
           $elemMatch: { key: wf.tplid },
         },
       });
-      console.log("Query List, got", wecomBot);
+      logMsg = `Query List, ${wecomBot ? "successfully" : "not found"}`;
+      Engine.log(tenant, todo.wfid, logMsg);
       if (wecomBot) {
         let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
           tenant,
@@ -940,7 +943,8 @@ Engine.__doneTodo = async function (
           workDecision,
           comment
         );
-        console.log("Query List got bot keys", wecomBot.entries[0].items);
+        logMsg = `Query List got bot keys ${wecomBot.entries[0].items}`;
+        Engine.log(tenant, todo.wfid, logMsg);
         try {
           let botKeys = wecomBot.entries[0].items.split(";");
           if (botKeys.length > 0) {
@@ -949,19 +953,21 @@ Engine.__doneTodo = async function (
             let botKey = botKeys[botIndex];
             let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
             await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
-              console.log("Wreck Bot WORK_DONE", botKey, `${botIndex}/${botsNumber}`);
+              logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
+              Engine.log(tenant, todo.wfid, logMsg);
             });
           }
         } catch (e) {
           console.error(e);
         }
       } else {
-        console.log(
-          "!!!!! Query List return null, something must wrong, please check your wecombots_tpl list again"
-        );
+        logMsg = `!!!!! Query List return null, something must wrong, please check  list defination\n
+        list name = wecombots_tpl key = ${theWf.tplid}`;
+        Engine.log(tenant, todo.wfid, logMsg);
       }
     } else {
-      console.log(`This node ${theWork.title} does not send wecom`);
+      logMsg = `This node ${theWork.title} does not send wecom`;
+      Engine.log(tenant, todo.wfid, logMsg);
     }
     //////////////////////////////////////////////////
     //////////////////////////////////////////////////
@@ -3120,10 +3126,12 @@ Client.cloneTodo = function (from_todo, newValues) {
 };
 
 Engine.log = function (tenant, wfid, txt, json) {
+  console.log(txt);
   let isoNow = Tools.toISOString(new Date());
   let logfilename = Engine.getWfLogFilename(tenant, wfid);
   fs.writeFileSync(logfilename, `${isoNow}\t${txt}\n`, { flag: "a+" });
   if (json) {
+    console.log(JSON.stringify(json, null, 2));
     fs.writeFileSync(logfilename, `${JSON.stringify(json, null, 2)}\n`, { flag: "a+" });
   }
 };
