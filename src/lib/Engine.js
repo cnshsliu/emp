@@ -1057,7 +1057,12 @@ Engine.buildWorkDoneMarkdownMessage = async function (
       "**" +
       workKVars.kvarsArr[i].label +
       ":**" +
-      (workKVars.kvarsArr[i].value.indexOf("\n") > 0 ? "\n" : " ") +
+      (workKVars.kvarsArr[i] &&
+      workKVars.kvarsArr[i].value &&
+      typeof workKVars.kvarsArr[i].value === "string" &&
+      workKVars.kvarsArr[i].value.indexOf("\n") > 0
+        ? "\n"
+        : " ") +
       workKVars.kvarsArr[i].value +
       "\n";
   }
