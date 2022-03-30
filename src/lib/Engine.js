@@ -956,7 +956,9 @@ Engine.__doneTodo = async function (
           console.error(e);
         }
       } else {
-        console.log("Query List return null");
+        console.log(
+          "!!!!! Query List return null, something must wrong, please check your wecombots_tpl list again"
+        );
       }
     } else {
       console.log(`This node ${theWork.title} does not send wecom`);
