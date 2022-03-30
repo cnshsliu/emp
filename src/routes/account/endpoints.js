@@ -275,7 +275,7 @@ internals.endpoints = [
             avatar: Joi.string().optional().allow(""),
             username: Joi.string().regex(EmpConfig.validation.username).optional(),
             password: Joi.string().regex(EmpConfig.validation.password).optional(),
-            ew: Joi.boolean().optional(),
+            ew: Joi.object({ email: Joi.boolean(), wecom: Joi.boolean() }).optional(),
             ps: Joi.number().min(5).max(100).optional(),
           },
           old_password: Joi.string().allow("").regex(EmpConfig.validation.password).optional(),

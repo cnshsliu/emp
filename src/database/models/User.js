@@ -9,7 +9,7 @@ const UserSchema = new Schema({
   password: { type: String, unique: false, required: true },
   email: { type: String, trim: true, lowercase: true, unique: true, required: true },
   emailVerified: { type: Boolean, default: false },
-  ew: { type: Boolean, default: false }, //Send email on new work
+  ew: { email: { type: Boolean, default: true }, wecom: { type: Boolean, default: false } }, //Send email on new work
   ps: { type: Number, default: 20 }, // Page size
   config: {
     keepinput: { type: Boolean, defalt: false },

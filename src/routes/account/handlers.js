@@ -87,7 +87,7 @@ internals.RegisterUser = async function (req, h) {
       password: req.payload.password,
       email: req.payload.email,
       emailVerified: false,
-      ew: false,
+      ew: { email: false },
       ps: 20,
     });
 

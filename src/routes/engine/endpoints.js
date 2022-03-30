@@ -25,6 +25,7 @@ internals.endpoints = [
         payload: {
           tplid: Joi.string()
             .required()
+            .min(3)
             .description("The name of a template, should not be an exists one."),
           desc: Joi.string().optional().allow(""),
           tags: Joi.string().optional().allow(""),
@@ -2481,6 +2482,81 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           wfid: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/wecombot/todo/get",
+    handler: Handlers.WecomBotForTodoGet,
+    config: {
+      description: "Get wecom setting",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {},
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/wecombot/todo/set",
+    handler: Handlers.WecomBotForTodoSet,
+    config: {
+      description: "Get wecom setting",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          key: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/template/set/wecombot",
+    handler: Handlers.TemplateSetWecomBot,
+    config: {
+      description: "Set wecom bot for template",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string(),
+          key: Joi.string().length(36),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/template/get/wecombot",
+    handler: Handlers.TemplateGetWecomBot,
+    config: {
+      description: "Get wecom bot for template",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string(),
         },
         validator: Joi,
       },

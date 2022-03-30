@@ -16,6 +16,7 @@ var TemplateSchema = new Schema(
     lastUpdateBwid: String, //Browser window it;
     authorName: { type: String, required: [true, "不能为空"], index: false },
     visi: { type: String },
+    wecombotkey: { type: String, length: 36 },
     desc: { type: String, required: false, index: false },
     doc: { type: String, required: true },
     //bdoc: { type: Buffer, required: true },

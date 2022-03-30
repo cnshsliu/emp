@@ -312,6 +312,8 @@ const Tools = {
       fullPath: storedFileName,
     };
   },
+  getRandomInt: function (min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  },
 };
-console.log(Tools.makeEmailSameDomain("zhang@gmail.com", "lucas@xihuanwu.com"));
 module.exports = Tools;

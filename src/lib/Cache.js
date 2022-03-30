@@ -13,9 +13,9 @@ internals.setUserName = async function (email, username = null, expire = 60) {
     if (user) {
       username = user.username;
       {
-        await asyncRedisClient.set("ew_" + email, user.ew ? "TRUE" : "FALSE");
+        let ewToSet = JSON.stringify(user.ew ? user.ew : { email: true, wecom: false });
+        await asyncRedisClient.set("ew_" + email, ewToSet);
         await asyncRedisClient.expire("ew_" + email, expire);
-        let emailWork = await asyncRedisClient.get("ew_" + email);
       }
     }
   }
@@ -28,13 +28,13 @@ internals.setUserName = async function (email, username = null, expire = 60) {
 
 internals.getUserEw = async function (email) {
   email = email.toLowerCase().trim();
-  let emailWork = await asyncRedisClient.get("ew_" + email);
-  if (emailWork) {
-    return emailWork === "TRUE";
+  let ew = await asyncRedisClient.get("ew_" + email);
+  if (ew) {
+    return JSON.parse(ew);
   } else {
     await internals.setUserName(email, null, 60);
-    emailWork = await asyncRedisClient.get("ew_" + email);
-    return emailWork === "TRUE";
+    ew = await asyncRedisClient.get("ew_" + email);
+    return JSON.parse(ew);
   }
 };
 
@@ -204,7 +204,6 @@ internals.removeKeyByEmail = async function (email, cacheType) {
     await asyncRedisClient.del("perm_" + emailKey);
     await asyncRedisClient.del("name_" + emailKey);
     await asyncRedisClient.del("ew_" + emailKey);
-    let emailWork = await asyncRedisClient.get("ew_" + emailKey);
   }
 };
 

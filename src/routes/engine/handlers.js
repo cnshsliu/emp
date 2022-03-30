@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require("uuid");
 const TimeZone = require("../../lib/timezone");
 const Template = require("../../database/models/Template");
 const Crontab = require("../../database/models/Crontab");
+const Webhook = require("../../database/models/Webhook");
 const EdittingLog = require("../../database/models/EdittingLog");
 const Crypto = require("../../lib/Crypto");
 const Workflow = require("../../database/models/Workflow");
@@ -65,7 +66,7 @@ const TemplateCreate = async function (req, h) {
     let myGroup = await Cache.getMyGroup(myEmail);
     let author = myEmail;
     let authorName = req.auth.credentials.username;
-    let tplid = req.payload.tplid;
+    let tplid = req.payload.tplid.trim();
     let desc = req.payload.desc;
     let doc = `
 <div class='template' id='${tplid}'>
@@ -3643,6 +3644,68 @@ const FormulaEval = async function (req, h) {
   }
 };
 
+const WecomBotForTodoGet = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let wecomBot = await Webhook.find(
+      { tenant: tenant, owner: myEmail, webhook: "wecombot_todo" },
+      { _id: 0, tplid: 1, key: 1 }
+    );
+    return h.response(wecomBot);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WecomBotForTodoSet = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let setting = req.payload.setting;
+    let wecomBot = await Webhook.findOneAndUpdate(
+      { tenant: tenant, owner: myEmail, webhook: "wecombot_todo", tplid: req.payload.tplid },
+      { $set: { key: req.payload.key } },
+      { upsert: true, new: true }
+    );
+    return h.response(wecomBot ? wecomBot.setting : "");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const TemplateGetWecomBot = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tpl = await Template.findOne(
+      { tenant: tenant, tplid: req.payload.tplid, author: myEmail },
+      { _id: 0, wecombotkey: 1 }
+    );
+    return h.response(tpl ? tpl.wecombotkey : "");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplateSetWecomBot = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tpl = await Template.findOneAndUpdate(
+      { tenant: tenant, tplid: req.payload.tplid, author: myEmail },
+      { $set: { wecombotkey: req.payload.key } },
+      { upsert: false, new: true }
+    );
+    return h.response(tpl ? tpl.wecombotkey : "");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 module.exports = {
   TemplateCreate,
   TemplateDesc,
@@ -3668,6 +3731,8 @@ module.exports = {
   TemplateAddCron,
   TemplateDelCron,
   TemplateGetCrons,
+  TemplateSetWecomBot,
+  TemplateGetWecomBot,
   WorkflowRead,
   WorkflowCheckStatus,
   WorkflowRoutes,
@@ -3760,4 +3825,6 @@ module.exports = {
   FilePondRemove,
   WorkflowAttachmentViewer,
   FormulaEval,
+  WecomBotForTodoSet,
+  WecomBotForTodoGet,
 };

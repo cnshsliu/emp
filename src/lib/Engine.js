@@ -1,14 +1,19 @@
 const cronEngine = require("node-cron");
+const Wreck = require("@hapi/wreck");
+const Https = require("https");
+const Http = require("http");
 const { Cheerio, Parser } = require("./Parser");
 const { Mutex } = require("./Mutex");
 const moment = require("moment");
 const Template = require("../database/models/Template");
 const User = require("../database/models/User");
+const List = require("../database/models/List");
 const Workflow = require("../database/models/Workflow");
 const Handlebars = require("handlebars");
 const SanitizeHtml = require("sanitize-html");
 const Todo = require("../database/models/Todo");
 const Crontab = require("../database/models/Crontab");
+const Webhook = require("../database/models/Webhook");
 const Work = require("../database/models/Work");
 const Route = require("../database/models/Route");
 const CbPoint = require("../database/models/CbPoint");
@@ -877,11 +882,19 @@ Engine.__doneTodo = async function (
     `[DoTask] [${todo.title}] [${todo.tplid}] [${doer}] [${userDecision}] [${workDecision}] [${completeFlag}] [${CFNameMap[completeFlag]}]`
   );
 
+  if (comment) {
+    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
+    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
+    if (comment.indexOf("[") >= 0) {
+      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
+    }
+  }
+
   //如果可以完成当前节点
   let nexts = [];
   let wfUpdate = {};
   if (completeFlag < CF.CAN_DONE) {
-    await Work.findOneAndUpdate(
+    let theWork = await Work.findOneAndUpdate(
       { tenant: tenant, wfid: todo.wfid, workid: todo.workid },
       {
         $set: {
@@ -899,6 +912,52 @@ Engine.__doneTodo = async function (
     //place todo decision into kvars;
     kvars["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: workDecision };
     await Parser.setVars(tenant, todo.round, todo.wfid, todo.nodeid, todo.workid, kvars, doer);
+    //////////////////////////////////////////////////
+    // 发送WeComBotMessage
+    if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
+      let template = await Template.findOne(
+        { tenat: tenant, tplid: wf.tplid },
+        { _id: 0, author: 1 }
+      );
+      let wecomBot = await List.findOne({
+        tenant: tenant,
+        author: template.author,
+        name: "wecombots_tpl",
+        entries: { $elemMatch: { key: wf.tplid } },
+      }).select({
+        entries: {
+          $elemMatch: { key: wf.tplid },
+        },
+      });
+      if (wecomBot) {
+        let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
+          tenant,
+          doer,
+          todo,
+          theWork,
+          workDecision,
+          comment
+        );
+        try {
+          let botKeys = wecomBot.entries[0].items.split(";");
+          if (botKeys.length > 0) {
+            let botsNumber = botKeys.length;
+            let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
+            let botKey = botKeys[botIndex];
+            let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
+            await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
+              console.log("Wreck Bot WORK_DONE", botKey, `${botIndex}/${botsNumber}`);
+            });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    //////////////////////////////////////////////////
+    //////////////////////////////////////////////////
+    //////////////////////////////////////////////////
+
     if (workNode.hasClass("ADHOC") === false) {
       await Common.procNext(
         tenant,
@@ -949,13 +1008,7 @@ Engine.__doneTodo = async function (
     { upsert: false, new: true }
   );
 
-  if (comment) {
-    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
-    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
-    if (comment.indexOf("[") >= 0) {
-      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
-    }
-  }
+  // 完成TODO
   todo.comment = comment;
   todo.status = "ST_DONE";
   todo.doneat = isoNow;
@@ -983,6 +1036,50 @@ Engine.__doneTodo = async function (
   }
 
   return { workid: todo.workid, todoid: todo.todoid };
+};
+
+Engine.buildWorkDoneMarkdownMessage = async function (
+  tenant,
+  doer,
+  todo,
+  theWork,
+  workDecision,
+  comment
+) {
+  let frontendUrl = Tools.getFrontEndUrl();
+  //let workFullInfo = await Engine.__getWorkFullInfo(doer, tenant, tpRoot, wfRoot, wfid, todo);
+  let workKVars = await Engine.getWorkKVars(tenant, doer, todo);
+  let kvarsMD = "";
+  for (let i = 0; i < workKVars.kvarsArr.length; i++) {
+    if (workKVars.kvarsArr[i].label[0] === "$") continue;
+    kvarsMD +=
+      ">" +
+      "**" +
+      workKVars.kvarsArr[i].label +
+      ":**" +
+      (workKVars.kvarsArr[i].value.indexOf("\n") > 0 ? "\n" : " ") +
+      workKVars.kvarsArr[i].value +
+      "\n";
+  }
+  let urlEncoded = encodeURI(`${frontendUrl}/work/@${todo.todoid}`);
+  let markdownMsg = {
+    msgtype: "markdown",
+    markdown: {
+      content: `# ${theWork.title} 已完成
+Last done by ${await Cache.getUserName(doer)}
+# 节点决策: ${workDecision}
+${comment ? comment : ""}
+# 工作项：
+[Goto task](${urlEncoded})
+${urlEncoded}
+
+# 节点数据, 请相关同学注意：<@all>
+${kvarsMD}
+`,
+    },
+  };
+
+  return markdownMsg;
 };
 
 //对每个@somebody存储，供somebody反向查询comment
@@ -2840,14 +2937,14 @@ Client.newTodo = async function (
   await todo.save();
 
   let ew = await Cache.getUserEw(doer);
-  if (ew === false) {
+  if (typeof ew === "boolean" && ew === false) {
     console.log(doer, " does not receive email on new task");
     return;
   }
-
   let cn = await Cache.getUserName(doer);
   let frontendUrl = Tools.getFrontEndUrl();
-  let mail_body = `Hello, ${cn}, new task is comming in:
+  if (ew.email) {
+    let mail_body = `Hello, ${cn}, new task is comming in:
 <br/><a href="${frontendUrl}/work/@${todoid}">${title} </a><br/>
 in Workflow: <br/>
 ${wftitle}<br/>
@@ -2862,19 +2959,117 @@ ${title}
 
 Metatocome`;
 
-  let subject = `[New task] ${title}`;
-  let extra_body = "";
-  if (rehearsal) {
-    subject = "Rehearsal: " + subject;
-    extra_body = `
+    let subject = `[New task] ${title}`;
+    let extra_body = "";
+    if (rehearsal) {
+      subject = "Rehearsal: " + subject;
+      extra_body = `
 <br/>
 This mail should go to ${doer} but send to you because this is rehearsal';
 `;
-    doer = wfstarter;
-  }
-  mail_body += extra_body;
+      doer = wfstarter;
+    }
+    mail_body += extra_body;
 
-  await Engine.sendTenantMail(tenant, doer, subject, mail_body);
+    await Engine.sendTenantMail(tenant, doer, subject, mail_body);
+  }
+  //////////////////////////////////////////////////
+  // Check wether user has wecom bot key for this tplid;
+  //////////////////////////////////////////////////
+  //
+  let markdownMsg = {
+    msgtype: "markdown",
+    markdown: {
+      content: `# ${cn}
+
+          ## ${rehearsal ? "Rehearsal: " : ""}${title}
+          
+          [Goto task](${frontendUrl}/work/@${todoid})
+          (${frontendUrl}/work/@${todoid})
+
+          WeCom may cut part of the above URL making it works not as expected.
+          If you encounter difficulty to view task in WeCom internal browser, please open it in your phone's browser
+
+          The full url is:
+
+          ${frontendUrl}/work/@${todoid}
+
+          Of couse, you may also open MTC in your desktop browser to get the full functionalities
+
+          `,
+    },
+  };
+  let bots = await Webhook.find(
+    {
+      tenant: tenant,
+      owner: doer,
+      webhook: "wecombot_todo",
+      tplid: { $in: ["All", todo.tplid] },
+      key: { $exists: true },
+      $expr: { $eq: [{ $strLenCP: "$key" }, 36] },
+    },
+    { _id: 0, key: 1 }
+  ).lean();
+  let botKeys = bots.map((bot) => bot.key);
+  botKeys = [...new Set(botKeys)];
+  console.log("Found bot keys number", botKeys.length);
+  console.log(botKeys);
+  for (let i = 0; i < botKeys.length; i++) {
+    try {
+      let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKeys[i]}`;
+      await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
+        console.log("Wreck WeCom Bot TODO", botKeys[i]);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+};
+
+Engine.WreckPost = async (url, content) => {
+  console.log("WreckPost", url);
+  const wreck = Wreck.defaults({
+    headers: { "x-foo-bar": 123 },
+    agents: {
+      https: new Https.Agent({ maxSockets: 100 }),
+      http: new Http.Agent({ maxSockets: 1000 }),
+      httpsAllowUnauthorized: new Https.Agent({ maxSockets: 100, rejectUnauthorized: false }),
+    },
+  });
+  const wreckWithTimeout = wreck.defaults({
+    timeout: 5,
+  });
+  const readableStream = Wreck.toReadableStream("foo=bar");
+  const options = {
+    baseUrl: "https://www.example.com",
+    //payload: readableStream || "foo=bar" || Buffer.from("foo=bar"),
+    payload: content,
+    headers: {
+      /* http headers */
+      "Content-Type": "application/json",
+    },
+    redirects: 3,
+    beforeRedirect: (redirectMethod, statusCode, location, resHeaders, redirectOptions, next) =>
+      next(),
+    redirected: function (statusCode, location, req) {},
+    timeout: 1000, // 1 second, default: unlimited
+    maxBytes: 1048576, // 1 MB, default: unlimited
+    rejectUnauthorized: true || false,
+    agent: null, // Node Core http.Agent
+    //secureProtocol: "SSLv3_method", // The SSL method to use
+    //secureProtocol: "SSLv3_client_method", // The SSL method to use
+    //secureProtocol: "SSLv2_client_method",
+    //secureProtocol: "SSLv2_method",
+    //ciphers: "DES-CBC3-SHA", // The TLS ciphers to support
+  };
+  const promise = wreck.request("POST", url, options);
+  try {
+    const res = await promise;
+    const body = await Wreck.read(res, options);
+    console.log(body.toString());
+  } catch (err) {
+    // Handle errors
+  }
 };
 
 Client.cloneTodo = function (from_todo, newValues) {
@@ -3474,6 +3669,23 @@ const splitComment = function (str) {
   let tmp = str.split(/\s/);
   if (Array.isArray(tmp)) return tmp;
   else return [];
+};
+
+Engine.getWorkKVars = async function (tenant, email, todo) {
+  let ret = {};
+  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid);
+  let existingVars = await Parser.userGetVars(
+    tenant,
+    email,
+    todo.wfid,
+    "workflow",
+    [email],
+    ["EMP"]
+  );
+  Parser.mergeValueFrom(ret.kvars, existingVars);
+
+  ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
+  return ret;
 };
 
 //添加from_actions, following_ctions, parallel_actions, returnable and revocable
