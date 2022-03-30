@@ -915,6 +915,7 @@ Engine.__doneTodo = async function (
     //////////////////////////////////////////////////
     // 发送WeComBotMessage
     if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
+      console.log(`This node ${theWork.title} need to send wecom`);
       let template = await Template.findOne(
         { tenat: tenant, tplid: wf.tplid },
         { _id: 0, author: 1 }
@@ -929,6 +930,7 @@ Engine.__doneTodo = async function (
           $elemMatch: { key: wf.tplid },
         },
       });
+      console.log("Query List, got", wecomBot);
       if (wecomBot) {
         let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
           tenant,
@@ -938,6 +940,7 @@ Engine.__doneTodo = async function (
           workDecision,
           comment
         );
+        console.log("Query List got bot keys", wecomBot.entries[0].items);
         try {
           let botKeys = wecomBot.entries[0].items.split(";");
           if (botKeys.length > 0) {
@@ -952,7 +955,11 @@ Engine.__doneTodo = async function (
         } catch (e) {
           console.error(e);
         }
+      } else {
+        console.log("Query List return null");
       }
+    } else {
+      console.log(`This node ${theWork.title} does not send wecom`);
     }
     //////////////////////////////////////////////////
     //////////////////////////////////////////////////
