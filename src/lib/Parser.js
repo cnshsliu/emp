@@ -67,10 +67,18 @@ Parser.parse = async function (str) {
             }
 */
 
+/**
+ * Parser.mergeValueFrom = async() Merge value from another object
+ *
+ * @param {...} objA - 值被合并的对象，
+ * @param {...} objB - 合并来源对象
+ *
+ * @return {...} 返回合并后的对象，key从objA中来，objA中不存在的key值不会合并过来
+ */
 Parser.mergeValueFrom = async function (objA, objB) {
   for (let [name, valueDef] of Object.entries(objA)) {
     if (objB[name]) {
-      objA[name] = objB[name];
+      objA[name]["value"] = objB[name]["value"];
     }
   }
 };
@@ -124,37 +132,24 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
     return vars;
   }
 };
-/**
- * Get all vars without visi checking.
- *
- * @param {...} tenant -
- * @param {...} wfid - The id of workflow
- * @param {...} objid - the id of object, for whole workflow, use "workflow", for work, use it's workid
- * @param {...} doers = [] -
- * @param {...} notdoers = [] -
- *
- * @return {...}
- */
-Parser.sysGetVars = async function (tenant, wfid, objid, doers = [], notdoers = []) {
-  return await Parser._GetVars(tenant, "any", "EMP", wfid, objid, doers, notdoers);
-};
-
-Parser.sysGetEfficientVars = async function (tenant, wfid, objid, doers = [], notdoers = []) {
-  return await Parser._GetVars(tenant, "any", "EMP", wfid, objid, doers, notdoers);
-};
 
 /**
  * @param {...} tenant -
- * @param {...} forWhom - the doer's email
+ * @param {...} checkVisiForWhom - 用户过滤Visi
  * @param {...} wfid - The id of workflow
  * @param {...} objid - the id of object, for whole workflow, use "workflow", for work, use it's workid
- * @param {...} doers = [] -
- * @param {...} notdoers = [] -
+ * @param {...} doers = [] -只要不是空字符串数组，则只检查数组里的用户
+ * @param {...} notdoers = [] 只要不是空字符串数组，则去除数组里的用户
  */
-Parser.userGetVars = async function (tenant, forWhom, wfid, objid, doers = [], notdoers = []) {
-  return await Parser._GetVars(tenant, "any", forWhom, wfid, objid, doers, notdoers);
-};
-Parser._GetVars = async function (tenant, eff, forWhom, wfid, objid, doers = [], notdoers = []) {
+Parser.userGetVars = async function (
+  tenant,
+  checkVisiForWhom,
+  wfid,
+  objid,
+  doers = [],
+  notdoers = [],
+  efficient
+) {
   if (typeof wfid !== "string") {
     debugger;
     console.trace("wfid should be a string");
@@ -177,8 +172,8 @@ Parser._GetVars = async function (tenant, eff, forWhom, wfid, objid, doers = [],
   } else {
     filter = { tenant: tenant, wfid: wfid, objid: objid };
   }
-  if (eff.toLowerCase() !== "any") {
-    filter["eff"] = eff.toLowerCase();
+  if (efficient.toLowerCase() !== "any") {
+    filter["eff"] = efficient.toLowerCase();
   }
   let kvars = await KVar.find(filter).sort("createdAt");
   for (let i = 0; i < kvars.length; i++) {
@@ -198,17 +193,25 @@ Parser._GetVars = async function (tenant, eff, forWhom, wfid, objid, doers = [],
   }
 
   //如果formWhom不是EMP，而是邮箱，则需要检查visi
-  if (forWhom !== "EMP") {
+  if (checkVisiForWhom !== "EMP") {
     //处理kvar的可见行 visi,
     for (const [key, valueDef] of Object.entries(retResult)) {
       if (Tools.isEmpty(valueDef.visi)) continue;
       else {
-        let tmp = await Parser.getDoer(tenant, "", valueDef.visi, forWhom, wfid, null, null);
+        let tmp = await Parser.getDoer(
+          tenant,
+          "",
+          valueDef.visi,
+          checkVisiForWhom,
+          wfid,
+          null,
+          null
+        );
         visiPeople = tmp.map((x) => x.uid);
         console.log("found visi", valueDef.visi, visiPeople);
-        //如果去掉forWhom!=="EMP"会导致彻底不放出
+        //如果去掉checkVisiForWhom!=="EMP"会导致彻底不放出
         //EMP是用在代表系统， 系统应该都可以看到
-        if (visiPeople.includes(forWhom) === false) {
+        if (visiPeople.includes(checkVisiForWhom) === false) {
           delete retResult[key];
         }
       }
@@ -446,9 +449,9 @@ Parser.copyVars = async function (
   newKvar = await newKvar.save();
   return newKvar;
 };
-Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, doer) {
+Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, doer, efficient) {
   if (JSON.stringify(newvars) === "{}") return;
-  let oldVars = await Parser.sysGetVars(tenant, wfid, objid);
+  let oldVars = await Parser.userGetVars(tenant, "EMP", wfid, objid, [], [], "yes");
   for (const [name, valueDef] of Object.entries(newvars)) {
     if (typeof valueDef.value === "string") {
       while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
@@ -469,7 +472,7 @@ Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, do
     objid: objid,
     doer: doer,
     content: base64_vars_string,
-    eff: "yes",
+    eff: efficient.toLowerCase(),
   });
   kvar = await kvar.save();
 
@@ -499,7 +502,7 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
       return kv[0];
     });
   } else if (wfid) {
-    kvars = await Parser.sysGetVars(tenant, wfid, "workflow");
+    kvars = await Parser.userGetVars(tenant, "EMP", wfid, "workflow", [], [], "yes");
   }
 
   let m = false;

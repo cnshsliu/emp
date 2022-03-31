@@ -639,11 +639,10 @@ Engine.doWork = async function (
   comment
 ) {
   //workid, 如提供，按workid查节点，如未提供，按nodeid查节点
-  let fact_doer = doer;
   let fact_email = email;
   let todo_filter = {
     tenant: tenant,
-    doer: fact_doer,
+    doer: doer, //此时，如果是rehearsal，是演练者
     todoid: todoid,
     status: "ST_RUN",
     wfstatus: "ST_RUN",
@@ -663,7 +662,8 @@ Engine.doWork = async function (
     );
   }
 
-  fact_doer = await Engine.getWorkDoer(tenant, todo, email);
+  //此时，是真正的用户
+  let fact_doer = await Engine.getWorkDoer(tenant, todo, email);
   if (fact_doer === "NOT_YOUR_REHEARSAL") {
     throw new EmpError("NOT_YOUR_REHEARSAL", "Not your rehearsal");
   } else if (fact_doer === "NO_PERM_TO_DO") {
@@ -884,7 +884,15 @@ Engine.__doneTodo = async function (
   );
 
   if (comment) {
-    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
+    let all_visied_kvars = await Parser.userGetVars(
+      tenant,
+      doer,
+      todo.wfid,
+      "workflow",
+      [],
+      [],
+      "yes"
+    );
     comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
     if (comment.indexOf("[") >= 0) {
       comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
@@ -912,7 +920,16 @@ Engine.__doneTodo = async function (
     workNode.attr("doneat", isoNow);
     //place todo decision into kvars;
     kvars["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: workDecision };
-    await Parser.setVars(tenant, todo.round, todo.wfid, todo.nodeid, todo.workid, kvars, doer);
+    await Parser.setVars(
+      tenant,
+      todo.round,
+      todo.wfid,
+      todo.nodeid,
+      todo.workid,
+      kvars,
+      doer,
+      "yes"
+    );
     //////////////////////////////////////////////////
     // 发送WeComBotMessage
     if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
@@ -1176,7 +1193,16 @@ Engine.doCallback = async function (cbp, payload) {
   workNode.addClass("ST_DONE");
   workNode.attr("doneat", isoNow);
   if (payload.kvars) {
-    await Parser.setVars(tenant, cbp.round, cbp.wfid, cbp.nodeid, cbp.workid, payload.kvars, "EMP");
+    await Parser.setVars(
+      tenant,
+      cbp.round,
+      cbp.wfid,
+      cbp.nodeid,
+      cbp.workid,
+      payload.kvars,
+      "EMP",
+      "yes"
+    );
   }
 
   let nexts = [];
@@ -1561,7 +1587,15 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   workNode.removeClass("ST_RUN").addClass("ST_RETURNED");
   workNode.attr("doneat", isoNow);
   if (comment) {
-    let all_visied_kvars = await Parser.userGetVars(tenant, doer, todo.wfid, "workflow");
+    let all_visied_kvars = await Parser.userGetVars(
+      tenant,
+      doer,
+      todo.wfid,
+      "workflow",
+      [],
+      [],
+      "yes"
+    );
     comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
     if (comment.indexOf("[") >= 0) {
       comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
@@ -1571,7 +1605,16 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
       { $set: { comment: comment } }
     );
   }
-  await Parser.setVars(tenant, todo.round, todo.wfid, todo.nodeid, todo.workid, kvars, fact_doer);
+  await Parser.setVars(
+    tenant,
+    todo.round,
+    todo.wfid,
+    todo.nodeid,
+    todo.workid,
+    kvars,
+    fact_doer,
+    "yes"
+  );
 
   if (nexts.length > 0) {
     wfUpdate["pnodeid"] = nexts[0].from_nodeid;
@@ -1639,7 +1682,7 @@ Client.setKVarFromString = async function (tenant, round, wfid, nodeid, workid, 
       kvObj[kv[0].trim()] = v;
     }
   }
-  await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP");
+  await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP", "yes");
 };
 
 Client.getNodeType = function (jq) {
@@ -1777,7 +1820,15 @@ Client.yarkNode = async function (obj) {
       try {
         let tmp_subject = tpNode.find("subject").first().text();
         let tmp_body = tpNode.find("content").first().text();
-        let all_kvars = await Parser.userGetVars(obj.tenant, doers[i].uid, obj.wfid, "workflow");
+        let all_kvars = await Parser.userGetVars(
+          obj.tenant,
+          doers[i].uid,
+          obj.wfid,
+          "workflow",
+          [],
+          [],
+          "yes"
+        );
         if (Tools.hasValue(tmp_subject)) {
           mail_subject = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_subject));
           if (mail_subject.indexOf("[") >= 0) {
@@ -1849,7 +1900,16 @@ Client.yarkNode = async function (obj) {
     console.log("===PARSED==");
     console.log(parsed_code);
     console.log("===========");
-    let all_efficient_kvars = await Parser.sysGetEfficientVars(obj.tenant, obj.wfid, "workflow");
+    //取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
+    let all_efficient_kvars = await Parser.userGetVars(
+      obj.tenant,
+      "EMP",
+      obj.wfid,
+      "workflow",
+      [],
+      [],
+      "yes"
+    );
     if (JSON.stringify(all_efficient_kvars) === "{}") {
       console.error("all_efficient_kvars got {}, something must be wrong");
     }
@@ -1954,7 +2014,7 @@ Client.yarkNode = async function (obj) {
     //设置通过kvar()方法设置的进程参数
     codeRetObj["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: codeRetDecision };
     if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
-      await Parser.setVars(tenant, obj.round, obj.wfid, nodeid, workid, codeRetObj, "EMP");
+      await Parser.setVars(tenant, obj.round, obj.wfid, nodeid, workid, codeRetObj, "EMP", "yes");
     }
   } else if (tpNode.hasClass("AND")) {
     let andDone = await Common.checkAnd(
@@ -2123,7 +2183,15 @@ Client.yarkNode = async function (obj) {
       `<div class="work GROUND ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
     );
   } else if (tpNode.hasClass("SUB")) {
-    let parent_vars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
+    let parent_vars = await Parser.userGetVars(
+      obj.tenant,
+      "EMP",
+      obj.wfid,
+      "workflow",
+      [],
+      [],
+      "yes"
+    );
     let pbo = await Engine.getPboByWfId(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
     let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
@@ -2211,7 +2279,15 @@ Client.yarkNode = async function (obj) {
       parent_work.removeClass("ST_RUN");
       parent_work.addClass("ST_DONE");
       //Put child kvars to parent_work node in parent workflow
-      let child_kvars = await Parser.sysGetVars(obj.tenant, obj.wfid, "workflow");
+      let child_kvars = await Parser.userGetVars(
+        obj.tenant,
+        "EMP",
+        obj.wfid,
+        "workflow",
+        [],
+        [],
+        "yes"
+      );
       await Parser.setVars(
         obj.tenant,
         parent_work_round,
@@ -2219,7 +2295,8 @@ Client.yarkNode = async function (obj) {
         parent_nodeid,
         parent_workid,
         child_kvars,
-        "EMP"
+        "EMP",
+        "yes"
       );
       //KVAR above, 在流程结束时设置父亲流程中当前节点的参数
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
@@ -2315,7 +2392,8 @@ Client.yarkNode = async function (obj) {
       nodeid,
       workid,
       varsFromTemplateNode,
-      "EMP"
+      "EMP",
+      "no"
     );
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
     let existingSameNodeWorks = await Work.find({
@@ -2660,6 +2738,9 @@ Common.procNext = async function (
   }
 };
 
+/**
+ *
+ * No use at all
 Engine.defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId, defiedNodes) {
   if (defiedNodes.includes(afterThisNodeId)) return;
   defiedNodes.push(afterThisNodeId);
@@ -2683,6 +2764,7 @@ Engine.defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId,
     }
   }
 };
+*/
 
 Engine.getNextNodeIds = async function (tpRoot, nodeid) {
   let ret = [];
@@ -2956,7 +3038,8 @@ Client.newTodo = async function (
   });
   await todo.save();
 
-  let ew = await Cache.getUserEw(doer);
+  let sendEmailTo = rehearsal ? wfstarter : doer;
+  let ew = await Cache.getUserEw(sendEmailTo);
   if (typeof ew === "boolean" && ew === false) {
     console.log(doer, " does not receive email on new task");
     return;
@@ -2987,11 +3070,10 @@ Metatocome`;
 <br/>
 This mail should go to ${doer} but send to you because this is rehearsal';
 `;
-      doer = wfstarter;
     }
     mail_body += extra_body;
 
-    await Engine.sendTenantMail(tenant, doer, subject, mail_body);
+    await Engine.sendTenantMail(tenant, sendEmailTo, subject, mail_body);
   }
   //////////////////////////////////////////////////
   // Check wether user has wecom bot key for this tplid;
@@ -3404,7 +3486,7 @@ Engine.startWorkflow = async function (
   wf.attachments = attachments;
   wf = await wf.save();
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
-  await Parser.setVars(tenant, 0, wfid, "parent", "workflow", parent_vars, "EMP");
+  await Parser.setVars(tenant, 0, wfid, "parent", "workflow", parent_vars, "EMP", "yes");
   let an = {
     CMD: "yarkNode",
     tenant: tenant,
@@ -3693,17 +3775,17 @@ const splitComment = function (str) {
   else return [];
 };
 
+/**
+ * 取单一todo的变量值，可以是空，没有输入的
+ * todo的变量值没有输入，只有一种情况，那就是在procNext中处理ACTION类型时，从模版中去到的数据，模版中可能有缺省值，也可能没有值。所以，取单一工作项的参数值，需要使用any
+ * 然后，已经存在的值，也就是工作项完成后所记录的值，必须是yes
+ */
 Engine.getWorkKVars = async function (tenant, email, todo) {
   let ret = {};
-  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid);
-  let existingVars = await Parser.userGetVars(
-    tenant,
-    email,
-    todo.wfid,
-    "workflow",
-    [email],
-    ["EMP"]
-  );
+  //取得当前workid的kvars, efficient可以是no
+  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
+  //取得efficient为yes的所有变量值
+  let existingVars = await Parser.userGetVars(tenant, email, todo.wfid, "workflow", [], [], "yes");
   Parser.mergeValueFrom(ret.kvars, existingVars);
 
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
@@ -3766,22 +3848,13 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
           },
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
-  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid);
-  let existingVars = await Parser.userGetVars(
-    tenant,
-    email,
-    todo.wfid,
-    "workflow",
-    [email],
-    ["EMP"]
-  );
-  Parser.mergeValueFrom(ret.kvars, existingVars);
+  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
+  let all_visied_kvars = await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
+  Parser.mergeValueFrom(ret.kvars, all_visied_kvars);
 
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};
-  //不包括那些被放上去的var定义，这些定义的doer是EMP;
-  //Parser.userGetVars第二个参数，是包含哪些doer， 第三个参数，是不包含哪些doers
-  ret.wf.kvars = await Parser.userGetVars(tenant, email, wfid, "workflow", [], []);
+  ret.wf.kvars = all_visied_kvars;
   ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
   ret.wf.starter = wfRoot.attr("starter");
   ret.wf.wftitle = wfRoot.attr("wftitle");
@@ -3793,7 +3866,6 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
 
   let tmpInstruction = Parser.base64ToCode(Common.getInstruct(tpRoot, todo.nodeid));
-  let all_visied_kvars = await Parser.userGetVars(tenant, email, wfid, "workflow");
   tmpInstruction = Engine.compileContent(wfRoot, all_visied_kvars, tmpInstruction);
   if (tmpInstruction.indexOf("[") >= 0) {
     tmpInstruction = await Parser.replaceStringWithKVar(tenant, tmpInstruction, null, wfid);
@@ -3888,7 +3960,15 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
             },
           ];
     if (todos[i].decision) todoEntry.decision = todos[i].decision;
-    let kvars = await Parser.userGetVars(tenant, email, todos[i].wfid, todos[i].workid);
+    let kvars = await Parser.userGetVars(
+      tenant,
+      email,
+      todos[i].wfid,
+      todos[i].workid,
+      [],
+      [],
+      "yes"
+    );
     todoEntry.kvarsArr = Parser.kvarsToArray(kvars);
     todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui.includes("input"));
     tmpRet.push(todoEntry);
@@ -4437,9 +4517,9 @@ Engine.getKVars = async function (tenant, email, wfid, workid) {
   if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
   if (workid) {
-    return await Parser.userGetVars(tenant, email, wfid, workid);
+    return await Parser.userGetVars(tenant, email, wfid, workid, [], [], "yes");
   } else {
-    return await Parser.userGetVars(tenant, email, wfid, "workflow");
+    return await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
   }
 };
 
