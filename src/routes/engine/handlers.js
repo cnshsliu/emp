@@ -274,7 +274,12 @@ const SeeItWork = async function (req, h) {
     let tplid = "Metatocome Learning Guide";
     let filter = { tenant: tenant, tplid: tplid },
       update = {
-        $set: { author: author, authorName: await Cache.getUserName(author), doc: doc, ins: false },
+        $set: {
+          author: author,
+          authorName: await Cache.getUserName(tenant, author),
+          doc: doc,
+          ins: false,
+        },
       },
       options = { upsert: true, new: true };
     obj = await Template.findOneAndUpdate(filter, update, options);
@@ -336,7 +341,7 @@ const TemplatePut = async function (req, h) {
         tenant: tenant,
         tplid: tplid,
         author: myEmail,
-        authorName: await Cache.getUserName(myEmail),
+        authorName: await Cache.getUserName(tenant, myEmail),
 
         doc: req.payload.doc,
         lastUpdateBy: myEmail,
@@ -349,7 +354,7 @@ const TemplatePut = async function (req, h) {
       objtype: "Template",
       objid: obj.tplid,
       editor: myEmail,
-      editorName: await Cache.getUserName(myEmail),
+      editorName: await Cache.getUserName(tenant, myEmail),
     });
     edittingLog = await edittingLog.save();
     return h.response({ _id: obj._id, tplid: obj.tplid, updatedAt: obj.updatedAt });
@@ -489,7 +494,7 @@ const TemplateRename = async function (req, h) {
       throw new EmpError("NO_PERM", "You don't have permission to rename this template");
     tpl.tplid = req.payload.tplid;
     if (Tools.isEmpty(tpl.authorName)) {
-      tpl.authorName = await Cache.getUserName(tpl.author);
+      tpl.authorName = await Cache.getUserName(tenant, tpl.author);
     }
     tpl = await tpl.save();
 
@@ -679,6 +684,7 @@ const WorkflowRoutes = async function (req, h) {
 
 const WorkflowDumpInstemplate = async function (req, h) {
   try {
+    let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
     let wf = await Workflow.findOne(filter);
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
@@ -689,15 +695,15 @@ const WorkflowDumpInstemplate = async function (req, h) {
     let theTemplateDoc = `<div class="template" >${tpRoot.html()}</div>`;
 
     (filter = {
-      tenant: req.auth.credentials.tenant._id,
+      tenant: tenant,
       tplid: tplid,
     }),
       (update = {
         $set: {
-          tenant: req.auth.credentials.tenant._id,
+          tenant: tenant,
           tplid: tplid,
           author: req.auth.credentials.email,
-          authorName: await Cache.getUserName(req.auth.credentials.email),
+          authorName: await Cache.getUserName(tenant, req.auth.credentials.email),
           doc: theTemplateDoc,
           ins: true,
         },
@@ -733,7 +739,7 @@ const WorkflowStart = async function (req, h) {
       name: "starter",
     };
     kvars["starterCN"] = {
-      value: await Cache.getUserName(starter),
+      value: await Cache.getUserName(tenant, starter),
       label: "StarterCN",
       type: "plaintext",
       name: "starterCN",
@@ -1191,7 +1197,7 @@ const WorkflowSearch = async function (req, h) {
     });
 
     for (let i = 0; i < retObjs.length; i++) {
-      retObjs[i].starterCN = await Cache.getUserName(retObjs[i].starter);
+      retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter);
     }
     return { total, objs: retObjs };
   } catch (err) {
@@ -1744,7 +1750,12 @@ const TemplateImport = async function (req, h) {
     });
     let filter = { tenant: tenant, tplid: tplid },
       update = {
-        $set: { author: author, authorName: await Cache.getUserName(author), ins: false, doc: doc },
+        $set: {
+          author: author,
+          authorName: await Cache.getUserName(tenant, author),
+          ins: false,
+          doc: doc,
+        },
       },
       options = { upsert: true, new: true };
     obj = await Template.findOneAndUpdate(filter, update, options);
@@ -3117,7 +3128,7 @@ const CommentList = async function (req, h) {
     let filter = { tenant: tenant, toWhom: uid };
     let comments = await Comment.find(filter, { toWhom: 0 }).sort("-createdAt").lean();
     for (let i = 0; i < comments.length; i++) {
-      comments[i].cn = await Cache.getUserName(comments[i].who);
+      comments[i].cn = await Cache.getUserName(tenant, comments[i].who);
     }
 
     return h.response(comments);
@@ -3356,7 +3367,10 @@ const TodoSetDoer = async function (req, h) {
 
     await Todo.updateMany(filter, { $set: { doer: newDoerEmail } });
 
-    return h.response({ newdoer: newDoerEmail, newcn: await Cache.getUserName(newDoerEmail) });
+    return h.response({
+      newdoer: newDoerEmail,
+      newcn: await Cache.getUserName(tenant, newDoerEmail),
+    });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);

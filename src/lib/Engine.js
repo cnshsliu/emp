@@ -42,6 +42,8 @@ const EmpConfig = require("../config/emp");
 const Engine = {};
 const Client = {};
 const Common = {};
+const INJECT_INTERNAL_VARS = true;
+const NO_INTERNAL_VARS = false;
 
 const supportedClasses = [
   "ACTION",
@@ -884,7 +886,7 @@ Engine.__doneTodo = async function (
   );
 
   if (comment) {
-    let all_visied_kvars = await Parser.userGetVars(
+    let ALL_VISIED_KVARS = await Parser.userGetVars(
       tenant,
       doer,
       todo.wfid,
@@ -893,9 +895,15 @@ Engine.__doneTodo = async function (
       [],
       "yes"
     );
-    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
+    comment = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, comment);
     if (comment.indexOf("[") >= 0) {
-      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
+      comment = await Parser.replaceStringWithKVar(
+        tenant,
+        comment,
+        null,
+        ALL_VISIED_KVARS,
+        INJECT_INTERNAL_VARS
+      );
     }
   }
 
@@ -1103,7 +1111,7 @@ Engine.buildWorkDoneMarkdownMessage = async function (
     msgtype: "markdown",
     markdown: {
       content: `# ${theWork.title} 已完成
-Last done by ${await Cache.getUserName(doer)}
+Last done by ${await Cache.getUserName(tenant, doer)}
 # 节点决策: ${workDecision}
 ${comment ? comment : ""}
 # 工作项：
@@ -1144,8 +1152,8 @@ Engine.sendCommentNotification = async function (tenant, doer, wfid, todo, conte
     comment = await comment.save();
     /// Send out comment email
     let toWhomEmail = Tools.makeEmailSameDomain(anUid, doer);
-    let fromCN = await Cache.getUserName(doer);
-    let newCN = await Cache.getUserName(toWhomEmail);
+    let fromCN = await Cache.getUserName(tenant, doer);
+    let newCN = await Cache.getUserName(tenant, toWhomEmail);
     let frontendUrl = Tools.getFrontEndUrl();
     let mail_body = `Hello, ${newCN}, <br/><br/> ${fromCN} leave a comment for you:
 <br/><a href="${frontendUrl}/comment">Check it out </a><br/>
@@ -1284,7 +1292,22 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   if (comment) {
     comment = Engine.compileContent(wfRoot, {}, comment);
     if (comment.indexOf("[") >= 0) {
-      comment = await Parser.replaceStringWithKVar(tenant, comment, null, wfid);
+      let ALL_VISIED_KVARS = await Parser.userGetVars(
+        obj.tenant,
+        email,
+        obj.wfid,
+        "workflow",
+        [],
+        [],
+        "yes"
+      );
+      comment = await Parser.replaceStringWithKVar(
+        tenant,
+        comment,
+        null,
+        ALL_VISIED_KVARS,
+        INJECT_INTERNAL_VARS
+      );
     }
   }
   // 撤回 doc 中的 RUNNING node
@@ -1587,18 +1610,24 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   workNode.removeClass("ST_RUN").addClass("ST_RETURNED");
   workNode.attr("doneat", isoNow);
   if (comment) {
-    let all_visied_kvars = await Parser.userGetVars(
-      tenant,
-      doer,
-      todo.wfid,
-      "workflow",
-      [],
-      [],
-      "yes"
-    );
-    comment = Engine.compileContent(wfRoot, all_visied_kvars, comment);
+    comment = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, comment);
     if (comment.indexOf("[") >= 0) {
-      comment = await Parser.replaceStringWithKVar(tenant, comment, null, todo.wfid);
+      let ALL_VISIED_KVARS = await Parser.userGetVars(
+        tenant,
+        doer,
+        todo.wfid,
+        "workflow",
+        [],
+        [],
+        "yes"
+      );
+      comment = await Parser.replaceStringWithKVar(
+        tenant,
+        comment,
+        null,
+        ALL_VISIED_KVARS,
+        INJECT_INTERNAL_VARS
+      );
     }
     todo = await Todo.findOneAndUpdate(
       { tenant: tenant, wfid: todo.wfid, todoid: todo.todoid },
@@ -1815,30 +1844,52 @@ Client.yarkNode = async function (obj) {
     let mail_body = "Message from Metatocome";
     //let recipients = Common.getEmailRecipientsFromDoers(doers);
 
+    let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
+      obj.tenant,
+      "NOBODY", //except all visi controled kvars
+      obj.wfid,
+      "workflow",
+      [],
+      [],
+      "yes"
+    );
     for (let i = 0; i < doers.length; i++) {
       let recipients = doers[i].uid;
       try {
         let tmp_subject = tpNode.find("subject").first().text();
         let tmp_body = tpNode.find("content").first().text();
-        let all_kvars = await Parser.userGetVars(
-          obj.tenant,
-          doers[i].uid,
-          obj.wfid,
-          "workflow",
-          [],
-          [],
-          "yes"
-        );
+        //因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
+        //userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
         if (Tools.hasValue(tmp_subject)) {
-          mail_subject = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_subject));
+          mail_subject = Engine.compileContent(
+            wfRoot,
+            KVARS_WITHOUT_VISIBILITY,
+            Parser.base64ToCode(tmp_subject)
+          );
           if (mail_subject.indexOf("[") >= 0) {
-            mail_subject = await Parser.replaceStringWithKVar(tenant, mail_subject, null, obj.wfid);
+            mail_subject = await Parser.replaceStringWithKVar(
+              tenant,
+              mail_subject,
+              null,
+              KVARS_WITHOUT_VISIBILITY,
+              INJECT_INTERNAL_VARS
+            );
           }
         }
         if (Tools.hasValue(tmp_body)) {
-          mail_body = Engine.compileContent(wfRoot, all_kvars, Parser.base64ToCode(tmp_body));
+          mail_body = Engine.compileContent(
+            wfRoot,
+            KVARS_WITHOUT_VISIBILITY,
+            Parser.base64ToCode(tmp_body)
+          );
           if (mail_body.indexOf("[") >= 0) {
-            mail_body = await Parser.replaceStringWithKVar(tenant, mail_body, null, obj.wfid);
+            mail_body = await Parser.replaceStringWithKVar(
+              tenant,
+              mail_body,
+              null,
+              KVARS_WITHOUT_VISIBILITY,
+              INJECT_INTERNAL_VARS
+            );
           }
         }
       } catch (error) {
@@ -2177,6 +2228,7 @@ Client.yarkNode = async function (obj) {
       time: time,
       //TODO:
     });
+
     await delayTimer.save();
   } else if (tpNode.hasClass("GROUND")) {
     wfRoot.append(
@@ -2368,8 +2420,24 @@ Client.yarkNode = async function (obj) {
         tpNodeTitle = "Work of " + nodeid;
       }
     }
+    //标题中不能包含受visi控制的参数
     if (tpNodeTitle.indexOf("[") >= 0) {
-      tpNodeTitle = await Parser.replaceStringWithKVar(tenant, tpNodeTitle, null, wf.wfid);
+      let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
+        obj.tenant,
+        "NOBODY", //exclude all visied controled vars
+        obj.wfid,
+        "workflow",
+        [],
+        [],
+        "yes"
+      );
+      tpNodeTitle = await Parser.replaceStringWithKVar(
+        tenant,
+        tpNodeTitle,
+        null,
+        KVARS_WITHOUT_VISIBILITY,
+        INJECT_INTERNAL_VARS
+      );
     }
     //
     //
@@ -2471,7 +2539,7 @@ Engine.createTodo = async function (obj) {
       if (typeof obj.doer[i] === "string") doerEmail = obj.doer[i];
     }
     if (obj.doer[i].cn) doerName = obj.doer[i].cn;
-    else doerName = await Cache.getUserName(doerEmail);
+    else doerName = await Cache.getUserName(obj.tenant, doerEmail);
 
     if (Tools.isEmpty(doerName)) {
       console.warn(`createTodo: doer: ${doerEmail} does not exist.`);
@@ -2932,8 +3000,8 @@ Engine.transferWork = async function (tenant, whom, myEmail, workid) {
     return whomUser;
   }
 
-  let fromCN = await Cache.getUserName(myEmail);
-  let newCN = await Cache.getUserName(newDoer);
+  let fromCN = await Cache.getUserName(tenant, myEmail);
+  let newCN = await Cache.getUserName(tenant, newDoer);
   let frontendUrl = Tools.getFrontEndUrl();
   let mail_body = `Hello, ${newCN}, <br/><br/> ${fromCN} transferred a task to you:
 <br/><a href="${frontendUrl}/work/@${workid}">${work.title} </a><br/>
@@ -3044,7 +3112,7 @@ Client.newTodo = async function (
     console.log(doer, " does not receive email on new task");
     return;
   }
-  let cn = await Cache.getUserName(doer);
+  let cn = await Cache.getUserName(tenant, doer);
   let frontendUrl = Tools.getFrontEndUrl();
   if (ew.email) {
     let mail_body = `Hello, ${cn}, new task is comming in:
@@ -3449,7 +3517,9 @@ Engine.startWorkflow = async function (
   let tpl = await Template.findOne(filter);
   let isoNow = Tools.toISOString(new Date());
   wfid = Tools.isEmpty(wfid) ? uuidv4() : wfid;
-  wftitle = Tools.isEmpty(wftitle) ? (await Cache.getUserName(starter)) + "/" + tplid : wftitle;
+  wftitle = Tools.isEmpty(wftitle)
+    ? (await Cache.getUserName(tenant, starter)) + "/" + tplid
+    : wftitle;
   teamid = Tools.isEmpty(teamid) ? "" : teamid;
   let startDoc =
     `<div class="process">` +
@@ -3696,7 +3766,7 @@ Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
   if (sortdef) option.sort = sortdef;
   let wfs = await Workflow.find(filter, { doc: 0 }, option).lean();
   for (let i = 0; i < wfs.length; i++) {
-    wfs[i].starterCN = await Cache.getUserName(wfs[i].starter);
+    wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter);
   }
   return wfs;
 };
@@ -3811,6 +3881,11 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   let tpNode = tpRoot.find("#" + todo.nodeid);
   let workNode = wfRoot.find("#" + todo.workid);
   let ret = {};
+  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
+  let ALL_VISIED_KVARS = await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
+  Parser.mergeValueFrom(ret.kvars, ALL_VISIED_KVARS);
+
+  ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.todoid = todo.todoid;
   ret.tenant = todo.tenant;
   ret.doer = todo.doer;
@@ -3820,7 +3895,13 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.workid = todo.workid;
   ret.title = todo.title;
   if (ret.title.indexOf("[") >= 0) {
-    ret.title = await Parser.replaceStringWithKVar(tenant, ret.title, null, wfid);
+    ret.title = await Parser.replaceStringWithKVar(
+      tenant,
+      ret.title,
+      null,
+      ALL_VISIED_KVARS,
+      INJECT_INTERNAL_VARS
+    );
   }
   ret.status = todo.status;
   ret.wfstarter = todo.wfstarter;
@@ -3843,18 +3924,13 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
           {
             doer: todo.doer,
             comment: todo.comment.trim(),
-            cn: await Cache.getUserName(todo.doer),
+            cn: await Cache.getUserName(tenant, todo.doer),
             splitted: splitComment(todo.comment.trim()),
           },
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
-  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
-  let all_visied_kvars = await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
-  Parser.mergeValueFrom(ret.kvars, all_visied_kvars);
-
-  ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.wf = {};
-  ret.wf.kvars = all_visied_kvars;
+  ret.wf.kvars = ALL_VISIED_KVARS;
   ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
   ret.wf.starter = wfRoot.attr("starter");
   ret.wf.wftitle = wfRoot.attr("wftitle");
@@ -3866,9 +3942,15 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
 
   let tmpInstruction = Parser.base64ToCode(Common.getInstruct(tpRoot, todo.nodeid));
-  tmpInstruction = Engine.compileContent(wfRoot, all_visied_kvars, tmpInstruction);
+  tmpInstruction = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
   if (tmpInstruction.indexOf("[") >= 0) {
-    tmpInstruction = await Parser.replaceStringWithKVar(tenant, tmpInstruction, null, wfid);
+    tmpInstruction = await Parser.replaceStringWithKVar(
+      tenant,
+      tmpInstruction,
+      null,
+      ALL_VISIED_KVARS,
+      INJECT_INTERNAL_VARS
+    );
   }
   ret.instruct = Parser.codeToBase64(tmpInstruction);
 
@@ -3955,7 +4037,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
             {
               doer: todos[i].doer,
               comment: todos[i].comment.trim(),
-              cn: await Cache.getUserName(todos[i].doer),
+              cn: await Cache.getUserName(tenant, todos[i].doer),
               splitted: splitComment(todos[i].comment.trim()),
             },
           ];
@@ -3970,7 +4052,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       "yes"
     );
     todoEntry.kvarsArr = Parser.kvarsToArray(kvars);
-    todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui.includes("input"));
+    todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui && x.ui.includes("input"));
     tmpRet.push(todoEntry);
   }
   //把相同workid聚合起来
@@ -3983,8 +4065,8 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       tmpRet[i].doers = [];
       tmpRet[i].doers.push({
         uid: tmpRet[i].doer,
-        cn: await Cache.getUserName(tmpRet[i].doer),
-        signature: await Cache.getUserSignature(tmpRet[i].doer),
+        cn: await Cache.getUserName(tenant, tmpRet[i].doer),
+        signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
@@ -3999,8 +4081,8 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
       ret[existing_index].doers.push({
         uid: tmpRet[i].doer,
-        cn: await Cache.getUserName(tmpRet[i].doer),
-        signature: await Cache.getUserSignature(tmpRet[i].doer),
+        cn: await Cache.getUserName(tenant, tmpRet[i].doer),
+        signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
         todoid: tmpRet[i].todoid,
         doneat: tmpRet[i].doneat,
         status: tmpRet[i].status,
@@ -4028,7 +4110,7 @@ Engine.__getTodosByWorkid = async function (tenant, workid, full) {
       .sort("-updatedAt")
       .lean();
   for (let i = 0; i < todos.length; i++) {
-    todos[i].cn = await Cache.getUserName(todos[i].doer);
+    todos[i].cn = await Cache.getUserName(tenant, todos[i].doer);
   }
   return todos;
 };
@@ -4560,9 +4642,12 @@ Common.getDoer = async function (
   kvarString,
   insertDefault
 ) {
-  let ret = await Parser.getDoer(tenant, teamid, pds, starter, wfid, wfRoot, kvarString);
-  if (insertDefault && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
-    ret = [{ uid: starter, cn: await Cache.getUserName(starter) }];
+  let ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+  if (pds !== "DEFAULT") {
+    ret = await Parser.getDoer(tenant, teamid, pds, starter, wfid, wfRoot, kvarString);
+    if (insertDefault && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
+      ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+    }
   }
   return ret;
 };

@@ -38,27 +38,29 @@ internals.getUserEw = async function (email) {
   }
 };
 
-internals.getUserName = async function (email) {
+internals.getUserName = async function (tenant, email) {
+  email = await internals.ensureTenantEmail(tenant, email);
   let username = await asyncRedisClient.get("name_" + email);
   if (username) {
     return username;
   } else {
-    let user = await User.findOne({ email: email }, { username: 1, ew: 1 });
+    let user = await User.findOne({ tenant: tenant, email: email }, { username: 1, ew: 1 });
     if (user) {
       await internals.setUserName(email, user.username, 60);
       return user.username;
     } else {
+      console.warn("Cache.getUserName, Email:", email, " not found");
       return "USER_NOT_FOUND";
     }
   }
 };
 
-internals.getUserSignature = async function (email) {
+internals.getUserSignature = async function (tenant, email) {
   let signature = await asyncRedisClient.get("signature_" + email);
   if (signature) {
     return signature;
   } else {
-    let user = await User.findOne({ email: email }, { signature: 1 });
+    let user = await User.findOne({ tenant: tenant, email: email }, { signature: 1 });
     if (user) {
       let setTo = "";
       if (user.signature) setTo = user.signature;
@@ -78,7 +80,7 @@ internals.getUserOU = async function (tenant, email) {
   if (ouCode) {
     return ouCode;
   } else {
-    email = await internals.makeTenantEmail(tenant, email);
+    email = await internals.ensureTenantEmail(tenant, email);
     let filter = { tenant: tenant, uid: email };
     let theStaff = await OrgChart.findOne(filter);
     if (theStaff) {
@@ -86,12 +88,13 @@ internals.getUserOU = async function (tenant, email) {
       await asyncRedisClient.expire(key, 60);
       return theStaff.ou;
     } else {
+      console.warn("Cache.getUserOU, Email:", email, " not found");
       return "USER_NOT_FOUND";
     }
   }
 };
 
-internals.makeTenantEmail = async function (tenant, email) {
+internals.ensureTenantEmail = async function (tenant, email) {
   if (email.indexOf("@") > 0) return email;
   else {
     let theTenant = await Tenant.findOne({ _id: tenant });

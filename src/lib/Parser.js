@@ -1,5 +1,6 @@
 const Cheerio = require("cheerio").default;
 const lodash = require("lodash");
+const Moment = require("moment");
 const Tools = require("../tools/tools.js");
 const { EmpError } = require("./EmpError");
 const Team = require("../database/models/Team");
@@ -9,7 +10,7 @@ const OrgChartHelper = require("./OrgChartHelper");
 //const Engine = require("./Engine");
 
 const Parser = {};
-async function addOneUserToRoleResolver(arr, user) {
+async function addOneUserToRoleResolver(tenant, arr, user) {
   try {
     if (!user) return;
     let uid = null;
@@ -26,7 +27,7 @@ async function addOneUserToRoleResolver(arr, user) {
     if (typeof user === "object" && user.uid) {
       arr.push(user);
     } else if (typeof user === "string") {
-      let username = await Cache.getUserName(user);
+      let username = await Cache.getUserName(tenant, user);
       arr.push({ uid: user, cn: username });
     }
     return arr;
@@ -104,7 +105,7 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
         vars[name]["display"] = await OrgChartHelper.getOuFullCN(tenant, valueDef.value);
       } else if (name.startsWith("usr_") || name.startsWith("user_")) {
         if (valueDef.value) {
-          let theCN = await Cache.getUserName(valueDef.value);
+          let theCN = await Cache.getUserName(tenant, valueDef.value);
           vars["cn_" + name] = { ui: [], value: theCN, label: vars[name]["label"] + "CN" };
           //插入display
           vars[name]["display"] = theCN;
@@ -155,7 +156,7 @@ Parser.userGetVars = async function (
     console.trace("wfid should be a string");
   }
   let retResult = {};
-  const mergeElementVars = async function (tenant, base64_string, allVars) {
+  const mergeBase64Vars = async function (tenant, destVars, base64_string) {
     let code = Parser.base64ToCode(base64_string);
     let jsonVars = {};
     try {
@@ -163,41 +164,55 @@ Parser.userGetVars = async function (
     } catch (err) {
       console.log(err);
     }
-    allVars = await Parser.mergeVars(tenant, allVars, jsonVars);
-    return allVars;
+    destVars = await Parser.mergeVars(tenant, destVars, jsonVars);
+    return destVars;
   };
   let filter = {};
+  //如果是workflow，则就是查询流程中所有数据，否则，只查询objid这个节点的数据
   if (objid === "workflow") {
     filter = { tenant: tenant, wfid: wfid };
   } else {
     filter = { tenant: tenant, wfid: wfid, objid: objid };
   }
+  //如果efficient不是any，则添加上yes和no的条件
   if (efficient.toLowerCase() !== "any") {
     filter["eff"] = efficient.toLowerCase();
   }
+  //这个 createdAt先后顺序sort非常关键，保障新的覆盖老的
   let kvars = await KVar.find(filter).sort("createdAt");
+
   for (let i = 0; i < kvars.length; i++) {
     let includeIt = true;
     let doer = kvars[i].doer;
     if (!doer) doer = "EMP";
+    // 添加白名单用户的kvar
     if (doers.length > 0) {
       if (doers.indexOf(doer) < 0) includeIt = false;
       else includeIt = true;
     }
+    // 去除黑名单用户的kvar
     if (includeIt && notdoers.length > 0) {
       if (notdoers.indexOf(doer) >= 0) includeIt = false;
     }
     if (includeIt) {
-      retResult = await mergeElementVars(tenant, kvars[i].content, retResult);
+      retResult = await mergeBase64Vars(tenant, retResult, kvars[i].content);
     }
   }
 
+  //使visi控制配置发生作用，如果某个变量设置了visi，则只有visi中设置的用户能够看到这些数据
   //如果formWhom不是EMP，而是邮箱，则需要检查visi
+  //EMP是用在代表系统， 系统应该都可以看到全部
+  //只有当不是EMP时，执行后续检查
   if (checkVisiForWhom !== "EMP") {
     //处理kvar的可见行 visi,
     for (const [key, valueDef] of Object.entries(retResult)) {
+      //如果没有定义，visi，则公开
       if (Tools.isEmpty(valueDef.visi)) continue;
-      else {
+      //如果用户为NOBODY，则保护起来
+      else if (checkVisiForWhom === "NOBODY") {
+        delete retResult[key];
+      } else {
+        //检查具体用户是否在visi中
         let tmp = await Parser.getDoer(
           tenant,
           "",
@@ -208,9 +223,6 @@ Parser.userGetVars = async function (
           null
         );
         visiPeople = tmp.map((x) => x.uid);
-        console.log("found visi", valueDef.visi, visiPeople);
-        //如果去掉checkVisiForWhom!=="EMP"会导致彻底不放出
-        //EMP是用在代表系统， 系统应该都可以看到
         if (visiPeople.includes(checkVisiForWhom) === false) {
           delete retResult[key];
         }
@@ -223,7 +235,7 @@ Parser.userGetVars = async function (
 
 Parser.sysGetTemplateVars = async function (tenant, elem) {
   let ret = {};
-  const mergeTplVars = async function (elem, allVars) {
+  const mergeTplVars = async function (elem, destVars) {
     let base64_string = elem.text();
     let code = Parser.base64ToCode(base64_string);
     let jsonVars = {};
@@ -232,8 +244,8 @@ Parser.sysGetTemplateVars = async function (tenant, elem) {
     } catch (err) {
       console.log(err);
     }
-    allVars = await Parser.mergeVars(tenant, allVars, jsonVars);
-    return allVars;
+    destVars = await Parser.mergeVars(tenant, destVars, jsonVars);
+    return destVars;
   };
   if (elem.hasClass("kvars")) {
     ret = await mergeTplVars(elem, ret);
@@ -355,7 +367,7 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   //没有设Team或者没有设Role，就用starter
   //因为这是从Team中取数据，所以，当Teamid等于NOTSET或者DEFAULT的时候，直接返回stater是合理的
   if (Tools.isEmpty(aRole) || aRole === "DEFAULT") {
-    ret = [{ uid: starter, cn: await Cache.getUserName(starter) }];
+    ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
     return ret;
   }
   if (wfRoot) {
@@ -382,7 +394,7 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
     }
   }
   if (Tools.isEmpty(teamid) || Tools.isEmpty(aRole) || teamid === "NOTSET" || aRole === "DEFAULT") {
-    return [{ uid: starter, cn: await Cache.getUserName(starter) }];
+    return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
   }
   try {
     //找出团队 team
@@ -412,7 +424,7 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
     console.debug(err);
   }
   if (typeof doer === "string") {
-    ret = [{ uid: doer, cn: await Cache.getUserName(doer) }];
+    ret = [{ uid: doer, cn: await Cache.getUserName(tenant, doer) }];
   } else if (Array.isArray(doer)) {
     ret = doer;
   } else {
@@ -488,8 +500,13 @@ Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, do
  *
  * @return {...}
  */
-Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wfid) {
-  let kvars = {};
+Parser.replaceStringWithKVar = async function (
+  tenant,
+  theString,
+  kvarString,
+  kvars,
+  withInternals
+) {
   if (kvarString) {
     let kvarPairs = Parser.splitStringToArray(kvarString, ";");
     kvarPairs.map((x) => {
@@ -501,8 +518,9 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
       }
       return kv[0];
     });
-  } else if (wfid) {
-    kvars = await Parser.userGetVars(tenant, "EMP", wfid, "workflow", [], [], "yes");
+  }
+  if (withInternals) {
+    kvars = Parser.injectInternalVars(kvars);
   }
 
   let m = false;
@@ -521,6 +539,27 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
   return theString;
 };
 
+Parser.injectInternalVars = (kvars) => {
+  let internalVars = {};
+  let now = Moment(new Date());
+  internalVars["$$isoWeek"] = { label: "ISOWeek", value: now.isoWeek() };
+  internalVars["$$isoWeeksInISOWeekYear"] = {
+    label: "ISOWeeksInSIOWeekYear",
+    value: now.isoWeeksInISOWeekYear(),
+  };
+  internalVars["$$isoWeekYear"] = { label: "ISOWeekYear", value: now.isoWeekYear() };
+  internalVars["$$isoWeekDesc"] = {
+    label: "ISOWeekDesc",
+    value: `W${now.isoWeek()}`,
+  };
+  internalVars["$$isoWeekDescFull"] = {
+    label: "ISOWeekDescFull",
+    value: `W${now.isoWeek()}/${now.isoWeeksInISOWeekYear()}-${now.isoWeekYear()}`,
+  };
+
+  return lodash.merge(kvars, internalVars);
+};
+
 /**
  *  Get Doer from PDS
  *
@@ -536,7 +575,7 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvarString, wf
 Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kvarString) {
   //If there is team definition in PDS, use it.
   //if PDS is empty, always use starter
-  if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(starter) }];
+  if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
   if ((kvarString || wfid) && pds.match(/\[(.+)\]/)) {
     pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, wfid);
   }
@@ -570,7 +609,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
       } else {
         email = `${tmpEmail}${starterEmailSuffix}`;
       }
-      let cn = await Cache.getUserName(email);
+      let cn = await Cache.getUserName(tenant, email);
       if (cn === "USER_NOT_FOUND") tmp = [];
       else tmp = [{ uid: `${email}`, cn: cn }];
     } else if (rdsPart.startsWith("T:")) {
@@ -580,7 +619,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
     }
     if (Array.isArray(tmp)) {
       for (let i = 0; i < tmp.length; i++) {
-        ret = await addOneUserToRoleResolver(ret, tmp[i]);
+        ret = await addOneUserToRoleResolver(tenant, ret, tmp[i]);
       }
     } else {
       if (typeof tmp === "string") {
@@ -594,7 +633,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
           tmp
         );
       } else {
-        ret = await addOneUserToRoleResolver(ret, tmp);
+        ret = await addOneUserToRoleResolver(tenant, ret, tmp);
       }
     }
   }

@@ -65,7 +65,7 @@ const OrgChartHelper = {
     else return "unknown ou";
   },
   getStaff: async function (tenant, email) {
-    email = await Cache.makeTenantEmail(tenant, email);
+    email = await Cache.ensureTenantEmail(tenant, email);
     let filter = { tenant: tenant, uid: email };
     let theStaff = await OrgChart.findOne(filter);
     return theStaff;
