@@ -5,6 +5,7 @@ const Tools = require("../tools/tools.js");
 const { EmpError } = require("./EmpError");
 const Team = require("../database/models/Team");
 const KVar = require("../database/models/KVar");
+const Cell = require("../database/models/Cell");
 const Cache = require("./Cache");
 const OrgChartHelper = require("./OrgChartHelper");
 //const Engine = require("./Engine");
@@ -152,7 +153,6 @@ Parser.userGetVars = async function (
   efficient
 ) {
   if (typeof wfid !== "string") {
-    debugger;
     console.trace("wfid should be a string");
   }
   let retResult = {};
@@ -560,6 +560,19 @@ Parser.injectInternalVars = (kvars) => {
   return lodash.merge(kvars, internalVars);
 };
 
+Parser.injectCells = async (tenant, kvars) => {
+  let cellVars = {};
+  for (let [name, valueDef] of Object.entries(kvars)) {
+    if (name.startsWith("csv_")) {
+      let fileServerId = valueDef.value;
+      let cell = await Cell.findOne({ tenant: tenant, serverId: fileServerId }, { _id: 0 }).lean();
+      if (cell) {
+        valueDef.value = cell.cells;
+      }
+    }
+  }
+};
+
 /**
  *  Get Doer from PDS
  *
@@ -589,7 +602,6 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   let starterEmailSuffix = starter.substring(starter.indexOf("@"));
   let arr = Parser.splitStringToArray(pds);
   let tmp = [];
-  console.log("KvarStrring: ", kvarString);
   let kvars = {};
 
   for (let i = 0; i < arr.length; i++) {
@@ -647,7 +659,7 @@ Parser.kvarsToArray = function (kvars) {
     //START Speculate variable type
     //based on prefix_ of name
     let matchResult = name.match(
-      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|radio|checkbox|cb|ou|usr|user|tbl)_"
+      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|csv|radio|checkbox|cb|ou|usr|user|tbl)_"
     );
     tmp.type = "plaintext";
     if (matchResult) {
@@ -758,6 +770,45 @@ Parser.isAdmin = async function (me) {
     throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
   }
   return true;
+};
+
+Parser.getUserCells = function (cells, user) {
+  for (let r = 1; r < cells.length; r++) {
+    if (cells[r][0].trim() === user) {
+      return cells[r];
+    }
+  }
+  return [];
+};
+Parser.getUserCellsTableAsHTMLByUser = function (cells, user) {
+  let userIndex = -1;
+  for (let r = 1; r < cells.length; r++) {
+    if (cells[r][0].trim() === Tools.getEmailPrefix(user)) {
+      userIndex = r;
+      break;
+    }
+  }
+  if (userIndex < 0) {
+    return `user [${user}] not found in cells`;
+  }
+  return Parser.getUserCellsTableAsHTMLByUserIndex(cells, userIndex);
+};
+
+Parser.getUserCellsTableAsHTMLByUserIndex = function (cells, userIndex) {
+  let tblHtml = `<table style="font-family: Arial, Helvetica, sans-serif; border-collapse: collapse; width: 100%;">`;
+  tblHtml += `<thead><tr>`;
+  for (let cj = 0; cj < cells[0].length; cj++) {
+    tblHtml += `<th style="border: 1px solid #ddd; padding: 8px; padding-top: 12px; padding-bottom: 12px; text-align: left; background-color: #4caf50; color: white;">${cells[0][cj]}</th>`;
+  }
+  tblHtml += "</tr></thead>";
+  tblHtml += "<tbody>";
+  let userCells = cells[userIndex];
+  for (let cj = 0; cj < userCells.length; cj++) {
+    tblHtml += `<td style="border: 1px solid #ddd; padding: 8px;">${userCells[cj]}</td>`;
+  }
+  tblHtml += "</tbody>";
+  tblHtml += `</table>`;
+  return tblHtml;
 };
 
 const testStr = "abcd/efgh ijkl\nmnop;qrst, uvwx\ryzab  cdef; ghij/klmn/opqr,/stuv";

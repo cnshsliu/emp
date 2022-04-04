@@ -17,6 +17,7 @@ const User = require("../../database/models/User");
 const Todo = require("../../database/models/Todo");
 const Route = require("../../database/models/Route");
 const List = require("../../database/models/List");
+const Cell = require("../../database/models/Cell");
 const Comment = require("../../database/models/Comment");
 const CbPoint = require("../../database/models/CbPoint");
 const Team = require("../../database/models/Team");
@@ -792,23 +793,79 @@ const WorkflowAddFile = async function (req, h) {
     let email = req.auth.credentials.email;
     let wfid = req.payload.wfid;
     let pondfiles = req.payload.pondfiles;
+    let attachFiles = [];
+    let csvFiles = [];
     if (pondfiles.length > 0) {
       pondfiles = pondfiles.map((x) => {
         x.author = email;
         x.forKey = req.payload.forKey;
         return x;
       });
-      await Workflow.findOneAndUpdate(
-        { tenant, wfid },
-        { $addToSet: { attachments: { $each: pondfiles } } }
-      );
+      attachFiles = pondfiles.filter((x) => x.forKey.startsWith("csv_") === false);
+      csvFiles = pondfiles.filter((x) => x.forKey.startsWith("csv_") === true);
+      if (attachFiles.length > 0) {
+        await Workflow.findOneAndUpdate(
+          { tenant, wfid },
+          { $addToSet: { attachments: { $each: attachFiles } } }
+        );
+      }
     }
 
-    let workflow = await Workflow.findOne({ tenant, wfid }, { doc: 0 });
-    return h.response(workflow.attachments);
+    if (attachFiles.length > 0) {
+      let workflow = await Workflow.findOne({ tenant, wfid }, { doc: 0 });
+      return h.response(workflow.attachments);
+    }
+    if (csvFiles.length > 0) {
+      await __saveCSVAsCells(tenant, wfid, csvFiles);
+      return h.response("CSV accepted");
+    }
+    return h.response("No file uploaded, neither attachment nor csv");
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const __saveCSVAsCells = async function (tenant, wfid, csvPondFiles) {
+  console.log(JSON.stringify(csvPondFiles));
+  const __doConvert = async (pondFile) => {
+    let filepondfile = Tools.getFilePondFile(tenant, pondFile.author, pondFile.serverId);
+    const csv = Fs.readFileSync(filepondfile.fullPath, "utf8");
+    let cells = [];
+    let rows = csv.split(/[\n|\r]/);
+    let colsCount = 0;
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      if (rows[rowIndex].trim().length === 0) continue;
+      let cols = rows[rowIndex].split(",");
+      if (!Tools.isArray(cols)) {
+        continue;
+      }
+      cells.push(cols);
+    }
+
+    let cell = new Cell({
+      serverId: pondFile.serverId,
+      realName: pondFile.realName,
+      contentType: pondFile.contentType,
+      cells: cells,
+    });
+
+    cell = await Cell.findOneAndUpdate(
+      { tenant: tenant, wfid: wfid, stepid: pondFile.stepid, forKey: pondFile.forKey },
+      {
+        $set: {
+          author: pondFile.author,
+          serverId: pondFile.serverId,
+          realName: pondFile.realName,
+          contentType: pondFile.contentType,
+          cells: cells,
+        },
+      },
+      { upsert: true, new: true }
+    );
+  };
+  for (let i = 0; i < csvPondFiles.length; i++) {
+    await __doConvert(csvPondFiles[i]);
   }
 };
 const WorkflowRemoveAttachment = async function (req, h) {
@@ -3533,7 +3590,7 @@ const CodeTry = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let retMsg = { message: "" };
     let code = req.payload.code;
-    retMsg.message = await Client.runCode(tenant, "codetry", {}, code, true);
+    retMsg.message = await Engine.runCode(tenant, "codetry", {}, code, true);
 
     return h.response(retMsg);
   } catch (err) {
@@ -3562,6 +3619,9 @@ const FilePondProcess = async function (req, h) {
         let contentType = filepond[i]["headers"]["content-type"];
         let realName = filepond[i]["filename"];
         let serverId = uuidv4();
+        serverId = serverId.replace(/-/g, "");
+        //serverId = Buffer.from(serverId, "hex").toString("base64");
+        console.log(serverId);
         let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
         if (fs.existsSync(filepondfile.folder) === false)
           fs.mkdirSync(filepondfile.folder, { recursive: true });
@@ -3720,6 +3780,28 @@ const TemplateSetWecomBot = async function (req, h) {
   }
 };
 
+const CellsRead = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let fileId = req.payload.fileId;
+
+    let cell = await Cell.findOne({ tenant: tenant, serverId: fileId }, { _id: 0 }).lean();
+    if (cell) {
+      if (cell.author !== myEmail) {
+        return h.response("Only original author can read this CSV data");
+      } else {
+        return h.response(cell);
+      }
+    } else {
+      throw EmpError("NOT_FOUND", "Cell not found");
+    }
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 module.exports = {
   TemplateCreate,
   TemplateDesc,
@@ -3841,4 +3923,5 @@ module.exports = {
   FormulaEval,
   WecomBotForTodoSet,
   WecomBotForTodoGet,
+  CellsRead,
 };

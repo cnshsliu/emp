@@ -236,7 +236,7 @@ const Tools = {
   },
   getEmailPrefix: function (email) {
     let tmp = email.indexOf("@");
-    if (tmp < 0) return "notemail";
+    if (tmp < 0) return email;
     return email.substring(0, tmp);
   },
   sendInvitationEmail_for_joinOrgChart: async function (ZMQ, admin_username, admin_email, email) {

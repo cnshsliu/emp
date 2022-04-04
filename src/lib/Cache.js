@@ -94,11 +94,29 @@ internals.getUserOU = async function (tenant, email) {
   }
 };
 
+internals.getTenantSiteId = async function (tenant_id) {
+  let theKey = "TNTSITEID_" + tenant_id;
+  let ret = await asyncRedisClient.get(theKey);
+  if (!ret) {
+    let theTenant = await Tenant.findOne({ _id: tenant_id });
+    if (theTenant) {
+      let siteId = theTenant.site;
+      await asyncRedisClient.set(theKey, siteId);
+      await asyncRedisClient.expire(theKey, 30 * 24 * 60 * 60);
+      ret = siteId;
+    }
+  }
+  return ret;
+};
+
 internals.ensureTenantEmail = async function (tenant, email) {
-  if (email.indexOf("@") > 0) return email;
-  else {
-    let theTenant = await Tenant.findOne({ _id: tenant });
-    let siteDomain = await this.getSiteDomain(theTenant.site);
+  if (email.indexOf("@") > 0) {
+    let siteId = await this.getTenantSiteId(tenant);
+    let siteDomain = await this.getSiteDomain(siteId);
+    return email.substring(0, email.indexOf("@")) + siteDomain;
+  } else {
+    let siteId = await this.getTenantSiteId(tenant);
+    let siteDomain = await this.getSiteDomain(siteId);
     email = email + siteDomain;
     return email;
   }

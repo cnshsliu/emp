@@ -2562,6 +2562,25 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/cells/read",
+    handler: Handlers.CellsRead,
+    config: {
+      description: "Read Cells",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          fileId: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
 ];
 
 module.exports = internals;

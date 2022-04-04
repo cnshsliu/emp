@@ -28,6 +28,7 @@ var TodoSchema = new Schema(
     tplid: { type: String, required: [true, "不能为空"], index: true },
     wftitle: { type: String, required: [true, "不能为空"], index: false },
     title: { type: String, required: true },
+    origtitle: { type: String, required: true },
     comment: { type: String },
     role: { type: String },
     byroute: { type: String },
@@ -40,6 +41,7 @@ var TodoSchema = new Schema(
     doneat: { type: String, required: false },
     rehearsal: { type: Boolean, required: true, default: false, index: true },
     teamid: { type: String, required: false, default: "" },
+    cellInfo: { type: String, required: false, default: "" },
   },
   { timestamps: true }
 );

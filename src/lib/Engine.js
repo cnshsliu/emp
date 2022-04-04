@@ -21,6 +21,7 @@ const Comment = require("../database/models/Comment");
 const Team = require("../database/models/Team");
 const Delegation = require("../database/models/Delegation");
 const KVar = require("../database/models/KVar");
+const Cell = require("../database/models/Cell");
 const DelayTimer = require("../database/models/DelayTimer");
 const OrgChartHelper = require("./OrgChartHelper");
 const lodash = require("lodash");
@@ -1447,6 +1448,7 @@ Engine.addAdhoc = async function (payload) {
     nodeid: "ADHOC",
     workid: workid,
     tpNodeTitle: payload.title,
+    origTitle: payload.title,
     comment: payload.comment,
     transferable: false,
     byroute: "DEFAULT",
@@ -1723,6 +1725,16 @@ Client.getNodeType = function (jq) {
   return "UNKNOWN";
 };
 
+Client.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInternal) {
+  if (Tools.hasValue(inputStr) === false) return "";
+  let ret = Engine.compileContent(wfRoot, kvars, Parser.base64ToCode(inputStr));
+  if (ret.indexOf("[") >= 0) {
+    //null位置的参数是以e字符串数组，包含k=v;k=v的定义
+    ret = await Parser.replaceStringWithKVar(tenant, ret, null, kvars, withInternal);
+  }
+  return ret;
+};
+
 //Client是指ZMQ接受 yarkNode消息的client
 Client.yarkNode = async function (obj) {
   let nexts = [];
@@ -1745,6 +1757,7 @@ Client.yarkNode = async function (obj) {
   let tpNode = tpRoot.find(obj.selector);
   let fromNodeTitle = fromNode.find("p").text().trim();
   let tpNodeTitle = tpNode.find("p").text().trim();
+  let originalNodeTitle = tpNodeTitle;
   let fromType = Client.getNodeType(fromNode);
   let toType = Client.getNodeType(tpNode);
   if (tpNode.length < 1) {
@@ -1820,128 +1833,185 @@ Client.yarkNode = async function (obj) {
     );
   } else if (tpNode.hasClass("INFORM")) {
     //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
-    let doers = await Common.getDoer(
-      obj.tenant,
-      teamid,
-      tpNode.attr("role"),
-      wfRoot.attr("starter"),
-      obj.wfid,
-      wfRoot,
-      null,
-      true
-    );
-    if (Array.isArray(doers) === false) {
-      console.error("C.getDoer should return array", 5);
-    } else {
-      doers = [doers];
-    }
-    let smtp = await Cache.getOrgSmtp(obj.tenant);
-    let mailSetting = {
-      smtp: smtp,
-      sender: smtp && smtp.from ? smtp.from.trim() : "Admin",
-    };
-    let mail_subject = "Message from Metatocome";
-    let mail_body = "Message from Metatocome";
-    //let recipients = Common.getEmailRecipientsFromDoers(doers);
+    try {
+      let doers = await Common.getDoer(
+        obj.tenant,
+        teamid,
+        tpNode.attr("role"),
+        wfRoot.attr("starter"),
+        obj.wfid,
+        wfRoot,
+        null,
+        true
+      );
+      if (Array.isArray(doers) === false) {
+        console.error("C.getDoer should return array", 5);
+      } else {
+        doers = [doers];
+      }
+      let mail_subject = "Message from Metatocome";
+      let mail_body = "Message from Metatocome";
+      //let recipients = Common.getEmailRecipientsFromDoers(doers);
 
-    let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
-      obj.tenant,
-      "NOBODY", //except all visi controled kvars
-      obj.wfid,
-      "workflow",
-      [],
-      [],
-      "yes"
-    );
-    for (let i = 0; i < doers.length; i++) {
-      let recipients = doers[i].uid;
-      try {
-        let tmp_subject = tpNode.find("subject").first().text();
-        let tmp_body = tpNode.find("content").first().text();
-        //因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
-        //userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
-        if (Tools.hasValue(tmp_subject)) {
-          mail_subject = Engine.compileContent(
-            wfRoot,
-            KVARS_WITHOUT_VISIBILITY,
-            Parser.base64ToCode(tmp_subject)
-          );
-          if (mail_subject.indexOf("[") >= 0) {
-            mail_subject = await Parser.replaceStringWithKVar(
-              tenant,
-              mail_subject,
-              null,
-              KVARS_WITHOUT_VISIBILITY,
-              INJECT_INTERNAL_VARS
-            );
+      let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
+        obj.tenant,
+        "NOBODY", //except all visi controled kvars
+        obj.wfid,
+        "workflow",
+        [],
+        [],
+        "yes"
+      );
+      //TODO: add csv support in INFORM properties
+      let attach_csv = tpNode.find("csv").first().text();
+      let sendAllCells = false;
+      let cells = [];
+      //TODO: remove nextline
+      attach_csv = "csv_salary";
+      if (attach_csv && attach_csv.trim()) {
+        attach_csv = attach_csv.trim();
+        // csv defintion format: "csv_name[:[all|self]]"
+        let csvDef = attach_csv.split(":");
+        if (csvDef.length === 2) {
+          if (csvDef[1].toLowerCase() === "all") {
+            sendAllCells = true;
+          }
+          attach_csv = csvDef[0];
+        }
+        let cell = await Cell.findOne({ tenant: tenant, wfid: obj.wfid, forKey: attach_csv });
+        if (cell) {
+          cells = cell.cells;
+        }
+      }
+      //从attach csv中取用户
+      if (attach_csv) {
+        if (cells && Array.isArray(cells) && cells.length > 0) {
+          for (let ri = 1; ri < cells.length; ri++) {
+            let recipient = cells[ri][0];
+            recipient = await Tools.makeEmailSameDomain(recipient, obj.starter);
+            let doerCN = await Cache.getUserName(tenant, recipient);
+            try {
+              KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
+              let tmp_subject = tpNode.find("subject").first().text();
+              let tmp_body = tpNode.find("content").first().text();
+              mail_subject = await Client.parseContent(
+                tenant,
+                wfRoot,
+                KVARS_WITHOUT_VISIBILITY,
+                tmp_subject,
+                INJECT_INTERNAL_VARS
+              );
+              mail_body = await Client.parseContent(
+                tenant,
+                wfRoot,
+                KVARS_WITHOUT_VISIBILITY,
+                tmp_body,
+                INJECT_INTERNAL_VARS
+              );
+              let tblHtml = `<table style="font-family: Arial, Helvetica, sans-serif; border-collapse: collapse; width: 100%;">`;
+              tblHtml += `<thead><tr>`;
+              for (let cj = 0; cj < cells[0].length; cj++) {
+                tblHtml += `<th style="border: 1px solid #ddd; padding: 8px; padding-top: 12px; padding-bottom: 12px; text-align: left; background-color: #4caf50; color: white;">${cells[0][cj]}</th>`;
+              }
+              tblHtml += "</tr></thead>";
+              tblHtml += "<tbody>";
+              for (let cj = 0; cj < cells[ri].length; cj++) {
+                tblHtml += `<td style="border: 1px solid #ddd; padding: 8px;">${cells[ri][cj]}</td>`;
+              }
+              tblHtml += "</tbody>";
+              tblHtml += `</table>`;
+              mail_body += "<br/>" + tblHtml;
+            } catch (error) {
+              console.warn(error.message);
+            }
+            try {
+              let factRecipients = recipient;
+              if (wf.rehearsal) {
+                mail_subject = "Rehearsal: " + mail_subject;
+                recipient = wf.starter;
+              }
+              Engine.log(tenant, obj.wfid, "Queue send email", {
+                fact: factRecipients,
+                to: recipient,
+                subject: mail_subject,
+                body: mail_body,
+              });
+              await Engine.sendTenantMail(tenant, recipient, mail_subject, mail_body);
+            } catch (error) {
+              console.error(error);
+            }
           }
         }
-        if (Tools.hasValue(tmp_body)) {
-          mail_body = Engine.compileContent(
-            wfRoot,
-            KVARS_WITHOUT_VISIBILITY,
-            Parser.base64ToCode(tmp_body)
-          );
-          if (mail_body.indexOf("[") >= 0) {
-            mail_body = await Parser.replaceStringWithKVar(
+      } else {
+        //根据doer取用户
+        for (let i = 0; i < doers.length; i++) {
+          let recipient = doers[i].uid;
+          let doerCN = await Cache.getUserName(tenant, recipient);
+          try {
+            let tmp_subject = tpNode.find("subject").first().text();
+            let tmp_body = tpNode.find("content").first().text();
+            //因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
+            //userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
+            KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
+            mail_subject = await Client.parseContent(
               tenant,
-              mail_body,
-              null,
+              wfRoot,
               KVARS_WITHOUT_VISIBILITY,
+              tmp_subject,
               INJECT_INTERNAL_VARS
             );
+            mail_body = await Client.parseContent(
+              tenant,
+              wfRoot,
+              KVARS_WITHOUT_VISIBILITY,
+              tmp_body,
+              INJECT_INTERNAL_VARS
+            );
+          } catch (error) {
+            console.warn(error.message);
+          }
+          try {
+            let factRecipients = recipient;
+            if (wf.rehearsal) {
+              mail_subject = "Rehearsal: " + mail_subject;
+              recipient = wf.starter;
+            }
+            Engine.log(tenant, obj.wfid, "Queue send email", {
+              fact: factRecipients,
+              to: recipient,
+              subject: mail_subject,
+              body: mail_body,
+            });
+            await Engine.sendTenantMail(tenant, recipient, mail_subject, mail_body);
+          } catch (error) {
+            console.error(error);
           }
         }
-      } catch (error) {
-        console.warn(error.message);
       }
-      try {
-        let factRecipients = recipients;
-        if (wf.rehearsal) {
-          mail_subject = "Rehearsal: " + mail_subject;
-          recipients = wf.starter;
-        }
-        Engine.log(tenant, obj.wfid, "Queue send email", {
-          fact: factRecipients,
-          to: recipients,
-          subject: mail_subject,
-          body: mail_body,
-        });
-        await ZMQ.server.QueSend(
-          "EmpBiz",
-          JSON.stringify({
-            CMD: "SendTenantMail",
-            smtp: mailSetting.smtp,
-            from: mailSetting.sender,
-            recipients: recipients,
-            cc: "",
-            bcc: "",
-            subject: mail_subject,
-            html: Parser.codeToBase64(mail_body),
-          })
-        );
-      } catch (error) {
-        console.error(error);
-      }
+      wfRoot.append(
+        `<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" route="${obj.route}" round="${obj.round}" at="${isoNow}"></div>`
+      );
+      await Common.procNext(
+        obj.tenant,
+        teamid,
+        obj.tplid,
+        obj.wfid,
+        tpRoot,
+        wfRoot,
+        nodeid,
+        workid,
+        "DEFAULT", //INFORM后面的route也是DEFAULT
+        nexts,
+        obj.round,
+        obj.rehearsal,
+        obj.starter
+      );
+    } catch (error) {
+      Engine.log(tenant, obj.wfid, "INFORM node exception", {
+        nodeid: tpNode.attr("id"),
+        message: error.message,
+      });
     }
-    wfRoot.append(
-      `<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" route="${obj.route}" round="${obj.round}" at="${isoNow}"></div>`
-    );
-    await Common.procNext(
-      obj.tenant,
-      teamid,
-      obj.tplid,
-      obj.wfid,
-      tpRoot,
-      wfRoot,
-      nodeid,
-      workid,
-      "DEFAULT", //INFORM后面的route也是DEFAULT
-      nexts,
-      obj.round,
-      obj.rehearsal,
-      obj.starter
-    );
   } else if (tpNode.hasClass("SCRIPT")) {
     let code = tpNode.find("code").first().text().trim();
     let parsed_code = Parser.base64ToCode(code);
@@ -1952,18 +2022,20 @@ Client.yarkNode = async function (obj) {
     console.log(parsed_code);
     console.log("===========");
     //取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
-    let all_efficient_kvars = await Parser.userGetVars(
+    let kvarsForScript = await Parser.userGetVars(
       obj.tenant,
-      "EMP",
+      "EMP", //系统，no checkVisiForWhom
       obj.wfid,
-      "workflow",
+      "workflow", //整个工作流
       [],
       [],
       "yes"
     );
-    if (JSON.stringify(all_efficient_kvars) === "{}") {
-      console.error("all_efficient_kvars got {}, something must be wrong");
+    if (JSON.stringify(kvarsForScript) === "{}") {
+      console.error("kvarsForScript got {}, something must be wrong");
     }
+    await Parser.injectCells(tenant, kvarsForScript);
+    kvarsForScript = Parser.injectInternalVars(kvarsForScript);
     let codeRetString = '{"RET":"DEFAULT"}';
     let codeRetObj = {};
     let codeRetDecision = "DEFAULT";
@@ -1999,7 +2071,7 @@ Client.yarkNode = async function (obj) {
       codeRetString = await Engine.runCode(
         obj.tenant,
         obj.wfid,
-        all_efficient_kvars,
+        kvarsForScript,
         parsed_code,
         callbackId
       );
@@ -2387,16 +2459,59 @@ Client.yarkNode = async function (obj) {
     teamid = teamInPDS ? teamInPDS : teamid;
     //Get doers with teamid;
     //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
-    let doerOrDoers = await Common.getDoer(
-      obj.tenant,
-      teamid,
-      tpNode.attr("role"),
-      wfRoot.attr("starter"),
-      obj.wfid,
-      wfRoot,
-      null,
-      true
-    );
+    //
+    //
+    //
+    //
+    let doerOrDoers = wf.starter;
+    //////////////////////////////////////////////////
+    // 接下来，要看doer从哪里来，如果指定了从csv中来，则取查找csv
+    // 的第一列。
+    // 并把csv中，该用户对应的行的信息已表格方式放到用户的instruction中去
+    //////////////////////////////////////////////////
+    //TODO: get Doer from csv
+    //TODO
+    let attach_csv = tpNode.attr("csv");
+    let sendAllCells = false;
+    let cells = [];
+    //TODO: remove nextline
+    //attach_csv = "csv_salary";
+    if (attach_csv && attach_csv.trim()) {
+      attach_csv = attach_csv.trim();
+      // csv defintion format: "csv_name[:[all|self]]"
+      let csvDef = attach_csv.split(":");
+      if (csvDef.length === 2) {
+        if (csvDef[1].toLowerCase() === "all") {
+          sendAllCells = true;
+        }
+        attach_csv = csvDef[0];
+      }
+      let cell = await Cell.findOne({ tenant: tenant, wfid: obj.wfid, forKey: attach_csv });
+      if (cell) {
+        cells = cell.cells;
+      }
+    }
+    //从attach csv中取用户
+    if (attach_csv) {
+      doerOrDoers = [];
+      if (cells && Array.isArray(cells) && cells.length > 0) {
+        for (let ri = 1; ri < cells.length; ri++) {
+          let doerEmail = Tools.makeEmailSameDomain(cells[ri][0], obj.starter);
+          doerOrDoers.push({ uid: doerEmail, cn: await Cache.getUserName(tenant, doerEmail) });
+        }
+      }
+    } else {
+      doerOrDoers = await Common.getDoer(
+        obj.tenant,
+        teamid,
+        tpNode.attr("role"), //pds
+        wfRoot.attr("starter"),
+        obj.wfid,
+        wfRoot,
+        null,
+        true
+      );
+    }
     if (Array.isArray(doerOrDoers) === false) {
       throw new EmpError("DOER_ARRAY_ERROR", "Doer is not array");
     }
@@ -2495,16 +2610,19 @@ Client.yarkNode = async function (obj) {
         nodeid: nodeid,
         workid: workid,
         tpNodeTitle: tpNodeTitle,
+        origTitle: originalNodeTitle,
         comment: "",
         byroute: obj.byroute,
         transferable: transferable,
         teamid: teamid,
         rehearsal: wf.rehearsal,
+        cells: cells,
       });
     }
   }
-  wfUpdate["doc"] = wfIO.html();
+  //End of all node type processing
 
+  wfUpdate["doc"] = wfIO.html();
   if (nexts.length > 0) {
     //当前工作的 前node
     wfUpdate["pnodeid"] = nexts[0].from_nodeid;
@@ -2538,12 +2656,19 @@ Engine.createTodo = async function (obj) {
     else {
       if (typeof obj.doer[i] === "string") doerEmail = obj.doer[i];
     }
+    let doerName = "";
     if (obj.doer[i].cn) doerName = obj.doer[i].cn;
     else doerName = await Cache.getUserName(obj.tenant, doerEmail);
 
     if (Tools.isEmpty(doerName)) {
       console.warn(`createTodo: doer: ${doerEmail} does not exist.`);
     } else {
+      //在新建单人TODO时替换doerCN
+      let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
+      let cellInfo = "";
+      if (obj.cells && obj.cells.length > 0) {
+        cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
+      }
       await Client.newTodo(
         obj.tenant,
         obj.round,
@@ -2554,12 +2679,14 @@ Engine.createTodo = async function (obj) {
         obj.starter,
         obj.nodeid,
         obj.workid,
-        obj.tpNodeTitle,
+        nodeTitleForPerson,
+        obj.origTitle,
         obj.comment,
         obj.transferable,
         obj.teamid,
         obj.byroute,
-        obj.rehearsal
+        obj.rehearsal,
+        cellInfo
       );
     } // if exist
   } //for
@@ -3051,7 +3178,7 @@ Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) 
 };
 
 /**
- * Client.newTodo = async() create a  in database
+ *  create a todo in database
  *
  * @param {...} tenant -
  * @param {...} doer -
@@ -3076,11 +3203,13 @@ Client.newTodo = async function (
   nodeid,
   workid,
   title,
+  origtitle,
   comment,
   transferable,
   teamid,
   byroute,
-  rehearsal
+  rehearsal,
+  cellInfo
 ) {
   let todoid = uuidv4();
 
@@ -3096,6 +3225,7 @@ Client.newTodo = async function (
     nodeid: nodeid,
     workid: workid,
     title: title,
+    origtitle: origtitle,
     status: "ST_RUN",
     wfstatus: "ST_RUN",
     comment: comment,
@@ -3103,6 +3233,7 @@ Client.newTodo = async function (
     teamid: teamid,
     byroute: byroute,
     rehearsal: rehearsal,
+    cellInfo: cellInfo,
   });
   await todo.save();
 
@@ -3121,6 +3252,9 @@ in Workflow: <br/>
 ${wftitle}<br/>
 started by ${wfstarter}
 <br/><br/>
+
+${cellInfo}
+
   If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${todoid}</a>
 <br/>
 <br/>The task's title is<br/>
@@ -3720,6 +3854,7 @@ Engine.destroyWorkflow = async function (email, tenant, wfid) {
     await KVar.deleteMany({ tenant: tenant, wfid: wfid });
     await Work.deleteMany({ tenant: tenant, wfid: wfid });
     await Route.deleteMany({ tenant: tenant, wfid: wfid });
+    //TODO: destroy and filepond upload
     return ret;
   } else {
     throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
@@ -3882,6 +4017,9 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   let workNode = wfRoot.find("#" + todo.workid);
   let ret = {};
   ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
+  //workflow: 全部节点数据，
+  //[],[], 白名单和黑名单都为空
+  //yes 为取efficient数据
   let ALL_VISIED_KVARS = await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
   Parser.mergeValueFrom(ret.kvars, ALL_VISIED_KVARS);
 
@@ -3894,6 +4032,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.byroute = todo.byroute;
   ret.workid = todo.workid;
   ret.title = todo.title;
+  ret.cellInfo = todo.cellInfo;
   if (ret.title.indexOf("[") >= 0) {
     ret.title = await Parser.replaceStringWithKVar(
       tenant,
@@ -3908,6 +4047,11 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.wfstatus = todo.wfstatus;
   ret.rehearsal = todo.rehearsal;
   ret.createdAt = todo.createdAt;
+  ret.allowpbo = Tools.blankToDefault(tpNode.attr("pbo"), "no") === "yes";
+  ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes";
+  ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes";
+  ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "no") === "yes";
+  ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "no") === "yes";
   ret.updatedAt = todo.updatedAt;
   ret.from_workid = workNode.attr("from_workid");
   ret.from_nodeid = workNode.attr("from_nodeid");
@@ -3965,31 +4109,46 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
     ret.revocable = false;
     ret.returnable = false;
   } else {
-    //一个工作项可以被退回，仅当它没有同步节点，且状态为运行中
-    ret.returnable =
-      ret.parallel_actions.length === 0 && ret.status === "ST_RUN" && ret.from_nodeid !== "start";
-
-    let all_following_are_running = true;
-    if (ret.following_actions.length == 0) {
-      all_following_are_running = false;
-    } else {
-      for (let i = 0; i < ret.following_actions.length; i++) {
-        if (
-          ret.following_actions[i].nodeType === "ACTION" &&
-          ret.following_actions[i].status !== "ST_RUN"
-        ) {
-          all_following_are_running = false;
-          break;
-        }
+    if (ret.withsb || ret.withrvk) {
+      //一个工作项可以被退回，仅当它没有同步节点，且状态为运行中
+      if (ret.withsb) {
+        ret.returnable =
+          ret.parallel_actions.length === 0 &&
+          ret.status === "ST_RUN" &&
+          ret.from_nodeid !== "start";
+      } else {
+        ret.returnable = false;
       }
-    }
 
-    //revocable only when all following actions are RUNNING, NOT DONE.
-    ret.revocable =
-      workNode.hasClass("ACTION") &&
-      ret.status === "ST_DONE" &&
-      all_following_are_running &&
-      (await Engine.notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
+      if (ret.withrvk) {
+        let all_following_are_running = true;
+        if (ret.following_actions.length == 0) {
+          all_following_are_running = false;
+        } else {
+          for (let i = 0; i < ret.following_actions.length; i++) {
+            if (
+              ret.following_actions[i].nodeType === "ACTION" &&
+              ret.following_actions[i].status !== "ST_RUN"
+            ) {
+              all_following_are_running = false;
+              break;
+            }
+          }
+        }
+
+        //revocable only when all following actions are RUNNING, NOT DONE.
+        ret.revocable =
+          workNode.hasClass("ACTION") &&
+          ret.status === "ST_DONE" &&
+          all_following_are_running &&
+          (await Engine.notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
+      } else {
+        ret.withrvk = false;
+      }
+    } else {
+      ret.revocable = false;
+      ret.returnable = false;
+    }
   }
 
   ret.wf.history = await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
@@ -3998,7 +4157,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
 };
 
 /**
- * Engine.__getWorkflowWorksHistory = async() Get the completed works of a workflow
+ * Get the completed works of a workflow
  *
  * @param {...} email -
  * @param {...} tenant -
@@ -4021,11 +4180,21 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
   let todo_filter = { tenant: tenant, wfid: wfid };
   let todos = await Todo.find(todo_filter).sort({ updatedAt: -1 });
   for (let i = 0; i < todos.length; i++) {
+    let hasPersonCNInTitle = false;
+    if (todos[i].origtitle && todos[i].origtitle.indexOf("doerCN") > 0) {
+      hasPersonCNInTitle = true;
+    }
+
     let todoEntry = {};
+    let doerCN = await Cache.getUserName(tenant, todos[i].doer);
     todoEntry.workid = todos[i].workid;
     todoEntry.todoid = todos[i].todoid;
     todoEntry.nodeid = todos[i].nodeid;
     todoEntry.title = todos[i].title;
+    if (hasPersonCNInTitle) {
+      todoEntry.title = todoEntry.title.replace(doerCN, "***");
+    }
+    console.log(todoEntry.title);
     todoEntry.status = todos[i].status;
     todoEntry.doer = todos[i].doer;
     todoEntry.doneby = todos[i].doneby;
@@ -4037,7 +4206,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
             {
               doer: todos[i].doer,
               comment: todos[i].comment.trim(),
-              cn: await Cache.getUserName(tenant, todos[i].doer),
+              cn: doerCN,
               splitted: splitComment(todos[i].comment.trim()),
             },
           ];
