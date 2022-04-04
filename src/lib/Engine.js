@@ -894,7 +894,7 @@ Engine.__doneTodo = async function (
       "workflow",
       [],
       [],
-      "yes"
+      "yes" //efficient
     );
     comment = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, comment);
     if (comment.indexOf("[") >= 0) {
@@ -1425,8 +1425,8 @@ Engine.addAdhoc = async function (payload) {
     wf.starter,
     payload.wfid,
     wfRoot,
-    null,
-    true
+    null, //kvarstring for testing purpose
+    true //insertDefault
   ); //
 
   let doers_string = Parser.codeToBase64(JSON.stringify(doers));

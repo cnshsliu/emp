@@ -590,7 +590,16 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   //if PDS is empty, always use starter
   if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
   if ((kvarString || wfid) && pds.match(/\[(.+)\]/)) {
-    pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, wfid);
+    let VISIED_KVARS = await Parser.userGetVars(
+      tenant,
+      "NOBODY", //不包含所有有visi控制的参数
+      wfid,
+      "workflow",
+      [],
+      [],
+      "yes" //efficient
+    );
+    pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, VISIED_KVARS, false);
   }
 
   //PDS-level team is defined as "T:team_name"
