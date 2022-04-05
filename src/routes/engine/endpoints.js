@@ -2191,7 +2191,7 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          workid: Joi.string().required(),
+          todoid: Joi.string().required(),
           whom: Joi.string().required(),
         },
         validator: Joi,

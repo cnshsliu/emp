@@ -790,14 +790,14 @@ const WorkflowStart = async function (req, h) {
 const WorkflowAddFile = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
     let pondfiles = req.payload.pondfiles;
     let attachFiles = [];
     let csvFiles = [];
     if (pondfiles.length > 0) {
       pondfiles = pondfiles.map((x) => {
-        x.author = email;
+        x.author = myEmail;
         x.forKey = req.payload.forKey;
         return x;
       });
@@ -816,8 +816,8 @@ const WorkflowAddFile = async function (req, h) {
       return h.response(workflow.attachments);
     }
     if (csvFiles.length > 0) {
-      await __saveCSVAsCells(tenant, wfid, csvFiles);
-      return h.response("CSV accepted");
+      let csvSaveResult = await __saveCSVAsCells(tenant, myEmail, wfid, csvFiles);
+      return h.response(csvSaveResult);
     }
     return h.response("No file uploaded, neither attachment nor csv");
   } catch (err) {
@@ -826,31 +826,38 @@ const WorkflowAddFile = async function (req, h) {
   }
 };
 
-const __saveCSVAsCells = async function (tenant, wfid, csvPondFiles) {
-  console.log(JSON.stringify(csvPondFiles));
+const __saveCSVAsCells = async function (tenant, myEmail, wfid, csvPondFiles) {
   const __doConvert = async (pondFile) => {
+    let missedUIDs = [];
     let filepondfile = Tools.getFilePondFile(tenant, pondFile.author, pondFile.serverId);
     const csv = Fs.readFileSync(filepondfile.fullPath, "utf8");
     let cells = [];
     let rows = csv.split(/[\n|\r]/);
     let colsCount = 0;
+    let firstRow = -1;
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       if (rows[rowIndex].trim().length === 0) continue;
+      // 标题行钱可能有空行，前面一句跳过空行后，第一行不为空的行为firstRow
+      if (firstRow < 0) firstRow = rowIndex;
       let cols = rows[rowIndex].split(",");
-      if (!Tools.isArray(cols)) {
+      if (Tools.nbArray(cols) === false) {
         continue;
       }
       cells.push(cols);
+      //firstRow后，都是数据行。数据行要检查第一列的用户ID是否存在
+      if (rowIndex > firstRow) {
+        if (
+          !(await User.findOne({
+            tenant: tenant,
+            email: Tools.makeEmailSameDomain(cols[0], myEmail),
+          }))
+        ) {
+          missedUIDs.push(cols[0]);
+        }
+      }
     }
 
-    let cell = new Cell({
-      serverId: pondFile.serverId,
-      realName: pondFile.realName,
-      contentType: pondFile.contentType,
-      cells: cells,
-    });
-
-    cell = await Cell.findOneAndUpdate(
+    let cell = await Cell.findOneAndUpdate(
       { tenant: tenant, wfid: wfid, stepid: pondFile.stepid, forKey: pondFile.forKey },
       {
         $set: {
@@ -863,10 +870,13 @@ const __saveCSVAsCells = async function (tenant, wfid, csvPondFiles) {
       },
       { upsert: true, new: true }
     );
+    return missedUIDs;
   };
+  let missedUIDs = [];
   for (let i = 0; i < csvPondFiles.length; i++) {
-    await __doConvert(csvPondFiles[i]);
+    missedUIDs = [...missedUIDs, ...(await __doConvert(csvPondFiles[i]))];
   }
+  return missedUIDs;
 };
 const WorkflowRemoveAttachment = async function (req, h) {
   try {
@@ -1453,9 +1463,9 @@ const TransferWork = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     let whom = req.payload.whom;
-    let workid = req.payload.workid;
+    let todoid = req.payload.todoid;
 
-    return Engine.transferWork(tenant, whom, myEmail, workid);
+    return Engine.transferWork(tenant, whom, myEmail, todoid);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3789,12 +3799,37 @@ const CellsRead = async function (req, h) {
     let cell = await Cell.findOne({ tenant: tenant, serverId: fileId }, { _id: 0 }).lean();
     if (cell) {
       if (cell.author !== myEmail) {
-        return h.response("Only original author can read this CSV data");
+        throw new EmpError("ONLY_AUTHOR", "Only original author can read this CSV data");
       } else {
+        let missedUIDs = [];
+        let firstRow = -1;
+        let rows = cell.cells;
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+          // 标题行钱可能有空行，前面一句跳过空行后，第一行不为空的行为firstRow
+          if (firstRow < 0) firstRow = rowIndex;
+          let cols = rows[rowIndex];
+          if (Tools.nbArray(cols) === false) {
+            continue;
+          }
+          //firstRow后，都是数据行。数据行要检查第一列的用户ID是否存在
+          if (rowIndex > firstRow) {
+            if (
+              !(await User.findOne({
+                tenant: tenant,
+                email: Tools.makeEmailSameDomain(cols[0], myEmail),
+              }))
+            ) {
+              missedUIDs.push(cols[0]);
+            }
+          }
+        }
+        if (Tools.nbArray(missedUIDs)) {
+          cell.missedUIDs = missedUIDs;
+        }
         return h.response(cell);
       }
     } else {
-      throw EmpError("NOT_FOUND", "Cell not found");
+      throw new EmpError("NOT_FOUND", "Cell not found");
     }
   } catch (err) {
     console.error(err);

@@ -609,6 +609,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
 
   let ret = [];
   let starterEmailSuffix = starter.substring(starter.indexOf("@"));
+  let tenantAccountPattern = new RegExp("^(.+)" + starterEmailSuffix);
   let arr = Parser.splitStringToArray(pds);
   let tmp = [];
   let kvars = {};
@@ -616,7 +617,9 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   for (let i = 0; i < arr.length; i++) {
     let rdsPart = arr[i].trim();
     tmp = [];
-    if (rdsPart.startsWith("L:")) {
+    if (rdsPart.match(tenantAccountPattern)) {
+      tmp = [{ uid: rdsPart, cn: await Cache.getUserName(tenant, rdsPart) }];
+    } else if (rdsPart.startsWith("L:")) {
       tmp = await Parser.getLeaderByPosition(tenant, starter, rdsPart);
     } else if (rdsPart.startsWith("P:")) {
       tmp = await Parser.getPeerByPosition(tenant, starter, rdsPart);

@@ -81,6 +81,9 @@ const Tools = {
   isArray: function (input) {
     return input instanceof Array || Object.prototype.toString.call(input) === "[object Array]";
   },
+  nbArray: function (arr) {
+    return arr && this.isArray(arr) && arr.length > 0;
+  },
   chunkString: function (str, len) {
     const size = Math.ceil(str.length / len);
     const r = Array(size);

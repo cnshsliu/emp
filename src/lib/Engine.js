@@ -992,7 +992,7 @@ Engine.__doneTodo = async function (
         Engine.log(tenant, todo.wfid, logMsg);
       }
     } else {
-      logMsg = `This node ${theWork.title} does not send wecom`;
+      logMsg = `This node ${todo.title} does not send wecom`;
       Engine.log(tenant, todo.wfid, logMsg);
     }
     //////////////////////////////////////////////////
@@ -1867,7 +1867,6 @@ Client.yarkNode = async function (obj) {
       let sendAllCells = false;
       let cells = [];
       //TODO: remove nextline
-      attach_csv = "csv_salary";
       if (attach_csv && attach_csv.trim()) {
         attach_csv = attach_csv.trim();
         // csv defintion format: "csv_name[:[all|self]]"
@@ -2475,7 +2474,6 @@ Client.yarkNode = async function (obj) {
     let sendAllCells = false;
     let cells = [];
     //TODO: remove nextline
-    //attach_csv = "csv_salary";
     if (attach_csv && attach_csv.trim()) {
       attach_csv = attach_csv.trim();
       // csv defintion format: "csv_name[:[all|self]]"
@@ -3111,14 +3109,14 @@ Engine.getRoundWork = async function (tenant, round, wfid, path) {
   }
 };
 
-Engine.transferWork = async function (tenant, whom, myEmail, workid) {
+Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
   let whomUser = await User.findOne(
     { tenant: tenant, email: whom + myEmail.substring(myEmail.indexOf("@")) },
     { email: 1, username: 1, _id: 0 }
   );
   if (!whomUser) return whomUser;
-  let filter = { tenant: tenant, doer: myEmail, workid: workid, status: "ST_RUN" };
-  let work = await Todo.findOneAndUpdate(filter, { $set: { doer: whomUser.email } }, { new: true });
+  let filter = { tenant: tenant, doer: myEmail, todoid: todoid, status: "ST_RUN" };
+  let todo = await Todo.findOneAndUpdate(filter, { $set: { doer: whomUser.email } }, { new: true });
 
   let newDoer = whomUser.email;
   let ew = await Cache.getUserEw(newDoer);
@@ -3129,25 +3127,17 @@ Engine.transferWork = async function (tenant, whom, myEmail, workid) {
 
   let fromCN = await Cache.getUserName(tenant, myEmail);
   let newCN = await Cache.getUserName(tenant, newDoer);
-  let frontendUrl = Tools.getFrontEndUrl();
-  let mail_body = `Hello, ${newCN}, <br/><br/> ${fromCN} transferred a task to you:
-<br/><a href="${frontendUrl}/work/@${workid}">${work.title} </a><br/>
-in Workflow: <br/>
-${work.wftitle}<br/>
-started by ${work.wfstarter}
-<br/><br/>
-  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${workid}
-<br/>
-<br/>The task's title is<br/>
-${work.title}
-
-<br/><br/>
-
-Metatocome`;
-
-  let subject = (work.rehearsal ? "Rehearsal: " : "") + `You got a transferred task from ${fromCN}`;
-
-  await Engine.sendTenantMail(tenant, newDoer, subject, mail_body);
+  await Client.informUserOnNewTodo({
+    tenant: tenant,
+    doer: newDoer,
+    todoid: todoid,
+    tplid: todo.tplid,
+    wftitle: todo.wftitle,
+    title: todo.title,
+    wfstarter: todo.wfstarter,
+    rehearsal: todo.rehearsal,
+    cellInfo: "",
+  });
 
   return whomUser;
 };
@@ -3177,6 +3167,96 @@ Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) 
   }
 };
 
+Client.informUserOnNewTodo = async function (inform) {
+  let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
+  let ew = await Cache.getUserEw(sendEmailTo);
+  let withEmail = true;
+  if (typeof ew === "boolean" && ew === false) {
+    console.log(inform.doer, " does not receive email on new task");
+    withEmail = false;
+  }
+  withEmail = ew && ew.email;
+  let cn = await Cache.getUserName(inform.tenant, inform.doer);
+  let frontendUrl = Tools.getFrontEndUrl();
+  let mail_body = `Hello, ${cn}, new task is comming in:
+<br/><a href="${frontendUrl}/work/@${inform.todoid}">${inform.title} </a><br/>
+in Workflow: <br/>
+${inform.wftitle}<br/>
+started by ${inform.wfstarter}
+<br/><br/>
+
+${inform.cellInfo}
+
+  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${inform.todoid}</a>
+<br/>
+<br/>The task's title is<br/>
+${inform.title}
+
+<br/><br/>
+
+Metatocome`;
+
+  let subject = `[New task] ${inform.title}`;
+  let extra_body = "";
+  if (inform.rehearsal) {
+    subject = "Rehearsal: " + subject;
+    extra_body = `
+<br/>
+This mail should go to ${inform.doer} but send to you because this is rehearsal';
+`;
+  }
+  mail_body += extra_body;
+
+  if (withEmail) await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body);
+
+  let markdownMsg = {
+    msgtype: "markdown",
+    markdown: {
+      content: `# ${cn}
+
+          ## ${inform.rehearsal ? "Rehearsal: " : ""}${inform.title}
+          
+          [Goto task](${frontendUrl}/work/@${inform.todoid})
+          (${frontendUrl}/work/@${inform.todoid})
+
+          WeCom may cut part of the above URL making it works not as expected.
+          If you encounter difficulty to view task in WeCom internal browser, please open it in your phone's browser
+
+          The full url is:
+
+          ${frontendUrl}/work/@${inform.todoid}
+
+          Of couse, you may also open MTC in your desktop browser to get the full functionalities
+
+          `,
+    },
+  };
+  let bots = await Webhook.find(
+    {
+      tenant: inform.tenant,
+      owner: inform.doer,
+      webhook: "wecombot_todo",
+      tplid: { $in: ["All", inform.tplid] },
+      key: { $exists: true },
+      $expr: { $eq: [{ $strLenCP: "$key" }, 36] },
+    },
+    { _id: 0, key: 1 }
+  ).lean();
+  let botKeys = bots.map((bot) => bot.key);
+  botKeys = [...new Set(botKeys)];
+  console.log("Found bot keys number", botKeys.length);
+  console.log(botKeys);
+  for (let i = 0; i < botKeys.length; i++) {
+    try {
+      let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKeys[i]}`;
+      await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
+        console.log("Wreck WeCom Bot TODO", botKeys[i]);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+};
 /**
  *  create a todo in database
  *
@@ -3237,97 +3317,22 @@ Client.newTodo = async function (
   });
   await todo.save();
 
-  let sendEmailTo = rehearsal ? wfstarter : doer;
-  let ew = await Cache.getUserEw(sendEmailTo);
-  if (typeof ew === "boolean" && ew === false) {
-    console.log(doer, " does not receive email on new task");
-    return;
-  }
-  let cn = await Cache.getUserName(tenant, doer);
-  let frontendUrl = Tools.getFrontEndUrl();
-  if (ew.email) {
-    let mail_body = `Hello, ${cn}, new task is comming in:
-<br/><a href="${frontendUrl}/work/@${todoid}">${title} </a><br/>
-in Workflow: <br/>
-${wftitle}<br/>
-started by ${wfstarter}
-<br/><br/>
+  await Client.informUserOnNewTodo({
+    tenant: tenant,
+    doer: doer,
+    todoid: todoid,
+    tplid: tplid,
+    wftitle: wftitle,
+    title: title,
+    wfstarter: wfstarter,
+    rehearsal: rehearsal,
+    cellInfo: cellInfo,
+  });
 
-${cellInfo}
-
-  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${todoid}</a>
-<br/>
-<br/>The task's title is<br/>
-${title}
-
-<br/><br/>
-
-Metatocome`;
-
-    let subject = `[New task] ${title}`;
-    let extra_body = "";
-    if (rehearsal) {
-      subject = "Rehearsal: " + subject;
-      extra_body = `
-<br/>
-This mail should go to ${doer} but send to you because this is rehearsal';
-`;
-    }
-    mail_body += extra_body;
-
-    await Engine.sendTenantMail(tenant, sendEmailTo, subject, mail_body);
-  }
   //////////////////////////////////////////////////
   // Check wether user has wecom bot key for this tplid;
   //////////////////////////////////////////////////
   //
-  let markdownMsg = {
-    msgtype: "markdown",
-    markdown: {
-      content: `# ${cn}
-
-          ## ${rehearsal ? "Rehearsal: " : ""}${title}
-          
-          [Goto task](${frontendUrl}/work/@${todoid})
-          (${frontendUrl}/work/@${todoid})
-
-          WeCom may cut part of the above URL making it works not as expected.
-          If you encounter difficulty to view task in WeCom internal browser, please open it in your phone's browser
-
-          The full url is:
-
-          ${frontendUrl}/work/@${todoid}
-
-          Of couse, you may also open MTC in your desktop browser to get the full functionalities
-
-          `,
-    },
-  };
-  let bots = await Webhook.find(
-    {
-      tenant: tenant,
-      owner: doer,
-      webhook: "wecombot_todo",
-      tplid: { $in: ["All", todo.tplid] },
-      key: { $exists: true },
-      $expr: { $eq: [{ $strLenCP: "$key" }, 36] },
-    },
-    { _id: 0, key: 1 }
-  ).lean();
-  let botKeys = bots.map((bot) => bot.key);
-  botKeys = [...new Set(botKeys)];
-  console.log("Found bot keys number", botKeys.length);
-  console.log(botKeys);
-  for (let i = 0; i < botKeys.length; i++) {
-    try {
-      let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKeys[i]}`;
-      await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
-        console.log("Wreck WeCom Bot TODO", botKeys[i]);
-      });
-    } catch (e) {
-      console.error(e);
-    }
-  }
 };
 
 Engine.WreckPost = async (url, content) => {
