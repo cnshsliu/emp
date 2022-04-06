@@ -171,26 +171,23 @@ Common.checkAnd = async function (
   round,
   tpRoot,
   wfRoot,
-  nodeid, //AND节点的nodeid;
+  theANDnodeid, //AND节点的nodeid;
+  theAndNode,
   from_workid,
   route,
   nexts
 ) {
   let ret = true;
-  /*
-  let route_param = route;
-  let linkSelector = `.link[to="${nodeid}"]`;
-  // console.log(`procAnd ${linkSelector}`);
-  tpRoot.find(linkSelector).each(function (i, el) {
-    let linkObj = Cheerio(el);
-    let fromid = linkObj.attr("from");
-    let wfSelector = `.work.ST_DONE[nodeid="${fromid}"]`;
-    if (wfRoot.find(wfSelector).length <= 0) {
-      ret = false;
-    }
-  });
-  */
-  let fromNodeIds = await Engine._getFromNodeIds(tpRoot, nodeid);
+  let counterPartRound = round; //先用当前AND的 Round
+  let counterPart = theAndNode.attr("cp");
+  //在该版本之前已经运行的流程，可能会有问题。因为没有counterPart. 手工修复可以吗？
+  if (counterPart) {
+    let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }).sort(
+      "-round"
+    );
+    counterPartRound = work.round;
+  }
+  let fromNodeIds = await Engine._getFromNodeIds(tpRoot, theANDnodeid);
   let routeFilter = {
     tenant: tenant,
     wfid: wfid,
@@ -212,18 +209,32 @@ Common.checkAnd = async function (
     // 就不会等第二轮的Step2.2，直接判为AND通过
     //TODO: 这个问题怎么解决呢？ OR也一样
     ////////////////////////////////////////////////////
-    round, //包含round，可以走通第二种情况，但走不通第一种情况
+    //round, //包含round，可以走通第二种情况，但走不通第一种情况
+    ////////////////////////////////////////////////////
+    // 使用模版CounterPart机制后，只需要检查counterPartRound做对比
+    ////////////////////////////////////////////////////
+    round: { $lte: counterPartRound },
     from_nodeid: { $in: fromNodeIds },
-    to_nodeid: nodeid,
+    to_nodeid: theANDnodeid,
     status: "ST_PASS",
   };
+  console.log("Check AND counterPart and Round", counterPart, counterPartRound);
   //routeFromNodes 有Route对象的节点，status可能是PASS，也可能是INGORE
   let routeFromNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
-  return routeFromNodes.length >= fromNodeIds.length;
+  if (routeFromNodes.length === fromNodeIds.length) {
+    console.log(
+      `AND done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) === from node numbers (${fromNodeIds.length})`
+    );
+  } else {
+    console.log(
+      `AND not done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) !== from node numbers (${fromNodeIds.length})`
+    );
+  }
+  return routeFromNodes.length === fromNodeIds.length;
 };
 
 /**
- * Common.checkOr() Check if the status of any previous nodes is ST_DONE
+ * Check if the status of any previous nodes is ST_DONE
  *
  * @param {...} tenant - Tenant
  * @param {...} wfid - workflow id
@@ -2168,6 +2179,7 @@ Client.yarkNode = async function (obj) {
       tpRoot,
       wfRoot,
       nodeid,
+      tpNode,
       from_workid,
       "DEFAULT",
       nexts
@@ -2250,6 +2262,7 @@ Client.yarkNode = async function (obj) {
       }
     }
   } else if (tpNode.hasClass("OR")) {
+    //OR不需要检查，只要碰到，就会完成
     /* let orDone = Common.checkOr(
       obj.tenant,
       obj.wfid,
@@ -2265,6 +2278,7 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work OR ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
       );
+      //OR需要忽略掉其它未执行的兄弟节点
       Common.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
       await Common.procNext(
         obj.tenant,
@@ -4078,7 +4092,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes";
   ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes";
   ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "no") === "yes";
-  ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "no") === "yes";
+  ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "yes") === "yes";
   ret.updatedAt = todo.updatedAt;
   ret.from_workid = workNode.attr("from_workid");
   ret.from_nodeid = workNode.attr("from_nodeid");
