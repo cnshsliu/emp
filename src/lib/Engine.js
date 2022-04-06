@@ -1018,6 +1018,7 @@ Engine.__doneTodo = async function (
     //////////////////////////////////////////////////
 
     if (workNode.hasClass("ADHOC") === false) {
+      Engine.log(tenant, todo.wfid, "This workNode does not has ADHOC");
       await Common.procNext(
         tenant,
         teamid,
@@ -1034,6 +1035,7 @@ Engine.__doneTodo = async function (
         wf.rehearsal,
         wf.starter
       );
+      Engine.log(tenant, todo.wfid, "procNext return" + JSON.stringify(nexts));
       let hasEnd = false;
       let nextOfEnd = null;
       for (let i = 0; i < nexts.length; i++) {
@@ -1057,6 +1059,8 @@ Engine.__doneTodo = async function (
         wfUpdate["pworkid"] = wf.pworkid;
         wfUpdate["cselector"] = wf.cselector;
       }
+    } else {
+      Engine.log(tenant, todo.wfid, "This workNode has ADHOC class, no nexts was scanned");
     }
   }
 
