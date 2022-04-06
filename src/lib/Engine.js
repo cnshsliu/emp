@@ -171,7 +171,7 @@ Common.checkAnd = async function (
   round,
   tpRoot,
   wfRoot,
-  nodeid,
+  nodeid, //AND节点的nodeid;
   from_workid,
   route,
   nexts
@@ -194,14 +194,32 @@ Common.checkAnd = async function (
   let routeFilter = {
     tenant: tenant,
     wfid: wfid,
-    round,
+    //TODO:  to think
+    ////////////////////////////////////////////////////
+    // 在AND节点前有彼此独立的分支
+    // 比如在周报中，前面有一个节点分成两路，每一路中都
+    // 可能有多次退回，导致两路上的round不一致，在最后
+    // AND检查时，会因为两个round不一致，永远查不到在同
+    // 一个round中的与前序节点个数相同的Route。因此AND
+    // 也就总是通过不了. 图示：
+    // https://cdn.jsdelivr.net/gh/cnshsliu/static.xhw.mtc/img/doc/and_decision_after_round.png
+    // 这种情况下，应该不用管round
+    // ///////////////
+    // 但在另一种情况下，当AND之后有返回， 如
+    // https://cdn.jsdelivr.net/gh/cnshsliu/static.xhw.mtc/img/doc/and_decision_before_round.png
+    // 如果不管round，之前已经通过的routes会被算作完成，如在上图中，
+    // 第二轮执行Step2.1->Step2.1.1 之后，因为Step2.2有被执行过，
+    // 就不会等第二轮的Step2.2，直接判为AND通过
+    //TODO: 这个问题怎么解决呢？ OR也一样
+    ////////////////////////////////////////////////////
+    round, //包含round，可以走通第二种情况，但走不通第一种情况
     from_nodeid: { $in: fromNodeIds },
     to_nodeid: nodeid,
     status: "ST_PASS",
   };
   //routeFromNodes 有Route对象的节点，status可能是PASS，也可能是INGORE
   let routeFromNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
-  return routeFromNodes.length === fromNodeIds.length;
+  return routeFromNodes.length >= fromNodeIds.length;
 };
 
 /**
@@ -4199,7 +4217,6 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     if (hasPersonCNInTitle) {
       todoEntry.title = todoEntry.title.replace(doerCN, "***");
     }
-    console.log(todoEntry.title);
     todoEntry.status = todos[i].status;
     todoEntry.doer = todos[i].doer;
     todoEntry.doneby = todos[i].doneby;
