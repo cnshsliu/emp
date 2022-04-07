@@ -3370,44 +3370,51 @@ Client.newTodo = async function (
 ) {
   let todoid = uuidv4();
 
-  if (Tools.isEmpty(origtitle)) {
-    origtitle = title;
-  }
-  let todo = new Todo({
-    todoid: todoid,
-    tenant: tenant,
-    round: round,
-    doer: doer,
-    tplid: tplid,
-    wfid: wfid,
-    wftitle: wftitle,
-    wfstarter: wfstarter,
-    nodeid: nodeid,
-    workid: workid,
-    title: title,
-    origtitle: origtitle, //替换var之前的原始Title
-    status: "ST_RUN",
-    wfstatus: "ST_RUN",
-    comment: comment,
-    transferable: transferable,
-    teamid: teamid,
-    byroute: byroute,
-    rehearsal: rehearsal,
-    cellInfo: cellInfo,
-  });
-  await todo.save();
+  try {
+    if (Tools.isEmpty(origtitle)) {
+      origtitle = title;
+    }
+    let todo = new Todo({
+      todoid: todoid,
+      tenant: tenant,
+      round: round,
+      doer: doer,
+      tplid: tplid,
+      wfid: wfid,
+      wftitle: wftitle,
+      wfstarter: wfstarter,
+      nodeid: nodeid,
+      workid: workid,
+      title: title,
+      origtitle: origtitle, //替换var之前的原始Title
+      status: "ST_RUN",
+      wfstatus: "ST_RUN",
+      comment: comment,
+      transferable: transferable,
+      teamid: teamid,
+      byroute: byroute,
+      rehearsal: rehearsal,
+      cellInfo: cellInfo,
+    });
+    console.log("//////////////////////////////////////////////////");
+    console.log("Title:", todo.title, "origTitle:", todo.origtitle);
+    console.log("//////////////////////////////////////////////////");
+    await todo.save();
 
-  await Client.informUserOnNewTodo({
-    tenant: tenant,
-    doer: doer,
-    todoid: todoid,
-    tplid: tplid,
-    wftitle: wftitle,
-    title: title,
-    wfstarter: wfstarter,
-    rehearsal: rehearsal,
-    cellInfo: cellInfo,
-  });
+    await Client.informUserOnNewTodo({
+      tenant: tenant,
+      doer: doer,
+      todoid: todoid,
+      tplid: tplid,
+      wftitle: wftitle,
+      title: title,
+      wfstarter: wfstarter,
+      rehearsal: rehearsal,
+      cellInfo: cellInfo,
+    });
+  } catch (newTodoError) {
+    console.error(newTodoError);
+  }
 
   //////////////////////////////////////////////////
   // Check wether user has wecom bot key for this tplid;
