@@ -615,12 +615,23 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   let tmp = [];
   let kvars = {};
 
+  //////////////////////////////////////////////////
+  // rdsPart需要支持“-”操作，即黑名单，排除哪些用户
+  //////////////////////////////////////////////////
   for (let i = 0; i < arr.length; i++) {
+    let isWhiteList = true;
     let rdsPart = arr[i].trim();
+    if (rdsPart[0] === "-") {
+      isWhiteList = false;
+      rdsPart = rdsPart.substring(1).trim();
+    }
     tmp = [];
     if (rdsPart.match(tenantAccountPattern)) {
       //如果是邮箱地址，则直接取用户名字即可
-      tmp = [{ uid: rdsPart, cn: await Cache.getUserName(tenant, rdsPart) }];
+      let email = rdsPart;
+      if (email[0] === "@") email = email.substring(1).trim().toLowerCase();
+      email = Tools.makeEmailSameDomain(email, starter);
+      tmp = [{ uid: email, cn: await Cache.getUserName(tenant, email) }];
     } else if (rdsPart.startsWith("L:")) {
       tmp = await Parser.getLeaderByPosition(tenant, starter, rdsPart);
     } else if (rdsPart.startsWith("P:")) {
@@ -640,7 +651,8 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
     }
     if (Array.isArray(tmp)) {
       for (let i = 0; i < tmp.length; i++) {
-        ret = await addOneUserToRoleResolver(tenant, ret, tmp[i]);
+        if (isWhiteList) ret = await addOneUserToRoleResolver(tenant, ret, tmp[i]);
+        else ret = await removeOneUserToRoleResolver(tenant, ret, tmp[i]);
       }
     } else {
       if (typeof tmp === "string") {
@@ -654,7 +666,8 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
           tmp
         );
       } else {
-        ret = await addOneUserToRoleResolver(tenant, ret, tmp);
+        if (isWhiteList) ret = await addOneUserToRoleResolver(tenant, ret, tmp);
+        else ret = await removeOneUserToRoleResolver(tenant, ret, tmp);
       }
     }
   }

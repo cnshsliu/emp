@@ -111,6 +111,9 @@ internals.getTenantSiteId = async function (tenant_id) {
 
 internals.ensureTenantEmail = async function (tenant, email) {
   let ret = email;
+  if (email.indexOf("@") === 0) {
+    email = email.substring(1);
+  }
   let tenantDomain = await this.getTenantDomain(tenant);
   if (email.indexOf("@") > 0) {
     ret = email.substring(0, email.indexOf("@")) + tenantDomain;
@@ -134,13 +137,19 @@ internals.setOnNonExist = async function (key, value = "v", expire = 60) {
 };
 
 internals.getMyGroup = async function (email) {
+  if (email[0] === "@") email = email.substring(1);
   let mygroup_redis_key = "e2g_" + email.toLowerCase();
   let mygroup = await asyncRedisClient.get(mygroup_redis_key);
   if (!mygroup) {
-    let user = await User.findOne({ email: email }, { group: 1 });
-    await asyncRedisClient.set(mygroup_redis_key, user.group);
-    await asyncRedisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
-    mygroup = user.group;
+    let filter = { email: email };
+    let user = await User.findOne(filter, { group: 1 });
+    if (user) {
+      await asyncRedisClient.set(mygroup_redis_key, user.group);
+      await asyncRedisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
+      mygroup = user.group;
+    } else {
+      console.error("Get My Group: User not found: filter", filter);
+    }
   } else {
     console.log("Use mygroup in redis");
   }
@@ -153,9 +162,14 @@ internals.getOrgTimeZone = async function (orgid) {
   let ret = await asyncRedisClient.get(theKey);
   if (!ret) {
     let org = await Tenant.findOne({ _id: orgid });
-    ret = org.timezone;
-    await asyncRedisClient.set(theKey, ret);
-    await asyncRedisClient.expire(theKey, 30 * 60);
+    if (org) {
+      ret = org.timezone;
+      await asyncRedisClient.set(theKey, ret);
+      await asyncRedisClient.expire(theKey, 30 * 60);
+    } else {
+      //use default Timezone
+      ret = "CST China";
+    }
   }
   return ret;
 };
@@ -165,13 +179,19 @@ internals.getOrgSmtp = async function (orgid) {
   let ret = await asyncRedisClient.get(theKey);
   if (!ret) {
     let org = await Tenant.findOne({ _id: orgid });
-    ret = org.smtp;
-    if (ret) {
-      await asyncRedisClient.set(theKey, JSON.stringify(ret));
-      await asyncRedisClient.expire(theKey, 30 * 60);
+    if (org) {
+      ret = org.smtp;
+      if (ret) {
+        await asyncRedisClient.set(theKey, JSON.stringify(ret));
+        await asyncRedisClient.expire(theKey, 30 * 60);
+      }
     }
   } else {
     ret = JSON.parse(ret);
+  }
+  if (!ret) {
+    //ue default;
+    ret = "smtp.google.com";
   }
   return ret;
 };
@@ -181,12 +201,15 @@ internals.getOrgTags = async function (orgid) {
   let ret = await asyncRedisClient.get(theKey);
   if (!ret) {
     let org = await Tenant.findOne({ _id: orgid });
-    ret = org.tags;
-    if (ret) {
-      await asyncRedisClient.set(theKey, ret);
-      await asyncRedisClient.expire(theKey, 30 * 60);
+    if (org) {
+      ret = org.tags;
+      if (ret) {
+        await asyncRedisClient.set(theKey, ret);
+        await asyncRedisClient.expire(theKey, 30 * 60);
+      }
     }
   }
+  if (!ret) ret = "";
   return ret;
 };
 
@@ -263,7 +286,6 @@ internals.removeOrgRelatedCache = async function (orgid, cacheType) {
 };
 
 internals.getVisi = async function (tplid) {
-  debugger;
   let visiKey = "visi_" + tplid;
   let visiPeople = await asyncRedisClient.get(visiKey);
   return visiPeople;
