@@ -1126,6 +1126,7 @@ Engine.__doneTodo = async function (
   // 完成TODO
   todo.comment = comment;
   todo.status = "ST_DONE";
+  if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
   todo.doneat = isoNow;
   await todo.save();
   //如果是任一完成即完成多人Todo
