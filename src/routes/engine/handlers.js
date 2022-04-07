@@ -15,6 +15,7 @@ const Crypto = require("../../lib/Crypto");
 const Workflow = require("../../database/models/Workflow");
 const User = require("../../database/models/User");
 const Todo = require("../../database/models/Todo");
+const Work = require("../../database/models/Work");
 const Route = require("../../database/models/Route");
 const List = require("../../database/models/List");
 const Cell = require("../../database/models/Cell");
@@ -389,7 +390,7 @@ const TemplateAddCron = async function (req, h) {
     let myEmail = req.auth.credentials.email;
     let tplid = req.payload.tplid;
     let expr = req.payload.expr;
-    let starters = [];
+    let starters = req.payload.starters.trim();
     let myGroup = await Cache.getMyGroup(myEmail);
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
@@ -402,23 +403,9 @@ const TemplateAddCron = async function (req, h) {
     //////////////////////////////////////////////////
     //ADMIN can add cron for other users
     //////////////////////////////////////////////////
-    if (myGroup === "ADMIN") {
-      if (req.payload.starters) {
-        starters = Parser.splitStringToArray(req.payload.starters, /[\s;,\.@]/);
-        starters = starters.filter((x) => x.length > 3);
-      }
-      if (starters.length < 1) {
-        starters = [Tools.getEmailPrefix(myEmail)];
-      }
-      //TODO: starts support regexp and exlude with -
-      //TODO: or make list blacklist/whitelist with special name
-      //CRON_WHITELIST/CRON_BLACKLIST
-    } else {
+    if (myGroup !== "ADMIN") {
       //Normal user only add cron for himeself
-      starters = [Tools.getEmailPrefix(myEmail)];
-      //////////////////////////////////////////////////
-      //Check normal user's limitation
-      ////////////////////////////////////////////////////
+      starters = "@" + Tools.getEmailPrefix(myEmail);
       let cnt = await Crontab.countDocuments({ tenant: tenant, creator: myEmail });
       if (cnt >= allowedCronNumber) {
         throw new EmpError("QUOTA EXCEEDED", `Exceed cron entry quota ${allowedCronNumber}`);
@@ -1570,6 +1557,59 @@ const WorkExplainPds = async function (req, h) {
         insertDefault: false,
       })
     );
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const WorkReset = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("Only Admin are able to reset");
+    }
+
+    let wfid = req.payload.wfid;
+    let workid = req.payload.workid;
+    let workFilter = { tenant: tenant, wfid: wfid, workid: workid };
+    let theWork = await Work.findOne(workFilter);
+    let wf_filter = { tenant: tenant, wfid: wfid };
+    let wf = await Workflow.findOne(wf_filter);
+    let wfIO = await Parser.parse(wf.doc);
+    let tpRoot = wfIO(".template");
+    let wfRoot = wfIO(".workflow");
+
+    //Reset work node
+    let tpNode = tpRoot.find("#" + theWork.nodeid);
+    let workNode = wfRoot.find("#" + theWork.workid);
+    workNode.removeClass("ST_DONE");
+    workNode.addClass("ST_RUN");
+    workNode.attr("decision", "");
+    wf = await Workflow.updateOne(
+      { tenant: tenant, wfid: wfid },
+      { $set: { doc: wfIO.html() } },
+      { upsert: false, new: true }
+    );
+
+    //Reset Work
+    theWork = await Work.findOneAndUpdate(
+      workFilter,
+      {
+        $set: {
+          decision: "",
+          status: "ST_RUN",
+        },
+      },
+      { upsert: false, new: true }
+    );
+
+    //Reset todo
+    let todoFilter = { tenant: tenant, wfid: wfid, workid: workid };
+    await Todo.updateMany(todoFilter, { $set: { status: "ST_RUN" } });
+    return "Done";
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3905,6 +3945,7 @@ module.exports = {
   WorkGetTrack,
   WorkAddAdhoc,
   WorkExplainPds,
+  WorkReset,
   GetDelayTimers,
   GetActiveDelayTimers,
   TeamPutDemo,

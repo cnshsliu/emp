@@ -11,6 +11,9 @@ const OrgChartHelper = require("./OrgChartHelper");
 //const Engine = require("./Engine");
 
 const Parser = {};
+////////////////////////////////////////////////////
+// add one user to arr, then return arr
+////////////////////////////////////////////////////
 async function addOneUserToRoleResolver(tenant, arr, user) {
   try {
     if (!user) return;
@@ -31,6 +34,22 @@ async function addOneUserToRoleResolver(tenant, arr, user) {
       let username = await Cache.getUserName(tenant, user);
       arr.push({ uid: user, cn: username });
     }
+    return arr;
+  } catch (err) {
+    return arr;
+  }
+}
+async function removeOneUserToRoleResolver(tenant, arr, user) {
+  try {
+    if (!user) return;
+    let uid = null;
+    //找到用户的UID
+    if (typeof user === "object" && user.uid) {
+      uid = user.uid;
+    } else if (typeof user === "string") {
+      uid = user;
+    }
+    arr = arr.filter((x) => x.uid !== uid);
     return arr;
   } catch (err) {
     return arr;

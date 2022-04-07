@@ -121,7 +121,7 @@ internals.ensureTenantEmail = async function (tenant, email) {
     email = email + tenantDomain;
     ret = email;
   }
-  console.log(`Ensure Tenant email ${email} to ${ret}`);
+  //console.log(`Ensure Tenant email ${email} to ${ret}`);
   return ret;
 };
 
@@ -150,8 +150,6 @@ internals.getMyGroup = async function (email) {
     } else {
       console.error("Get My Group: User not found: filter", filter);
     }
-  } else {
-    console.log("Use mygroup in redis");
   }
 
   return mygroup;
@@ -234,7 +232,7 @@ internals.getSiteDomain = async function (siteid) {
       ret = domain;
     }
   }
-  console.log(`Domain of ${siteid} is ${ret}`);
+  //console.log(`Domain of ${siteid} is ${ret}`);
   return ret;
 };
 internals.getTenantDomain = async function (tenant) {
@@ -249,7 +247,7 @@ internals.getTenantDomain = async function (tenant) {
       ret = domain;
     }
   }
-  console.log(`Tenant ${tenant} domain: ${ret}`);
+  //console.log(`Tenant ${tenant} domain: ${ret}`);
   return ret;
 };
 

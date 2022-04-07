@@ -125,7 +125,6 @@ const OrgChartHelper = {
     let filter = { tenant: tenant, uid: uid };
     //找到用户
     if (ou === null || ou === undefined) ou = "";
-    console.log(uid, positions, ou);
     let ret = [];
     let posArr = positions
       .split(":")
@@ -154,10 +153,13 @@ const OrgChartHelper = {
       //一直到root为止
     }
     ouIn.push("root");
-    console.log(ouIn);
     //如果这个人在root里，比如CEO，则只查root  OU
     //============
     if (mode === OrgChartHelper.FIND_IN_OU) {
+      ou = ou
+        .replace(/\.\*/, "DOT_STAR")
+        .replace(/\*/, ".*")
+        .replace(/DOT_STAR/, ".*");
       ouCondition = { $regex: `^${ou}` };
     } else if (mode === OrgChartHelper.FIND_FIRST_UPPER) {
       for (let i = 0; i < ouIn.length; i++) {

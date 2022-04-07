@@ -71,7 +71,7 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           tplid: Joi.string().required(),
-          starters: Joi.string().optional().allow(""),
+          starters: Joi.string(),
           expr: Joi.string(),
         },
         validator: Joi,
@@ -1111,6 +1111,25 @@ internals.endpoints = [
           wfid: Joi.string().required(),
           todoid: Joi.string().required(),
           comment: Joi.string().optional().allow(""),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/work/reset",
+    handler: Handlers.WorkReset,
+    config: {
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          workid: Joi.string().required(),
         },
         validator: Joi,
       },

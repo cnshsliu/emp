@@ -447,14 +447,51 @@ Engine.scheduleAllValidCrons = async function () {
   }
 };
 
+Engine.batchStartWorkflow = async (cron) => {
+  let doers = await Common.getDoer(
+    cron.tenant,
+    "", //Team id
+    cron.starters, //PDS
+    cron.creator, //starter
+    null,
+    null, //expalinPDS 没有workflow实例
+    null, //kvarString
+    false
+  ); //
+  let emails = doers.map((x) => x.uid);
+  for (let i = 0; i < emails.length; i++) {
+    if (emails[i] !== "lucas@xihuanwu.com") continue;
+    let processTitle = (await Cache.getUserName(cron.tenant, emails[i])) + ": " + cron.tplid;
+    Engine.startWorkflow(
+      false, //not rehearsal
+      cron.tenant,
+      cron.tplid, //tplid
+      emails[i], //starter
+      [], //pbo
+      "",
+      uuidv4(), //workflow id
+      processTitle,
+      "", //parent wfid
+      "", //parent wf name
+      {}, //parent kvars
+      "standalone", //runmode
+      []
+    ).then((wf) => {
+      console.log(wf.wfid, "started by cron");
+    });
+  }
+};
+
 Engine.scheduleCron = async (cron) => {
   console.log("Schedule one cron", cron);
+  //cron.expr = "*/5 * * * * *";
   let task = cronEngine.schedule(
     cron.expr,
-    () => {
+    async () => {
       try {
-        console.log(new Date().getTime());
-        console.log(cron);
+        if (cron.method === "STARTWORKFLOW") {
+          await Engine.batchStartWorkflow(cron);
+        }
       } catch (e) {
         console.error(e);
       }
