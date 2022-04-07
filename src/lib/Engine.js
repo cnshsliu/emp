@@ -4102,6 +4102,11 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   let workNode = wfRoot.find("#" + todo.workid);
   let ret = {};
   ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
+  for (const [key, value] of Object.entries(ret.kvars)) {
+    if (key[0] === "$") {
+      delete ret.kvars[key];
+    }
+  }
   //workflow: 全部节点数据，
   //[],[], 白名单和黑名单都为空
   //yes 为取efficient数据
