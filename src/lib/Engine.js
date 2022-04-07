@@ -2633,7 +2633,6 @@ Client.yarkNode = async function (obj) {
         status: "ST_RUN",
       });
       await newWork.save();
-      debugger;
       await Engine.createTodo({
         tenant: obj.tenant,
         round: thisRound,
