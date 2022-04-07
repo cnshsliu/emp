@@ -1544,7 +1544,7 @@ Engine.explainPds = async function (payload) {
     theKvarString,
     payload.insertDefault
   ); //
-  doers = doers.filter((x) => x.cn !== "USER_NOT_FOUND");
+  doers = doers.filter((x) => x.cn.startsWith("USER_NOT_FOUND") === false);
 
   return doers;
 };

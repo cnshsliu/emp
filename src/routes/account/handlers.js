@@ -268,6 +268,13 @@ internals.LoginUser = async function (req, h) {
     let siteid = req.payload.siteid || "000";
     let login_email = req.payload.email;
     if (login_email.indexOf("@") < 0) {
+      //如果用户登录时直接使用用户ID而不是邮箱，由于无法确认当前Tenant
+      //所以，不能用Cache.getTenantDomain
+      //但可以使用getSiteDomain, 通过 SiteDomain的owner的邮箱地址来获取域名
+      //这种情况适用于单一site部署的情况，在单site部署时，在site信息中，设置owner
+      //owner邮箱就是企业的邮箱地址。
+      //在SaaS模式下，由于是多个企业共用，无法基于单一的site来判断邮箱地址
+      //刚好，Site模式下是需要用户输入邮箱地址的
       let siteDomain = await Cache.getSiteDomain(siteid);
       login_email = login_email + siteDomain;
     }

@@ -88,8 +88,8 @@ internals.getUserOU = async function (tenant, email) {
       await asyncRedisClient.expire(key, 60);
       return theStaff.ou;
     } else {
-      console.warn("Cache.getUserOU, Email:", email, " not found");
-      return "USER_NOT_FOUND";
+      console.warn("Cache.getUserOU from orgchart, Email:", email, " not found");
+      return "USER_NOT_FOUND_OC";
     }
   }
 };
@@ -110,16 +110,16 @@ internals.getTenantSiteId = async function (tenant_id) {
 };
 
 internals.ensureTenantEmail = async function (tenant, email) {
+  let ret = email;
+  let tenantDomain = await this.getTenantDomain(tenant);
   if (email.indexOf("@") > 0) {
-    let siteId = await this.getTenantSiteId(tenant);
-    let siteDomain = await this.getSiteDomain(siteId);
-    return email.substring(0, email.indexOf("@")) + siteDomain;
+    ret = email.substring(0, email.indexOf("@")) + tenantDomain;
   } else {
-    let siteId = await this.getTenantSiteId(tenant);
-    let siteDomain = await this.getSiteDomain(siteId);
-    email = email + siteDomain;
-    return email;
+    email = email + tenantDomain;
+    ret = email;
   }
+  console.log(`Ensure Tenant email ${email} to ${ret}`);
+  return ret;
 };
 
 internals.setOnNonExist = async function (key, value = "v", expire = 60) {
@@ -190,6 +190,15 @@ internals.getOrgTags = async function (orgid) {
   return ret;
 };
 
+//如果用户登录时直接使用用户ID而不是邮箱，由于无法确认当前Tenant
+//所以，不能用Cache.getTenantDomain
+//但可以使用getSiteDomain, 通过 SiteDomain的owner的邮箱地址来获取域名
+//这种情况适用于单一site部署的情况，在单site部署时，在site信息中，设置owner
+//owner邮箱就是企业的邮箱地址。
+//在SaaS模式下，由于是多个企业共用，无法基于单一的site来判断邮箱地址
+//刚好，Site模式下是需要用户输入邮箱地址的
+//
+//该方法在 account/handler中被使用，当用户登录时只使用用户ID时，调用本方法
 internals.getSiteDomain = async function (siteid) {
   let theKey = "SD_" + siteid;
   let ret = await asyncRedisClient.get(theKey);
@@ -202,6 +211,22 @@ internals.getSiteDomain = async function (siteid) {
       ret = domain;
     }
   }
+  console.log(`Domain of ${siteid} is ${ret}`);
+  return ret;
+};
+internals.getTenantDomain = async function (tenant) {
+  let theKey = "TNTD_" + tenant;
+  let ret = await asyncRedisClient.get(theKey);
+  if (!ret) {
+    let theTenant = await Tenant.findOne({ _id: tenant }, { owner: 1, name: 1 });
+    if (theTenant) {
+      let domain = theTenant.owner.substring(theTenant.owner.indexOf("@"));
+      await asyncRedisClient.set(theKey, domain);
+      await asyncRedisClient.expire(theKey, 30 * 24 * 60 * 60);
+      ret = domain;
+    }
+  }
+  console.log(`Tenant ${tenant} domain: ${ret}`);
   return ret;
 };
 

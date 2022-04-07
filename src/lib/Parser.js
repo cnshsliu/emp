@@ -609,6 +609,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
 
   let ret = [];
   let starterEmailSuffix = starter.substring(starter.indexOf("@"));
+  //与Starter的邮箱域名同样的，是TenantAccount
   let tenantAccountPattern = new RegExp("^(.+)" + starterEmailSuffix);
   let arr = Parser.splitStringToArray(pds);
   let tmp = [];
@@ -618,6 +619,7 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
     let rdsPart = arr[i].trim();
     tmp = [];
     if (rdsPart.match(tenantAccountPattern)) {
+      //如果是邮箱地址，则直接取用户名字即可
       tmp = [{ uid: rdsPart, cn: await Cache.getUserName(tenant, rdsPart) }];
     } else if (rdsPart.startsWith("L:")) {
       tmp = await Parser.getLeaderByPosition(tenant, starter, rdsPart);
@@ -627,14 +629,9 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
       tmp = await Parser.getStaffByQuery(tenant, starter, rdsPart);
     } else if (rdsPart.startsWith("@")) {
       let tmpEmail = rdsPart.substring(1).toLowerCase();
-      let email = null;
-      if (tmpEmail.indexOf("@") > 0) {
-        email = tmpEmail;
-      } else {
-        email = `${tmpEmail}${starterEmailSuffix}`;
-      }
+      let email = Tools.makeEmailSameDomain(tmpEmail, starter);
       let cn = await Cache.getUserName(tenant, email);
-      if (cn === "USER_NOT_FOUND") tmp = [];
+      if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
       else tmp = [{ uid: `${email}`, cn: cn }];
     } else if (rdsPart.startsWith("T:")) {
       tmp = []; //Bypass Team Difinition
