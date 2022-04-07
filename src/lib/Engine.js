@@ -4091,7 +4091,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   ret.allowpbo = Tools.blankToDefault(tpNode.attr("pbo"), "no") === "yes";
   ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes";
   ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes";
-  ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "no") === "yes";
+  ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "yes") === "yes";
   ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "yes") === "yes";
   ret.updatedAt = todo.updatedAt;
   ret.from_workid = workNode.attr("from_workid");

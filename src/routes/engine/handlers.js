@@ -1746,10 +1746,15 @@ const TemplateSearch = async function (req, h) {
       return await Engine.checkVisi(tenant, x.tplid, myEmail);
     });
     let total = allObjs.length;
-    let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit);
+    let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
     ret = await asyncFilter(ret, async (x) => {
       return await Engine.checkVisi(tenant, x.tplid, myEmail);
     });
+    for (let i = 0; i < ret.length; i++) {
+      ret[i].cron = (
+        await Crontab.find({ tenant: tenant, tplid: ret[i].tplid }, { _id: 1 })
+      ).length;
+    }
 
     ret = ret.map((x) => {
       x.tags = x.tags.filter((t) => t.owner === myEmail);
@@ -2694,6 +2699,7 @@ const OrgChartExport = async function (req, h) {
     };
     await getEntriesUnder(entries, tenant, "root");
 
+    console.log(entries);
     return h.response(entries);
   } catch (err) {
     console.error(err);
