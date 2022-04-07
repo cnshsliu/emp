@@ -1007,59 +1007,63 @@ Engine.__doneTodo = async function (
     );
     //////////////////////////////////////////////////
     // 发送WeComBotMessage
-    if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
-      logMsg = `This node ${theWork.title} need to send wecom`;
-      Engine.log(tenant, todo.wfid, logMsg);
-      let template = await Template.findOne(
-        { tenat: tenant, tplid: wf.tplid },
-        { _id: 0, author: 1 }
-      );
-      let wecomBot = await List.findOne({
-        tenant: tenant,
-        author: template.author,
-        name: "wecombots_tpl",
-        entries: { $elemMatch: { key: wf.tplid } },
-      }).select({
-        entries: {
-          $elemMatch: { key: wf.tplid },
-        },
-      });
-      logMsg = `Query List, ${wecomBot ? "successfully" : "not found"}`;
-      Engine.log(tenant, todo.wfid, logMsg);
-      if (wecomBot) {
-        let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
-          tenant,
-          doer,
-          todo,
-          theWork,
-          workDecision,
-          comment
-        );
-        logMsg = `Query List got bot keys ${wecomBot.entries[0].items}`;
+    try {
+      if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
+        logMsg = `This node ${theWork.title} need to send wecom`;
         Engine.log(tenant, todo.wfid, logMsg);
-        try {
-          let botKeys = wecomBot.entries[0].items.split(";");
-          if (botKeys.length > 0) {
-            let botsNumber = botKeys.length;
-            let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
-            let botKey = botKeys[botIndex];
-            let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-            await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
-              logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
-              Engine.log(tenant, todo.wfid, logMsg);
-            });
+        let template = await Template.findOne(
+          { tenat: tenant, tplid: wf.tplid },
+          { _id: 0, author: 1 }
+        );
+        let wecomBot = await List.findOne({
+          tenant: tenant,
+          author: template.author,
+          name: "wecombots_tpl",
+          entries: { $elemMatch: { key: wf.tplid } },
+        }).select({
+          entries: {
+            $elemMatch: { key: wf.tplid },
+          },
+        });
+        logMsg = `Query List, ${wecomBot ? "successfully" : "not found"}`;
+        Engine.log(tenant, todo.wfid, logMsg);
+        if (wecomBot) {
+          let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
+            tenant,
+            doer,
+            todo,
+            theWork,
+            workDecision,
+            comment
+          );
+          logMsg = `Query List got bot keys ${wecomBot.entries[0].items}`;
+          Engine.log(tenant, todo.wfid, logMsg);
+          try {
+            let botKeys = wecomBot.entries[0].items.split(";");
+            if (botKeys.length > 0) {
+              let botsNumber = botKeys.length;
+              let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
+              let botKey = botKeys[botIndex];
+              let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
+              await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
+                logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
+                Engine.log(tenant, todo.wfid, logMsg);
+              });
+            }
+          } catch (e) {
+            console.error(e);
           }
-        } catch (e) {
-          console.error(e);
+        } else {
+          logMsg = `!!!!! Query List return null, something must wrong, please check  list defination\n
+        list name = wecombots_tpl key = ${wf.tplid}`;
+          Engine.log(tenant, todo.wfid, logMsg);
         }
       } else {
-        logMsg = `!!!!! Query List return null, something must wrong, please check  list defination\n
-        list name = wecombots_tpl key = ${theWf.tplid}`;
+        logMsg = `This node ${todo.title} does not send wecom`;
         Engine.log(tenant, todo.wfid, logMsg);
       }
-    } else {
-      logMsg = `This node ${todo.title} does not send wecom`;
-      Engine.log(tenant, todo.wfid, logMsg);
+    } catch (wecomError) {
+      console.error(wecomError.message);
     }
     //////////////////////////////////////////////////
     //////////////////////////////////////////////////
