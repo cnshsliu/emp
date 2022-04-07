@@ -2487,7 +2487,7 @@ const AutoRegisterOrgChartUser = async function (administrator, staffs, myDomain
         ZMQ,
         administrator.username,
         administrator.email,
-        user.email
+        staff_email
       );
     } else if (!existing_staff_user) {
       //If this email is not registered, auto register and auto enter org

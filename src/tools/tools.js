@@ -243,7 +243,7 @@ const Tools = {
     return email.substring(0, tmp);
   },
   sendInvitationEmail_for_joinOrgChart: async function (ZMQ, admin_username, admin_email, email) {
-    let frontendUrl = Tool.getFrontEndUrl();
+    let frontendUrl = Tools.getFrontEndUrl();
     var mailbody = `<p>${admin_username} (email: ${admin_email}) </p> <br/> invite you to join his organization, <br/>
        Please login to Metatocome to accept <br/>
       <a href='${frontendUrl}'>${frontendUrl}</a>`;
@@ -258,7 +258,7 @@ const Tools = {
     );
   },
   sendInvitationEmail: async function (ZMQ, email) {
-    let frontendUrl = Tool.getFrontEndUrl();
+    let frontendUrl = Tools.getFrontEndUrl();
     var mailbody = `<p>Welcome to HyperFlow. </p> <br/> Your have been invited to join Org, <br/>
        Please register if you have no HyperFLow account at this momnent with your email <br/>
           ${email} <br/><br/>
