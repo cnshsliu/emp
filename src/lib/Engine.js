@@ -2633,6 +2633,7 @@ Client.yarkNode = async function (obj) {
         status: "ST_RUN",
       });
       await newWork.save();
+      debugger;
       await Engine.createTodo({
         tenant: obj.tenant,
         round: thisRound,
@@ -3319,7 +3320,7 @@ Client.newTodo = async function (
   nodeid,
   workid,
   title,
-  origtitle,
+  origtitle, //替换var之前的原始Title
   comment,
   transferable,
   teamid,
@@ -3329,6 +3330,9 @@ Client.newTodo = async function (
 ) {
   let todoid = uuidv4();
 
+  if (Tools.isEmpty(origtitle)) {
+    origtitle = title;
+  }
   let todo = new Todo({
     todoid: todoid,
     tenant: tenant,
@@ -3341,7 +3345,7 @@ Client.newTodo = async function (
     nodeid: nodeid,
     workid: workid,
     title: title,
-    origtitle: origtitle,
+    origtitle: origtitle, //替换var之前的原始Title
     status: "ST_RUN",
     wfstatus: "ST_RUN",
     comment: comment,
@@ -4222,6 +4226,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
   let todos = await Todo.find(todo_filter).sort({ updatedAt: -1 });
   for (let i = 0; i < todos.length; i++) {
     let hasPersonCNInTitle = false;
+    //替换Var之前的原始Title
     if (todos[i].origtitle && todos[i].origtitle.indexOf("doerCN") > 0) {
       hasPersonCNInTitle = true;
     }
