@@ -843,6 +843,7 @@ Engine.__doneTodo = async function (
       if (st === "ST_DONE") {
         todo.doneat = isoNow;
       }
+      if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
       await todo.save();
       throw new EmpError(
         "WORK_UNEXPECTED_STATUS",
@@ -3397,9 +3398,6 @@ Client.newTodo = async function (
       rehearsal: rehearsal,
       cellInfo: cellInfo,
     });
-    console.log("//////////////////////////////////////////////////");
-    console.log("Title:", todo.title, "origTitle:", todo.origtitle);
-    console.log("//////////////////////////////////////////////////");
     await todo.save();
 
     await Client.informUserOnNewTodo({
@@ -4251,7 +4249,6 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
 
   ret.wf.history = await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
 
-  console.log(ret);
   return ret;
 };
 
