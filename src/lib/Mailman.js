@@ -11,6 +11,7 @@
  *
  */
 const Hoek = require("@hapi/hoek");
+const Tools = require("../tools/tools.js");
 // the email library
 const nodemailer = require("nodemailer");
 const EmpConfig = require("../config/emp");
@@ -26,17 +27,6 @@ const EmpConfig = require("../config/emp");
  * @param mailbody the body of the email
  */
 const Mailman = {};
-function getFrontEndUrl() {
-  var url = "";
-  if (EmpConfig.frontendUrl) {
-    url = EmpConfig.frontendUrl;
-  } else if (process.env.L2C_URL) {
-    url = process.env.L2C_URL;
-  } else {
-    throw new Error("L2C_URL not set");
-  }
-  return url;
-}
 Mailman.mail = async function (smtp, from, toemail, cc, bcc, subject, mailbody) {
   /* console.log(
     `mail from ${from} to ${toemail} via host ${smtp.host} port ${smtp.port} secure${smtp.secure} auth: ${smtp.username} pwd:... body ${mailbody} `
@@ -70,7 +60,7 @@ Mailman.mail = async function (smtp, from, toemail, cc, bcc, subject, mailbody) 
   });
 };
 Mailman.sendMailVerificationLink = function (user, token) {
-  var url = getFrontEndUrl();
+  var url = Tools.getFrontEndUrl();
   var from = EmpConfig.email.smtp.from;
   var mailbody =
     "<p>Thanks for Registering EMP" +
@@ -111,7 +101,7 @@ Mailman.SimpleSend = function (recipients, cc, bcc, title, mailbody) {
  *
  */
 Mailman.sendMailResetPassword = function (user, token) {
-  var url = getFrontEndUrl();
+  var url = Tools.getFrontEndUrl();
   var from = EmpConfig.email.smtp.from;
   var mailbody =
     "<p>A reset password action has been requested from" +
