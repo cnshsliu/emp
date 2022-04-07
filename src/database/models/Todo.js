@@ -28,7 +28,7 @@ var TodoSchema = new Schema(
     tplid: { type: String, required: [true, "不能为空"], index: true },
     wftitle: { type: String, required: [true, "不能为空"], index: false },
     title: { type: String, required: true },
-    origtitle: { type: String, required: true },
+    origtitle: { type: String },
     comment: { type: String },
     role: { type: String },
     byroute: { type: String },

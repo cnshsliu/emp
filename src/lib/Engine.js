@@ -3247,17 +3247,18 @@ Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) 
 };
 
 Client.informUserOnNewTodo = async function (inform) {
-  let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
-  let ew = await Cache.getUserEw(sendEmailTo);
-  let withEmail = true;
-  if (typeof ew === "boolean" && ew === false) {
-    console.log(inform.doer, " does not receive email on new task");
-    withEmail = false;
-  }
-  withEmail = ew && ew.email;
-  let cn = await Cache.getUserName(inform.tenant, inform.doer);
-  let frontendUrl = Tools.getFrontEndUrl();
-  let mail_body = `Hello, ${cn}, new task is comming in:
+  try {
+    let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
+    let ew = await Cache.getUserEw(sendEmailTo);
+    let withEmail = true;
+    if (typeof ew === "boolean" && ew === false) {
+      console.log(inform.doer, " does not receive email on new task");
+      withEmail = false;
+    }
+    withEmail = ew && ew.email;
+    let cn = await Cache.getUserName(inform.tenant, inform.doer);
+    let frontendUrl = Tools.getFrontEndUrl();
+    let mail_body = `Hello, ${cn}, new task is comming in:
 <br/><a href="${frontendUrl}/work/@${inform.todoid}">${inform.title} </a><br/>
 in Workflow: <br/>
 ${inform.wftitle}<br/>
@@ -3275,23 +3276,23 @@ ${inform.title}
 
 Metatocome`;
 
-  let subject = `[New task] ${inform.title}`;
-  let extra_body = "";
-  if (inform.rehearsal) {
-    subject = "Rehearsal: " + subject;
-    extra_body = `
+    let subject = `[New task] ${inform.title}`;
+    let extra_body = "";
+    if (inform.rehearsal) {
+      subject = "Rehearsal: " + subject;
+      extra_body = `
 <br/>
 This mail should go to ${inform.doer} but send to you because this is rehearsal';
 `;
-  }
-  mail_body += extra_body;
+    }
+    mail_body += extra_body;
 
-  if (withEmail) await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body);
+    if (withEmail) await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body);
 
-  let markdownMsg = {
-    msgtype: "markdown",
-    markdown: {
-      content: `# ${cn}
+    let markdownMsg = {
+      msgtype: "markdown",
+      markdown: {
+        content: `# ${cn}
 
           ## ${inform.rehearsal ? "Rehearsal: " : ""}${inform.title}
           
@@ -3308,32 +3309,33 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
           Of couse, you may also open MTC in your desktop browser to get the full functionalities
 
           `,
-    },
-  };
-  let bots = await Webhook.find(
-    {
-      tenant: inform.tenant,
-      owner: inform.doer,
-      webhook: "wecombot_todo",
-      tplid: { $in: ["All", inform.tplid] },
-      key: { $exists: true },
-      $expr: { $eq: [{ $strLenCP: "$key" }, 36] },
-    },
-    { _id: 0, key: 1 }
-  ).lean();
-  let botKeys = bots.map((bot) => bot.key);
-  botKeys = [...new Set(botKeys)];
-  console.log("Found bot keys number", botKeys.length);
-  console.log(botKeys);
-  for (let i = 0; i < botKeys.length; i++) {
-    try {
-      let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKeys[i]}`;
-      await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
-        console.log("Wreck WeCom Bot TODO", botKeys[i]);
-      });
-    } catch (e) {
-      console.error(e);
+      },
+    };
+    let bots = await Webhook.find(
+      {
+        tenant: inform.tenant,
+        owner: inform.doer,
+        webhook: "wecombot_todo",
+        tplid: { $in: ["All", inform.tplid] },
+        key: { $exists: true },
+        $expr: { $eq: [{ $strLenCP: "$key" }, 36] },
+      },
+      { _id: 0, key: 1 }
+    ).lean();
+    let botKeys = bots.map((bot) => bot.key);
+    botKeys = [...new Set(botKeys)];
+    for (let i = 0; i < botKeys.length; i++) {
+      try {
+        let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKeys[i]}`;
+        await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
+          console.log("Wreck WeCom Bot TODO", botKeys[i]);
+        });
+      } catch (e) {
+        console.error(e);
+      }
     }
+  } catch (err) {
+    cosnole.error(err);
   }
 };
 /**
