@@ -548,6 +548,15 @@ internals.UpdateProfile = async function (req, h) {
     let user = await User.findById(req.auth.credentials._id);
     let tenant = await Tenant.findOne({ _id: tenant_id });
     let v = req.payload.value;
+
+    //对数据库中的ew进行检查. 之前ew是boolean，现在改成了对象
+    //如果不存在ew，则设置ew
+    if (!user.ew) {
+      user.ew = { email: true, wecom: false };
+    }
+    if (typeof user.ew === "boolean") {
+      user.ew = { email: true, wecom: false };
+    }
     if (v.avatar) {
       user.avatar = v.avatar.trim();
     }
@@ -564,7 +573,7 @@ internals.UpdateProfile = async function (req, h) {
       }
       user.password = Crypto.encrypt(v.password);
     }
-    if (v.ew !== undefined && v.ew !== user.ew) {
+    if (v && v.ew !== undefined && v.ew !== user.ew) {
       user.ew = v.ew;
     }
     if (v.ps) {

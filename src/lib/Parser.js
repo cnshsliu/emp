@@ -852,6 +852,20 @@ Parser.getUserCellsTableAsHTMLByUserIndex = function (cells, userIndex) {
   return tblHtml;
 };
 
+Parser.tidyKVars = function (kvars) {
+  for (const [key, def] of Object.entries(kvars)) {
+    delete def["ui"];
+    delete def["breakrow"];
+    delete def["placeholder"];
+    delete def["required"];
+    delete def["visi"];
+    delete def["when"];
+    delete def["id"];
+    delete def["type"];
+  }
+  return kvars;
+};
+
 const testStr = "abcd/efgh ijkl\nmnop;qrst, uvwx\ryzab  cdef; ghij/klmn/opqr,/stuv";
 console.log(
   `Check splitter with [\\s;,], split '${testStr}' to `,

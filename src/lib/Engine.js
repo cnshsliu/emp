@@ -2111,6 +2111,7 @@ Client.yarkNode = async function (obj) {
     }
     await Parser.injectCells(tenant, kvarsForScript);
     kvarsForScript = Parser.injectInternalVars(kvarsForScript);
+    kvarsForScript = Parser.tidyKVars(kvarsForScript);
     let codeRetString = '{"RET":"DEFAULT"}';
     let codeRetObj = {};
     let codeRetDecision = "DEFAULT";
@@ -2145,7 +2146,9 @@ Client.yarkNode = async function (obj) {
     try {
       codeRetString = await Engine.runCode(
         obj.tenant,
+        obj.tplid,
         obj.wfid,
+        obj.starter,
         kvarsForScript,
         parsed_code,
         callbackId
@@ -3533,7 +3536,16 @@ Engine.getWfLogFilename = function (tenant, wfid) {
  *
  * @return {...}
  */
-Engine.runCode = async function (tenant, wfid, kvars_json, code, callbackId, isTry = false) {
+Engine.runCode = async function (
+  tenant,
+  tplid,
+  wfid,
+  starter,
+  kvars_json,
+  code,
+  callbackId,
+  isTry = false
+) {
   //dev/emplabs/tenant每个租户自己的node_modules
   let result = "DEFAULT";
   let emp_node_modules = process.env.EMP_NODE_MODULES;
@@ -3556,6 +3568,9 @@ module.paths.push('${emp_node_modules}');
 module.paths.push('${emp_tenant_folder}/emplib');
 let innerTeam = null;
 let isTry = ${isTry};
+const tplid="${tplid}";
+const wfid="${wfid}";
+const starter="${starter}";
 const MtcAPIAgent = require("axios").default;
 const kvars =  ${JSON.stringify(kvars_json)};
 let retkvars={};
@@ -3582,10 +3597,10 @@ const kvalue = function(key){
          return kvars[key].value;
        }
     }
-}
+};
 const MtcGet = function(key){
   return kvalue(key);
-}
+};
 const kvar = function(key, value, label){
   if(retkvars[key] !== undefined){
     retkvars[key].value = value;
@@ -3594,27 +3609,33 @@ const kvar = function(key, value, label){
   }else{
     retkvars[key] = {value:value, label: label?label:key };
   }
-}
+};
 const MtcSet = function(key, value, label){
   kvar(key, value, label);
-}
+};
 const MtcGetDecision=function(nodeid){
   return MtcGet("$decision_" + nodeid);
-}
+};
 const MtcSetDecision=function(nodeid, value){
   return MtcSet("$decision_"+ nodeid, value, "Decision of "+nodeid);
-}
+};
 const MtcDecision = function(nodeid, value){
   if(value){
     return MtcSetDecision(nodeid, value);
   }else{
     return MtcGetDecision(nodeid);
   }
-}
+};
 const MtcSendCallbackPointId=function(url, extraPayload){
   MtcAPIAgent.post(url, {...{cbpid: "${callbackId}"}, ...extraPayload});
-}
+};
 const MtcSendCBPid = MtcSendCallbackPointId;
+
+const MtcSendContext=function(url){
+  let wfInfo = {tplid: tplid, wfid:wfid};
+
+  MtcAPIAgent.post(url, {context:{...wfInfo, ...kvars}});
+};
 async function runcode() {
   try{
   let ___ret___={};
@@ -3725,6 +3746,7 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  * @param  {} runmode     uarent workflow vars
  * @param  {} uploadedFiles     uarent workflow vars
  */
+
 Engine.startWorkflow = async function (
   rehearsal,
   tenant,

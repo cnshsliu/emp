@@ -84,7 +84,7 @@ Mailman.sendMailVerificationLink = function (user, token) {
 };
 
 Mailman.SimpleSend = function (recipients, cc, bcc, title, mailbody) {
-  Mailman.mail(
+  return Mailman.mail(
     EmpConfig.email.smtp,
     EmpConfig.email.smtp.from,
     recipients,

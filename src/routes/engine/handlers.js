@@ -20,6 +20,7 @@ const Route = require("../../database/models/Route");
 const List = require("../../database/models/List");
 const Cell = require("../../database/models/Cell");
 const Comment = require("../../database/models/Comment");
+const Mailman = require("../../lib/Mailman");
 const CbPoint = require("../../database/models/CbPoint");
 const Team = require("../../database/models/Team");
 const OrgChart = require("../../database/models/OrgChart");
@@ -3644,9 +3645,10 @@ const ListGetItems = async function (req, h) {
 const CodeTry = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
     let retMsg = { message: "" };
     let code = req.payload.code;
-    retMsg.message = await Engine.runCode(tenant, "codetry", {}, code, true);
+    retMsg.message = await Engine.runCode(tenant, "codetry", "codetry", myEmail, {}, code, true);
 
     return h.response(retMsg);
   } catch (err) {
@@ -3662,6 +3664,16 @@ const DemoAPI = async function (req, h) {
     intv: 100,
     stringv: "hello",
   };
+};
+const DemoPostContext = async function (req, h) {
+  Mailman.SimpleSend(
+    "lucas@xihuanwu.com",
+    "",
+    "",
+    "Demo Post Context",
+    JSON.stringify(req.payload.context)
+  );
+  return "Received";
 };
 const FilePondProcess = async function (req, h) {
   try {
@@ -3996,7 +4008,6 @@ module.exports = {
   CodeTry,
   MySystemPerm,
   MemberSystemPerm,
-  DemoAPI,
   SeeItWork,
   FilePondProcess,
   FilePondRevert,
@@ -4006,4 +4017,6 @@ module.exports = {
   WecomBotForTodoSet,
   WecomBotForTodoGet,
   CellsRead,
+  DemoAPI,
+  DemoPostContext,
 };

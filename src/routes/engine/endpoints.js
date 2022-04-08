@@ -1483,6 +1483,21 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/demo/context",
+    handler: Handlers.DemoPostContext,
+    config: {
+      description: "demo api return some data",
+      tags: ["api"],
+      validate: {
+        payload: {
+          context: Joi.object().optional(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/team/demo",
     handler: Handlers.TeamPutDemo,
     config: {
