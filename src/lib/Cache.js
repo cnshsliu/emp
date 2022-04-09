@@ -300,4 +300,17 @@ internals.removeVisi = async function (tplid) {
   await asyncRedisClient.del(visiKey);
 };
 
+//设置重置密码的Token
+internals.setRstPwdVerificationCode = async function (email, vrfCode) {
+  let rstPwdKey = "rstpwd_" + email;
+  await asyncRedisClient.set(rstPwdKey, vrfCode);
+  await asyncRedisClient.expire(rstPwdKey, 15 * 60);
+};
+//取得重置密码的Token
+internals.getRstPwdVerificationCode = async function (email) {
+  let rstPwdKey = "rstpwd_" + email;
+  let ret = await asyncRedisClient.get(rstPwdKey);
+  return ret;
+};
+
 module.exports = internals;

@@ -213,10 +213,11 @@ internals.endpoints = [
       notes: "Password form posts new password",
       validate: {
         payload: {
+          //email required
+          email: Joi.string().required(),
           //password required with same regex as client
           password: Joi.string().regex(EmpConfig.validation.password).required(),
-          //email required
-          token: Joi.string().required(),
+          vrfcode: Joi.string(),
         },
         validator: Joi,
       },
@@ -278,7 +279,7 @@ internals.endpoints = [
             ew: Joi.object({ email: Joi.boolean(), wecom: Joi.boolean() }).optional(),
             ps: Joi.number().min(5).max(100).optional(),
           },
-          old_password: Joi.string().allow("").regex(EmpConfig.validation.password).optional(),
+          old_password: Joi.string(),
         },
         validator: Joi,
       },

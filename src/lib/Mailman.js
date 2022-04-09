@@ -100,22 +100,25 @@ Mailman.SimpleSend = function (recipients, cc, bcc, title, mailbody) {
  * Set email to user so they can reset their password
  *
  */
-Mailman.sendMailResetPassword = function (user, token) {
+Mailman.sendMailResetPassword = function (user, vrfCode) {
   var url = Tools.getFrontEndUrl();
   var from = EmpConfig.email.smtp.from;
-  var mailbody =
-    "<p>A reset password action has been requested from" +
-    " " +
-    EmpConfig.email.smtp.from +
-    " </p><p>Please click on the " +
-    " reset password link below.<br/>" +
-    " The link is only available for 15 minutes.<br/>" +
-    "<a href='" +
-    url +
-    "/resetpassword.html?" +
-    token +
-    "'>Reset Password Link</a></p>";
-  Mailman.mail(EmpConfig.email.smtp, from, user.email, "", "", "Reset Password", mailbody);
+  var mailbody = `<center><p>A reset password requested has been made for ${user.email} </p> 
+The verification code is<br/>
+<font style="font-size:36px">${vrfCode}</font>
+<br/>
+<br/>
+which is only valid in 15 minutes
+</center>`;
+  Mailman.mail(
+    EmpConfig.email.smtp,
+    from,
+    user.email,
+    "",
+    "",
+    `Reset Password Verification Code: ${vrfCode}`,
+    mailbody
+  );
 };
 
 module.exports = Mailman;

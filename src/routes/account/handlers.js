@@ -428,13 +428,17 @@ internals.VerifyEmail = async function (req, h) {
  */
 internals.ResetPasswordRequest = async function (req, h) {
   try {
-    if ((await Cache.setOnNonExist("admin_" + req.payload.email, "a", 10)) === false) {
-      throw new EmpError("NO_BRUTE", "Please wait a moment");
-    }
+    //根据邮箱取到用户
     let user = await User.findOne({ email: req.payload.email });
-    if (!user) return h.response("");
-    var tokenData = { email: user.email };
-    Mailman.sendMailResetPassword(user, JasonWebToken.sign(tokenData, EmpConfig.crypto.privateKey));
+    if (!user) {
+      throw new EmpError("USER_NOT_FOUND", "user not found");
+    }
+    //生成Token
+    //Token放入Redis
+    let vrfCode = "abcdef";
+    await Cache.setRstPwdVerificationCode(user.email, vrfCode);
+    //Token邮件发给用户邮箱
+    Mailman.sendMailResetPassword(user, vrfCode);
 
     return h.response("Check your email");
   } catch (err) {
@@ -452,27 +456,25 @@ internals.ResetPasswordRequest = async function (req, h) {
  */
 internals.ResetPassword = async function (req, h) {
   try {
-    let decoded = JasonWebToken.verify(req.payload.token, EmpConfig.crypto.privateKey);
-    if (decoded === undefined) {
-      return Boom.forbidden("invalid resetPassword link");
-    }
+    let email = req.payload.email;
+    let password = req.payload.password;
+    let vrfcode = req.payload.vrfcode;
 
-    //Must fit w/in time allocated
-    var diff = Moment().diff(Moment(decoded.iat * 1000));
-    if (diff > EmpConfig.crypto.tokenExpiry) {
-      return Boom.unauthorized("reset password allowed time has past");
+    let vrfCodeInRedis = await Cache.getRstPwdVerificationCode(email);
+    if (vrfCodeInRedis === vrfcode) {
+      let user = await User.findOneAndUpdate(
+        { email: email },
+        { $set: { password: Crypto.encrypt(password) } },
+        { upsert: false, new: true }
+      );
+      if (user) {
+        return user.email;
+      } else {
+        throw new EmpError("USER_NOT_FOUND", "User not found");
+      }
+    } else {
+      throw new EmpError("VRFCODE_NOT_FOUND", "verfication code not exist");
     }
-
-    let user = await User.findOne({
-      email: decoded.email,
-    });
-    if (!user) {
-      return Boom.forbidden("invalid resetPassword link");
-    }
-
-    user.password = Crypto.encrypt(req.payload.password);
-    await user.save();
-    return h.response(user);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
