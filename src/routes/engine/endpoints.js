@@ -2615,6 +2615,23 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/fix/1",
+    handler: Handlers.Fix1,
+    config: {
+      tags: ["api"],
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
 ];
 
 module.exports = internals;

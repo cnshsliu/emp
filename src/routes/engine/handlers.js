@@ -3894,6 +3894,33 @@ const CellsRead = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const Fix1 = async function (req, h) {
+  let tplid = "周报";
+  let wfs = await Workflow.find({ tplid: tplid, status: "ST_RUN" });
+  for (let i = 0; i < wfs.length; i++) {
+    let doc = wfs[i].doc;
+    if (
+      doc.indexOf(
+        `role="DEFAULT" wecom="false" cmt="yes" g="2"><p>[cn_usr_liu_executor]已提交"[liu_module]"跟进处理结果，请您审阅</p>`
+      ) > 0
+    ) {
+      doc = doc.replace(
+        `role="DEFAULT" wecom="false" cmt="yes" g="2"><p>[cn_usr_liu_executor]已提交"[liu_module]"跟进处理结果，请您审阅</p>`,
+        `role="@lucas" wecom="false" cmt="yes" g="2"><p>[cn_usr_liu_executor]已提交"[liu_module]"跟进处理结果，请您审阅</p>`
+      );
+      let wf = await Workflow.findOneAndUpdate(
+        { wfid: wfs[i].wfid },
+        { $set: { doc: doc } },
+        { upsert: false, new: true }
+      );
+      if (wf.doc.indexOf(`role="@lucas" wecom`) > -1) {
+        console.log(wfs[i].wfid, "success");
+      }
+    }
+    break;
+  }
+  return "done";
+};
 
 module.exports = {
   TemplateCreate,
@@ -4019,4 +4046,5 @@ module.exports = {
   CellsRead,
   DemoAPI,
   DemoPostContext,
+  Fix1,
 };

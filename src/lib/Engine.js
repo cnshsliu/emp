@@ -968,7 +968,6 @@ Engine.__doneTodo = async function (
       comment = await Parser.replaceStringWithKVar(
         tenant,
         comment,
-        null,
         ALL_VISIED_KVARS,
         INJECT_INTERNAL_VARS
       );
@@ -1381,7 +1380,6 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       comment = await Parser.replaceStringWithKVar(
         tenant,
         comment,
-        null,
         ALL_VISIED_KVARS,
         INJECT_INTERNAL_VARS
       );
@@ -1702,7 +1700,6 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
       comment = await Parser.replaceStringWithKVar(
         tenant,
         comment,
-        null,
         ALL_VISIED_KVARS,
         INJECT_INTERNAL_VARS
       );
@@ -1806,7 +1803,7 @@ Client.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInter
   let ret = Engine.compileContent(wfRoot, kvars, Parser.base64ToCode(inputStr));
   if (ret.indexOf("[") >= 0) {
     //null位置的参数是以e字符串数组，包含k=v;k=v的定义
-    ret = await Parser.replaceStringWithKVar(tenant, ret, null, kvars, withInternal);
+    ret = await Parser.replaceStringWithKVar(tenant, ret, kvars, withInternal);
   }
   return ret;
 };
@@ -1908,7 +1905,7 @@ Client.yarkNode = async function (obj) {
       obj.starter
     );
   } else if (tpNode.hasClass("INFORM")) {
-    //这里的getDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
+    //这里的GetDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
     try {
       let doers = await Common.getDoer(
         obj.tenant,
@@ -1921,7 +1918,7 @@ Client.yarkNode = async function (obj) {
         true
       );
       if (Array.isArray(doers) === false) {
-        console.error("C.getDoer should return array", 5);
+        console.error("C.GetDoer should return array", 5);
       } else {
         doers = [doers];
       }
@@ -2099,12 +2096,12 @@ Client.yarkNode = async function (obj) {
     //取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
     let kvarsForScript = await Parser.userGetVars(
       obj.tenant,
-      "EMP", //系统，no checkVisiForWhom
+      "EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
       obj.wfid,
       "workflow", //整个工作流
       [],
       [],
-      "yes"
+      "yes" //efficient
     );
     if (JSON.stringify(kvarsForScript) === "{}") {
       console.error("kvarsForScript got {}, something must be wrong");
@@ -2144,12 +2141,26 @@ Client.yarkNode = async function (obj) {
       Engine.log(tenant, obj.wfid, "ASYNC mode, callbackID is " + callbackId);
     }
     try {
+      let pdsResolvedForScript = await Engine.getPdsOfAllNodesForScript({
+        tenant: obj.tenant,
+        tplid: obj.tplid,
+        starter: obj.starter,
+        teamid: obj.teamid,
+        wfid: obj.wfid,
+        tpRoot: tpRoot,
+        wfRoot: wfRoot,
+        tpNode: tpNode,
+        kvars: kvarsForScript,
+      });
+      console.log(pdsResolvedForScript);
       codeRetString = await Engine.runCode(
-        obj.tenant,
+        obj.tenant, //tenant
+        Tools.getEmailDomain(obj.starter), //Tenant Domain
         obj.tplid,
         obj.wfid,
         obj.starter,
         kvarsForScript,
+        pdsResolvedForScript,
         parsed_code,
         callbackId
       );
@@ -2629,7 +2640,6 @@ Client.yarkNode = async function (obj) {
       tpNodeTitle = await Parser.replaceStringWithKVar(
         tenant,
         tpNodeTitle,
-        null,
         KVARS_WITHOUT_VISIBILITY,
         INJECT_INTERNAL_VARS
       );
@@ -2724,6 +2734,44 @@ Client.yarkNode = async function (obj) {
   for (let i = 0; i < parent_nexts.length; i++) {
     await Engine.sendNext(parent_nexts[i]);
   }
+};
+
+//TODO:
+Engine.getPdsOfAllNodesForScript = async function (data) {
+  let ret = {};
+  let PDS = [];
+  try {
+    let actions = data.tpRoot.find(".node.ACTION");
+    let kvars = data.kvars;
+    for (const [key, def] of Object.entries(kvars)) {
+      if (def.visi) {
+        delete kvars[key];
+      }
+    }
+    console.log(kvars);
+    actions.each(async function (index, el) {
+      let jq = Cheerio(el);
+      let pds = jq.attr("role");
+      //TODO: data.teamid;
+      //let doers = Parser.getDoer(data.tenant, data.teamid, pds, data.starter, data.wfid, kvars);
+      PDS.push(pds);
+    });
+    PDS = [...new Set(PDS)];
+    for (let i = 0; i < PDS.length; i++) {
+      ret[PDS[i]] = await Parser.getDoer(
+        data.tenant,
+        data.teamid,
+        PDS[i],
+        data.starter,
+        data.wfid,
+        data.wfRoot,
+        kvars
+      );
+    }
+  } catch (e) {
+    Engine.log(obj.tenant, obj.wfid, e.message);
+  }
+  return ret;
 };
 
 Engine.createTodo = async function (obj) {
@@ -3538,10 +3586,12 @@ Engine.getWfLogFilename = function (tenant, wfid) {
  */
 Engine.runCode = async function (
   tenant,
+  tenantDomain,
   tplid,
   wfid,
   starter,
   kvars_json,
+  pdsResolved_json,
   code,
   callbackId,
   isTry = false
@@ -3551,6 +3601,7 @@ Engine.runCode = async function (
   let emp_node_modules = process.env.EMP_NODE_MODULES;
   let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
   let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+  console.log(pdsResolved_json);
 
   Engine.log(tenant, wfid, "[Script]");
 
@@ -3568,11 +3619,13 @@ module.paths.push('${emp_node_modules}');
 module.paths.push('${emp_tenant_folder}/emplib');
 let innerTeam = null;
 let isTry = ${isTry};
+const tenantDomain = "${tenantDomain}";
 const tplid="${tplid}";
 const wfid="${wfid}";
 const starter="${starter}";
 const MtcAPIAgent = require("axios").default;
 const kvars =  ${JSON.stringify(kvars_json)};
+const pdsDoers = ${JSON.stringify(pdsResolved_json)};
 let retkvars={};
 function setInnerTeam(teamConf){
   innerTeam = teamConf;
@@ -3625,6 +3678,21 @@ const MtcDecision = function(nodeid, value){
   }else{
     return MtcGetDecision(nodeid);
   }
+};
+const MtcPDSHasDoer = function(pds, who){
+  let ret = false;
+  if(who.indexOf('@')< 0){
+    who = who + tenantDomain;
+  }
+  if(pdsDoers[pds]){
+    for(let i=0; i<pdsDoers[pds].length; i++){
+      if(pdsDoers[pds][i]["uid"] === who){
+        ret = true;
+        break;
+      }
+    }
+  }
+  return ret;
 };
 const MtcSendCallbackPointId=function(url, extraPayload){
   MtcAPIAgent.post(url, {...{cbpid: "${callbackId}"}, ...extraPayload});
@@ -4157,7 +4225,6 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
     ret.title = await Parser.replaceStringWithKVar(
       tenant,
       ret.title,
-      null,
       ALL_VISIED_KVARS,
       INJECT_INTERNAL_VARS
     );
@@ -4211,7 +4278,6 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
     tmpInstruction = await Parser.replaceStringWithKVar(
       tenant,
       tmpInstruction,
-      null,
       ALL_VISIED_KVARS,
       INJECT_INTERNAL_VARS
     );
@@ -4929,14 +4995,43 @@ Common.getDoer = async function (
   wfid,
   wfRoot,
   kvarString,
-  insertDefault
+  insertDefaultStarter
 ) {
   let ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
-  if (pds !== "DEFAULT") {
-    ret = await Parser.getDoer(tenant, teamid, pds, starter, wfid, wfRoot, kvarString);
-    if (insertDefault && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
-      ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
-    }
+  if (pds === "DEFAULT") {
+    return ret;
+  }
+  //先吧kvarString变为kvar对象
+  let kvars = {};
+  //如果 PDS中有【】,组成流程kvars
+  if (pds.match(/\[(.+)\]/)) {
+    kvars = await Parser.userGetVars(
+      tenant,
+      "NOBODY", //不包含所有有visi控制的参数
+      wfid,
+      "workflow",
+      [],
+      [],
+      "yes" //efficient
+    );
+  }
+  // 如果有kvarString，则解析String，替换前面准备好的kvars
+  if (kvarString) {
+    let kvarPairs = Parser.splitStringToArray(kvarString, ";");
+    kvarPairs.map((x) => {
+      let kv = Parser.splitStringToArray(x, "=");
+      if (kv.length > 1) {
+        kvars[kv[0]] = { value: kv[1] };
+      } else {
+        kvars[kv[0]] = { value: kv[0] };
+      }
+      return kv[0];
+    });
+  }
+  ret = await Parser.getDoer(tenant, teamid, pds, starter, wfid, wfRoot, kvars);
+  //如果返回为空，并且需要插入缺省starter，则返回缺省starter
+  if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
+    ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
   }
   return ret;
 };

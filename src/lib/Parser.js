@@ -227,7 +227,7 @@ Parser.userGetVars = async function (
     for (const [key, valueDef] of Object.entries(retResult)) {
       //如果没有定义，visi，则公开
       if (Tools.isEmpty(valueDef.visi)) continue;
-      //如果用户为NOBODY，则保护起来
+      //如果用户为NOBODY，则删掉var，将其保护起来
       else if (checkVisiForWhom === "NOBODY") {
         delete retResult[key];
       } else {
@@ -235,11 +235,11 @@ Parser.userGetVars = async function (
         let tmp = await Parser.getDoer(
           tenant,
           "",
-          valueDef.visi,
+          valueDef.visi, //pds of visi  。 这里的visi可以是@lucas@steve，也可以是[somebody],因为后面带入了 retResult
           checkVisiForWhom,
           wfid,
-          null,
-          null
+          null, //wfRoot
+          retResult //当前的kvars
         );
         visiPeople = tmp.map((x) => x.uid);
         if (visiPeople.includes(checkVisiForWhom) === false) {
@@ -519,24 +519,12 @@ Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, do
  *
  * @return {...}
  */
-Parser.replaceStringWithKVar = async function (
-  tenant,
-  theString,
-  kvarString,
-  kvars,
-  withInternals
-) {
-  if (kvarString) {
-    let kvarPairs = Parser.splitStringToArray(kvarString, ";");
-    kvarPairs.map((x) => {
-      let kv = Parser.splitStringToArray(x, "=");
-      if (kv.length > 1) {
-        kvars[kv[0]] = { value: kv[1] };
-      } else {
-        kvars[kv[0]] = { value: kv[0] };
-      }
-      return kv[0];
-    });
+Parser.replaceStringWithKVar = async function (tenant, theString, kvars, withInternals) {
+  if (!kvars) {
+    throw new EmpError(
+      "NO_KVARS",
+      "replaceStringWithKVar but no kvars provided, most because code bug"
+    );
   }
   if (withInternals) {
     kvars = Parser.injectInternalVars(kvars);
@@ -604,22 +592,19 @@ Parser.injectCells = async (tenant, kvars) => {
  *
  * @return {...}
  */
-Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kvarString) {
+Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kvars) {
   //If there is team definition in PDS, use it.
   //if PDS is empty, always use starter
+
   if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
-  if ((kvarString || wfid) && pds.match(/\[(.+)\]/)) {
-    let VISIED_KVARS = await Parser.userGetVars(
-      tenant,
-      "NOBODY", //不包含所有有visi控制的参数
-      wfid,
-      "workflow",
-      [],
-      [],
-      "yes" //efficient
-    );
-    pds = await Parser.replaceStringWithKVar(tenant, pds, kvarString, VISIED_KVARS, false);
+  if (pds.match(/\[(.+)\]/)) {
+    if (kvars) {
+      pds = await Parser.replaceStringWithKVar(tenant, pds, kvars, false);
+    } else {
+      throw new EmpError("GET_DOER_NO_KVARS", "pds replacement but there is no  kvars");
+    }
   }
+  if (!starter) debugger;
 
   //PDS-level team is defined as "T:team_name"
   let teamInPDS = Parser.getTeamInPDS(pds);
@@ -632,7 +617,6 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   let tenantAccountPattern = new RegExp("^(.+)" + starterEmailSuffix);
   let arr = Parser.splitStringToArray(pds);
   let tmp = [];
-  let kvars = {};
 
   //////////////////////////////////////////////////
   // rdsPart需要支持“-”操作，即黑名单，排除哪些用户
@@ -782,6 +766,9 @@ Parser.addUserTag = function (str) {
   return str;
 };
 
+/**
+ *  检查orgchart admin授权，如没必要授权，则丢出EmpError异常
+ */
 Parser.checkOrgChartAdminAuthorization = async function (tenant, me) {
   let isTenantOwner = me.email === me.tenant.owner && me.tenant.orgmode === true;
   let myGroup = await Cache.getMyGroup(me.email);
@@ -789,11 +776,11 @@ Parser.checkOrgChartAdminAuthorization = async function (tenant, me) {
   let orgchartAdmins = await Parser.getDoer(
     tenant,
     "",
-    me.tenant.orgchartadminpds,
+    me.tenant.orgchartadminpds, //应该没有[] 替换需求， 这里的PDS用的应该是 @lucas;@steve这类
     me.tenant.owner,
     null,
     null,
-    null
+    {} //因此，这里不需要带入流程参数，也无法带入流程参数，因为不在流程🀄️
   );
   orgchartAdmins = orgchartAdmins.map((x) => x.uid);
   let isOneOfOrgChartAdmin = orgchartAdmins.includes(me.email);
@@ -858,7 +845,6 @@ Parser.tidyKVars = function (kvars) {
     delete def["breakrow"];
     delete def["placeholder"];
     delete def["required"];
-    delete def["visi"];
     delete def["when"];
     delete def["id"];
     delete def["type"];
