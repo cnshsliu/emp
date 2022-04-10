@@ -2572,6 +2572,10 @@ const OrgChartImport = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myId = req.auth.credentials._id;
     let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("NOT_ADMIN", "Only Admin can import orgchart");
+    }
     if ((await Cache.setOnNonExist("admin_" + req.auth.credentials.email, "a", 10)) === false) {
       throw new EmpError("NO_BRUTE", "Please wait for 10 seconds");
     }
@@ -2581,8 +2585,9 @@ const OrgChartImport = async function (req, h) {
     }
     await Parser.checkOrgChartAdminAuthorization(tenant, me);
     let filePath = req.payload.file.path;
-    let default_user_password = req.payload.default_user_password;
     let admin_password = req.payload.password;
+    let default_user_password = req.payload.default_user_password;
+
 
     let myDomain = Tools.getEmailDomain(myEmail);
     /* let test_tenant = Mongoose.Types.ObjectId("61aca9f500c96d4c54ccd7aa");
@@ -2599,6 +2604,7 @@ const OrgChartImport = async function (req, h) {
     let isOU = false;
     let errors = [];
     for (let i = 0; i < lines.length; i++) {
+	lines[i] = lines[i].replace(/[\r|\n]/g, '');
       if (lines[i].trim().length === 0) continue;
       let fields = lines[i].split(",");
       if (!Tools.isArray(fields)) {
