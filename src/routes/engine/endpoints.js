@@ -2615,6 +2615,22 @@ internals.endpoints = [
       },
     },
   },
+  {
+    method: "POST",
+    path: "/users/notstaff",
+    handler: Handlers.ListUsersNotStaff,
+    config: {
+      description: "Get same email domain users not in orgcharts",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        validator: Joi,
+      },
+    },
+  },
   /* {
     method: "POST",
     path: "/fix/1",

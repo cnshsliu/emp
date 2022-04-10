@@ -390,7 +390,6 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           emailtobedel: Joi.string().required(),
-          password: Joi.string().required(),
         },
         validator: Joi,
       },

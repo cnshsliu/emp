@@ -616,15 +616,15 @@ internals.UpdateProfile = async function (req, h) {
 };
 internals.RemoveAccount = async function (req, h) {
   try {
-    let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-    let tenant_id = req.auth.credentials.tenant._id;
-    if (Crypto.decrypt(me.password) != req.payload.password) {
-      throw new EmpError("wrong_password", "You are using a wrong password");
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("NOT_ADMIN", "You are not admin");
     }
-    await Parser.isAdmin(me);
     let user_tobe_del = await User.deleteOne({
       email: req.payload.emailtobedel,
-      tenant: tenant_id,
+      tenant: tenant,
     });
     if (user_tobe_del) {
       await Tenant.deleteMany({

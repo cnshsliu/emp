@@ -3921,6 +3921,28 @@ const Fix1 = async function (req, h) {
   return "done";
 };
 */
+const ListUsersNotStaff = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("NOT_ADMIN", "You are not admin");
+    }
+    let domain = Tools.getEmailDomain(myEmail);
+    let users = await User.find(
+      { tenant: tenant, email: { $regex: domain } },
+      { email: 1, username: 1 }
+    ).lean();
+    let orgusers = await OrgChart.find({ tenant: tenant }, { _id: 0, uid: 1 }).lean();
+    orgusers = orgusers.map((x) => x.uid);
+    users = users.filter((x) => orgusers.includes(x.email) === false);
+    return h.response(users);
+  } catch (err) {
+    console.log(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
 module.exports = {
   TemplateCreate,
@@ -4047,4 +4069,5 @@ module.exports = {
   DemoAPI,
   DemoPostContext,
   //Fix1,
+  ListUsersNotStaff,
 };
