@@ -852,11 +852,6 @@ Parser.tidyKVars = function (kvars) {
   return kvars;
 };
 
-const testStr = "abcd/efgh ijkl\nmnop;qrst, uvwx\ryzab  cdef; ghij/klmn/opqr,/stuv";
-console.log(
-  `Check splitter with [\\s;,], split '${testStr}' to `,
-  Parser.splitStringToArray(testStr)
-);
 console.log(
   `Check environment:\n`,
   "EMP_FRONTEND_URL:",

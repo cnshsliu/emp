@@ -37,7 +37,6 @@ const Mutex = {
       clearTimeout(that.cleanup);
     }
     that.cleanup = setTimeout(async () => {
-      console.log("cleanup dead lock");
       for (const [myKey, lockTime] in Object.entries(that.lock)) {
         if (lockTime < new Date().getTime() - 600000) {
           // 10 minutes

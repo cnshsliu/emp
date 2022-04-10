@@ -39,7 +39,7 @@ Mailman.mail = async function (smtp, from, toemail, cc, bcc, subject, mailbody) 
     subject: subject, // Subject line
     html: mailbody, // html body
   };
-  if (from !== smtp.username) {
+  if (from.indexOf(smtp.username)<0) {
     console.error(`mail from [${from}] != [${smtp.username}]`);
   }
   //Send email

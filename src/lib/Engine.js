@@ -120,14 +120,33 @@ Client.clientInit = async function () {
   Client.SUB.subscribe("EMP");
   console.log("Engine sideB Subscriber connected to port 5000");
   Client.SUB.on("message", async function (topic, msg) {
-    if (topic.toString("utf-8") === "EMP") {
-      let obj = JSON.parse(msg.toString("utf-8"));
-      Mutex.putObject(obj.wfid, obj);
-      try {
-        if (obj.CMD === "yarkNode") await Mutex.process(obj.wfid, Client.yarkNode);
-      } catch (e) {
-        console.error(e);
+    try {
+      let topicString = topic.toString("utf-8");
+      if (msg && topicString === "EMP") {
+        let msgObject = JSON.parse(msg.toString("utf-8"));
+        try {
+          switch (msgObject.CMD) {
+            case "yarkNode":
+              Mutex.putObject(msgObject.wfid, msgObject);
+              await Mutex.process(msgObject.wfid, Client.yarkNode);
+              break;
+            case "CMD_startWorkflow":
+              Mutex.putObject(msgObject.tplid, msgObject);
+              await Mutex.process(msgObject.tplid, Client.startWorkflow);
+              break;
+            case "CMD_sendMail":
+              Mutex.putObject("mutex_mailer", msgObject);
+              await Mutex.process("mutex_mailer", Client.sendTenantMail);
+              break;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        console.warn("ZMQ received msg: [", msg, "]");
       }
+    } catch (error) {
+      console.warn("ZMQ Client.SUB", error.message);
     }
   });
 };
@@ -434,9 +453,7 @@ Common.setupCron = async function () {
 Engine.cleanupFaultCrons = async function () {
   let crons = await Crontab.find();
   for (let i = 0; i < crons.length; i++) {
-    console.log("Validate ", crons[i].expr);
     let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
-    console.log(tmp);
     if (tmp.length !== 5) {
       await Crontab.deleteOne({ _id: crons[i]._id });
     }
@@ -482,25 +499,26 @@ Engine.batchStartWorkflow = async (cron) => {
   ); //
   let emails = doers.map((x) => x.uid);
   for (let i = 0; i < emails.length; i++) {
-    if (emails[i] !== "lucas@xihuanwu.com") continue;
     let processTitle = (await Cache.getUserName(cron.tenant, emails[i])) + ": " + cron.tplid;
-    Engine.startWorkflow(
-      false, //not rehearsal
-      cron.tenant,
-      cron.tplid, //tplid
-      emails[i], //starter
-      [], //pbo
-      "",
-      uuidv4(), //workflow id
-      processTitle,
-      "", //parent wfid
-      "", //parent wf name
-      {}, //parent kvars
-      "standalone", //runmode
-      []
-    ).then((wf) => {
-      console.log(wf.wfid, "started by cron");
-    });
+    let msgToSend = {
+      CMD: "CMD_startWorkflow",
+      rehearsal: false,
+      tenant: cron.tenant,
+      tplid: cron.tplid,
+      starter: emails[i],
+      pbo: [],
+      teamid: "",
+      wfid: uuidv4(),
+      wftitle: processTitle,
+      pwfid: "",
+      pwftitle: "",
+      pkvars: {},
+      runmode: "standalone",
+      files: [],
+      sender: "Cron",
+    };
+
+    await Engine.sendNext(msgToSend);
   }
 };
 
@@ -512,7 +530,7 @@ Engine.scheduleCron = async (cron) => {
     async () => {
       try {
         if (cron.method === "STARTWORKFLOW") {
-          await Engine.batchStartWorkflow(cron);
+          Engine.batchStartWorkflow(cron).then((res) => {});
         }
       } catch (e) {
         console.error(e);
@@ -976,15 +994,19 @@ Engine.__doneTodo = async function (
   );
 
   if (comment) {
-    let ALL_VISIED_KVARS = await Parser.userGetVars(
-      tenant,
-      doer,
-      todo.wfid,
-      "workflow",
-      [],
-      [],
-      "yes" //efficient
-    );
+    let ALL_VISIED_KVARS = {};
+    //只有comment中有handlebars({{) 或字符替换 [, 才需要查询所有kvars
+    if (comment.indexOf("{{") >= 0 || comment.indexOf("[") >= 0) {
+      ALL_VISIED_KVARS = await Parser.userGetVars(
+        tenant,
+        doer,
+        todo.wfid,
+        "workflow",
+        [],
+        [],
+        "yes" //efficient
+      );
+    }
     comment = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, comment);
     if (comment.indexOf("[") >= 0) {
       comment = await Parser.replaceStringWithKVar(
@@ -1234,41 +1256,51 @@ Engine.sendCommentNotification = async function (tenant, doer, wfid, todo, conte
   if (Tools.isEmpty(content.trim())) {
     return;
   }
-  let m = content.match(/@(\S+)/g);
-  if (!m) return;
-  for (let i = 0; i < m.length; i++) {
-    let anUid = m[i].substring(1);
+  //找里面的 @somebody， regexp是@后面跟着的连续非空字符
+  let m = content.match(/@([\S]+)/g);
+  let emails = [todo.wfstarter];
+  if (m) {
+    for (let i = 0; i < m.length; i++) {
+      let anUid = m[i].substring(1);
+      anUid = Tools.qtb(anUid);
+      anUid = lodash.trimEnd(anUid, ".,?");
+      let toWhomEmail = Tools.makeEmailSameDomain(anUid, doer);
+      emails.push(toWhomEmail);
+    }
+  }
+  emails = [...new Set(emails)];
+  for (let i = 0; i < emails.length; i++) {
+    let commentorCN = await Cache.getUserName(tenant, doer);
+    let receiverCN = await Cache.getUserName(tenant, emails[i]);
+    if (receiverCN === "USER_NOT_FOUND") continue;
     let comment = new Comment({
       tenant: tenant,
       who: doer,
       wfid: wfid,
       workid: todo.workid,
       todoid: todo.todoid,
-      toWhom: anUid,
+      toWhom: emails[i],
       content: content,
     });
     comment = await comment.save();
     /// Send out comment email
-    let toWhomEmail = Tools.makeEmailSameDomain(anUid, doer);
-    let fromCN = await Cache.getUserName(tenant, doer);
-    let newCN = await Cache.getUserName(tenant, toWhomEmail);
     let frontendUrl = Tools.getFrontEndUrl();
-    let mail_body = `Hello, ${newCN}, <br/><br/> ${fromCN} leave a comment for you:
-<br/><a href="${frontendUrl}/comment">Check it out </a><br/>
-<br/><br/>
-  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/comment
-<br/>
-<br/>The comment is<br/>
 
-${content}
+    let msgToSend = {
+      CMD: "CMD_sendMail",
+      tenant: todo.tenant,
+      recipient: todo.rehearsal ? todo.wfstarter : emails[i],
+      subject: (todo.rehearsal ? "Rehearsal: " : "") + `Comment from ${commentorCN}`,
+      mail_body: `Comment for you: <br/>${content}<br/>
+        From: ${commentorCN}<br/>
+        On task: <a href="${frontendUrl}/work/@${todo.todoid}">${todo.title}</a> <br/>
+        Process: <a href="${frontendUrl}/workflow/@{todo.wfid}">${todo.wftitle}</a><br/>
+        <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
+    };
 
-<br/><br/>
+    await Engine.sendNext(msgToSend);
 
-Metatocome`;
-
-    let subject = (todo.rehearsal ? "Rehearsal: " : "") + `Comment from ${fromCN}`;
-
-    await Engine.sendTenantMail(tenant, toWhomEmail, subject, mail_body);
+    //await Engine.sendTenantMail(tenant, emails[i], subject, mail_body);
 
     /// end of comment email
   }
@@ -1830,6 +1862,40 @@ Client.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInter
   return ret;
 };
 
+Client.sendTenantMail = async function (msg) {
+  Engine.sendTenantMail(
+    msg.tenant, //not rehearsal
+    msg.recipient,
+    msg.subject, //tplid
+    msg.mail_body
+  ).then((wf) => {
+    console.log("Mailer send email to ", msg.recipient, "subject:", msg.subject);
+  });
+};
+
+//////////////////////////////////////////////////
+// ZeroMQ Client startWorkflow on receiving message
+//////////////////////////////////////////////////
+Client.startWorkflow = async function (msg) {
+  Engine.startWorkflow(
+    msg.rehearsal, //not rehearsal
+    msg.tenant,
+    msg.tplid, //tplid
+    msg.starter,
+    msg.pbo, //pbo
+    msg.teamid,
+    msg.wfid,
+    msg.wftitle,
+    msg.pwfid, //parent wfid
+    msg.pwftitle, //parent wf name
+    msg.pkvars, //parent kvars
+    msg.runmode, //runmode
+    msg.files
+  ).then((wf) => {
+    console.log(msg.sender, "started workflow for ", msg.starter, "id:", msg.wfid);
+  });
+};
+
 //Client是指ZMQ接受 yarkNode消息的client
 Client.yarkNode = async function (obj) {
   let nexts = [];
@@ -2125,9 +2191,6 @@ Client.yarkNode = async function (obj) {
       [],
       "yes" //efficient
     );
-    if (JSON.stringify(kvarsForScript) === "{}") {
-      console.error("kvarsForScript got {}, something must be wrong");
-    }
     await Parser.injectCells(tenant, kvarsForScript);
     kvarsForScript = Parser.injectInternalVars(kvarsForScript);
     kvarsForScript = Parser.tidyKVars(kvarsForScript);
@@ -2174,7 +2237,7 @@ Client.yarkNode = async function (obj) {
         tpNode: tpNode,
         kvars: kvarsForScript,
       });
-      console.log(pdsResolvedForScript);
+      //console.log(pdsResolvedForScript);
       codeRetString = await Engine.runCode(
         obj.tenant, //tenant
         Tools.getEmailDomain(obj.starter), //Tenant Domain
@@ -3936,7 +3999,6 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
     await KVar.deleteMany({ tenant: tenant, wfid: { $in: res } });
     await Workflow.deleteMany(wfFilter);
   }
-  console.log(`Old Rehearsal cleared in ${howmany} ${unit}: ${res.length}`);
 };
 
 Engine.stopWorkflow = async function (email, tenant, wfid) {
