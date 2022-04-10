@@ -3894,6 +3894,7 @@ const CellsRead = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+/*
 const Fix1 = async function (req, h) {
   let tplid = "周报";
   let wfs = await Workflow.find({ tplid: tplid, status: "ST_RUN" });
@@ -3917,10 +3918,10 @@ const Fix1 = async function (req, h) {
         console.log(wfs[i].wfid, "success");
       }
     }
-    break;
   }
   return "done";
 };
+*/
 
 module.exports = {
   TemplateCreate,
@@ -4046,5 +4047,5 @@ module.exports = {
   CellsRead,
   DemoAPI,
   DemoPostContext,
-  Fix1,
+  //Fix1,
 };

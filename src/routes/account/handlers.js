@@ -435,7 +435,8 @@ internals.ResetPasswordRequest = async function (req, h) {
     }
     //生成Token
     //Token放入Redis
-    let vrfCode = "abcdef";
+    //let vrfCode = "abcdef";
+    let vrfCode = Tools.randomString(6, "0123456789");
     await Cache.setRstPwdVerificationCode(user.email, vrfCode);
     //Token邮件发给用户邮箱
     Mailman.sendMailResetPassword(user, vrfCode);

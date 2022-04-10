@@ -180,12 +180,27 @@ Common.checkAnd = async function (
   let ret = true;
   let counterPartRound = round; //先用当前AND的 Round
   let counterPart = theAndNode.attr("cp");
+  let counterPartPassedRoutesNumber = 0;
   //在该版本之前已经运行的流程，可能会有问题。因为没有counterPart. 手工修复可以吗？
   if (counterPart) {
+    /*
     let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }).sort(
       "-round"
     );
     counterPartRound = work.round;
+    */
+    let route = await Route.findOne({
+      tenant: tenant,
+      wfid: wfid,
+      from_nodeid: counterPart,
+    }).sort("-round");
+    counterPartRound = route.round;
+    counterPartPassedRoutesNumber = await Route.countDocuments({
+      tenant: tenant,
+      wfid: wfid,
+      from_nodeid: counterPart,
+      round: counterPartRound,
+    });
   }
   let fromNodeIds = await Engine._getFromNodeIds(tpRoot, theANDnodeid);
   let routeFilter = {
@@ -221,7 +236,14 @@ Common.checkAnd = async function (
   console.log("Check AND counterPart and Round", counterPart, counterPartRound);
   //routeFromNodes 有Route对象的节点，status可能是PASS，也可能是INGORE
   let routeFromNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
-  if (routeFromNodes.length === fromNodeIds.length) {
+  //要么，
+  if (
+    (counterPartPassedRoutesNumber === fromNodeIds.length &&
+      fromNodeIds.length === routeFromNodes.length) ||
+    (counterPartPassedRoutesNumber < fromNodeIds.length &&
+      fromNodeIds.length === counterPartPassedRoutesNumber)
+  ) {
+    //if (routeFromNodes.length === fromNodeIds.length) {
     console.log(
       `AND done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) === from node numbers (${fromNodeIds.length})`
     );

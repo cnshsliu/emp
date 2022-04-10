@@ -318,5 +318,11 @@ const Tools = {
   getRandomInt: function (min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   },
+
+  randomString: function (length, chars) {
+    var result = "";
+    for (var i = length; i > 0; --i) result += chars[Math.floor(Math.random() * chars.length)];
+    return result;
+  },
 };
 module.exports = Tools;

@@ -2615,7 +2615,7 @@ internals.endpoints = [
       },
     },
   },
-  {
+  /* {
     method: "POST",
     path: "/fix/1",
     handler: Handlers.Fix1,
@@ -2631,7 +2631,7 @@ internals.endpoints = [
         validator: Joi,
       },
     },
-  },
+  }, */
 ];
 
 module.exports = internals;
