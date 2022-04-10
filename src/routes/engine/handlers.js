@@ -3237,12 +3237,12 @@ const MemberSystemPerm = async function (req, h) {
 const CommentList = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
-    let uid = email.substring(0, email.indexOf("@"));
-    let filter = { tenant: tenant, toWhom: uid };
+    let myEmail = req.auth.credentials.email;
+    let filter = { tenant: tenant, toWhom: myEmail };
     let comments = await Comment.find(filter, { toWhom: 0 }).sort("-createdAt").lean();
     for (let i = 0; i < comments.length; i++) {
       comments[i].cn = await Cache.getUserName(tenant, comments[i].who);
+      comments[i].avatar = await Cache.getUserAvatar(tenant, comments[i].who);
     }
 
     return h.response(comments);
@@ -3267,12 +3267,11 @@ const CommentDelete = async function (req, h) {
 const CommentDeleteBeforeDays = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
-    let uid = email.substring(0, email.indexOf("@"));
+    let myEmail = req.auth.credentials.email;
     let beforeDays = req.payload.beforeDays;
     let filter = {
       tenant: tenant,
-      toWhom: uid,
+      toWhom: myEmail,
       createdAt: {
         $lte: new Date(new Date().getTime() - beforeDays * 60 * 60 * 1000).toISOString(),
       },

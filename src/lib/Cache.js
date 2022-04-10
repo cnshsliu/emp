@@ -74,6 +74,25 @@ internals.getUserSignature = async function (tenant, email) {
   }
 };
 
+internals.getUserAvatar = async function (tenant, email) {
+  let avatar = await asyncRedisClient.get("avatar_" + email);
+  if (avatar) {
+    return avatar;
+  } else {
+    let user = await User.findOne({ tenant: tenant, email: email }, { avatar: 1 });
+    if (user) {
+      let setTo = "";
+      if (user.avatar) setTo = user.avatar;
+
+      await asyncRedisClient.set("avatar_" + email, setTo);
+      await asyncRedisClient.expire("avatar_" + email, 60);
+      return setTo;
+    } else {
+      return "";
+    }
+  }
+};
+
 internals.getUserOU = async function (tenant, email) {
   let key = "ou_" + tenant + email;
   let ouCode = await asyncRedisClient.get(key);
@@ -271,6 +290,8 @@ internals.removeKeyByEmail = async function (email, cacheType) {
     await asyncRedisClient.del("perm_" + emailKey);
     await asyncRedisClient.del("name_" + emailKey);
     await asyncRedisClient.del("ew_" + emailKey);
+    await asyncRedisClient.del("avatar_" + emailKey);
+    await asyncRedisClient.del("signature_" + emailKey);
   }
 };
 
