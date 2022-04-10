@@ -2588,7 +2588,6 @@ const OrgChartImport = async function (req, h) {
     let admin_password = req.payload.password;
     let default_user_password = req.payload.default_user_password;
 
-
     let myDomain = Tools.getEmailDomain(myEmail);
     /* let test_tenant = Mongoose.Types.ObjectId("61aca9f500c96d4c54ccd7aa");
 
@@ -2604,7 +2603,7 @@ const OrgChartImport = async function (req, h) {
     let isOU = false;
     let errors = [];
     for (let i = 0; i < lines.length; i++) {
-	lines[i] = lines[i].replace(/[\r|\n]/g, '');
+      lines[i] = lines[i].replace(/[\r|\n]/g, "");
       if (lines[i].trim().length === 0) continue;
       let fields = lines[i].split(",");
       if (!Tools.isArray(fields)) {

@@ -11,6 +11,7 @@ var TenantSchema = new Schema({
   login_background: { type: String, trim: true, lowercase: true },
   page_background: { type: String, trim: true, lowercase: true },
   orgmode: { type: Boolean, default: false },
+  regfree: { type: Boolean, default: false },
   feedsview: { type: Number, default: 0 }, //0: mine and pinned, 1: public : see all feeds
   timezone: { type: String, default: "GMT" },
   allowchecker: { type: Boolean, default: false },

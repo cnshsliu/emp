@@ -65,6 +65,18 @@ internals.RegisterUser = async function (req, h) {
     if (!site) {
       throw new Error("站点已关闭,或者您没有站内注册授权，请使用授权邮箱注册，谢谢");
     }
+
+    let emailDomain = Tools.getEmailDomain(req.payload.email);
+    let orgTenant = await Tenant.findOne({
+      orgmode: true,
+      owner: { $regex: emailDomain },
+    });
+    if (orgTenant && orgTenant.regfree === false) {
+      throw new EmpError(
+        "ORGMODE_TENANT",
+        `${emailDomain} is in orgmode and free registration is closed`
+      );
+    }
     if (Tools.isEmpty(req.payload.tenant)) {
       req.payload.tenant = "Org of " + req.payload.username;
     }
