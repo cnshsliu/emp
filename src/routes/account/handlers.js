@@ -166,6 +166,26 @@ internals.RegisterUser = async function (req, h) {
   }
 };
 
+internals.CheckFreeReg = async function (req, h) {
+  try {
+    let emailDomain = Tools.getEmailDomain(req.payload.email);
+    let orgTenant = await Tenant.findOne({
+      orgmode: true,
+      owner: { $regex: emailDomain },
+    });
+    if (orgTenant && orgTenant.regfree === false) {
+      throw new EmpError(
+        "NO_FREE_REG",
+        `${emailDomain} is in orgmode and free registration is closed`
+      );
+    }
+    return h.response("ok");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 internals.SetMyUserName = async function (req, h) {
   try {
     let payload = req.payload;

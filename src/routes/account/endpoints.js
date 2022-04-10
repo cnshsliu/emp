@@ -52,6 +52,21 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/check/freereg",
+    handler: AccountHandlers.CheckFreeReg,
+    config: {
+      // Include this API in swagger documentation
+      tags: ["api"],
+      validate: {
+        payload: {
+          email: Joi.string().email().lowercase().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/account/login",
     handler: AccountHandlers.LoginUser,
     config: {
