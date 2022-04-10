@@ -73,7 +73,7 @@ internals.RegisterUser = async function (req, h) {
     });
     if (orgTenant && orgTenant.regfree === false) {
       throw new EmpError(
-        "ORGMODE_TENANT",
+        "NO_FREE_REG",
         `${emailDomain} is in orgmode and free registration is closed`
       );
     }
