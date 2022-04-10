@@ -1290,7 +1290,7 @@ Engine.sendCommentNotification = async function (tenant, doer, wfid, todo, conte
       CMD: "CMD_sendMail",
       tenant: todo.tenant,
       recipient: todo.rehearsal ? todo.wfstarter : emails[i],
-      subject: (todo.rehearsal ? "Rehearsal: " : "") + `Comment from ${commentorCN}`,
+      subject: (todo.rehearsal ? "Rehearsal: " : "") + `${commentorCN} comment "${todo.wftitle}"`,
       mail_body: `Comment for you: <br/>${content}<br/>
         From: ${commentorCN}<br/>
         On task: <a href="${frontendUrl}/work/@${todo.todoid}">${todo.title}</a> <br/>
