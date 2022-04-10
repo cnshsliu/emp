@@ -3471,7 +3471,7 @@ const TodoSetDoer = async function (req, h) {
     let newDoerEmail = Tools.makeEmailSameDomain(newDoer, myEmail);
     let newDoerObj = await User.findOne({ tenant: tenant, email: newDoerEmail });
     if (!newDoerObj) {
-      throw new EmpError("NO_USER", `User ${toWhomEmail} not found`);
+      throw new EmpError("NO_USER", `User ${newDoerEmail} not found`);
     }
 
     let filter = { tenant: tenant, todoid: todoid, doer: doer, status: "ST_RUN" };
