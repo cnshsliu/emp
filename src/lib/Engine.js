@@ -744,7 +744,7 @@ Engine.doWork = async function (
   wfid,
   nodeid,
   userDecision,
-  kvars,
+  kvarsFromBrowserInput,
   comment
 ) {
   //workid, 如提供，按workid查节点，如未提供，按nodeid查节点
@@ -786,7 +786,7 @@ Engine.doWork = async function (
     wfid,
     todo.workid,
     userDecision,
-    kvars,
+    kvarsFromBrowserInput,
     comment
   );
 };
@@ -814,7 +814,7 @@ Engine.getWorkDoer = async function (tenant, work, currentUser) {
  * @param {...} doer -
  * @param {...} workid -
  * @param {...} route -
- * @param {...} kvars -
+ * @param {...} kvarsFromBrowserInput -
  *
  * @return {...}
  */
@@ -825,11 +825,14 @@ Engine.__doneTodo = async function (
   wfid,
   workid,
   userDecision,
-  kvars,
+  kvarsFromBrowserInput,
   comment
 ) {
   let logMsg = "";
-  if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
+  if (typeof kvarsFromBrowserInput === "string")
+    kvarsFromBrowserInput = Tools.hasValue(kvarsFromBrowserInput)
+      ? JSON.parse(kvarsFromBrowserInput)
+      : {};
   let isoNow = Tools.toISOString(new Date());
   let nodeid = todo.nodeid;
   if (Tools.isEmpty(todo)) {
@@ -1037,15 +1040,29 @@ Engine.__doneTodo = async function (
     workNode.addClass("ST_DONE");
     workNode.attr("decision", workDecision);
     workNode.attr("doneat", isoNow);
-    //place todo decision into kvars;
-    kvars["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: workDecision };
+    //place todo decision into kvarsFromBrowserInput;
+    kvarsFromBrowserInput["$decision_" + nodeid] = {
+      name: "$decision_" + nodeid,
+      value: workDecision,
+    };
+    //////////////////////////////////////////////////
+    //  Extremely importnant
+    //////////////////////////////////////////////////
+    for (const [key, valueDef] of Object.entries(kvarsFromBrowserInput)) {
+      if (key.startsWith("csv_")) {
+        valueDef.visi = doer;
+      }
+    }
+    //////////////////////////////////////////////////
+    //  Extremely importnant
+    //////////////////////////////////////////////////
     await Parser.setVars(
       tenant,
       todo.round,
       todo.wfid,
       todo.nodeid,
       todo.workid,
-      kvars,
+      kvarsFromBrowserInput,
       doer,
       "yes"
     );
@@ -1207,7 +1224,6 @@ Engine.buildWorkDoneMarkdownMessage = async function (
   comment
 ) {
   let frontendUrl = Tools.getFrontEndUrl();
-  //let workFullInfo = await Engine.__getWorkFullInfo(doer, tenant, tpRoot, wfRoot, wfid, todo);
   let workKVars = await Engine.getWorkKVars(tenant, doer, todo);
   let kvarsMD = "";
   for (let i = 0; i < workKVars.kvarsArr.length; i++) {
@@ -1406,7 +1422,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  let info = await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, wfid, old_todo);
+  let info = await Engine.__getWorkFullInfo(tenant, email, tpRoot, wfRoot, wfid, old_todo);
   if (info.revocable === false) {
     throw new EmpError("WORK_NOT_REVOCABLE", "Todo is not revocable", {
       wfid,
@@ -1693,7 +1709,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  let info = await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, wfid, todo);
+  let info = await Engine.__getWorkFullInfo(tenant, email, tpRoot, wfRoot, wfid, todo);
   if (info.returnable === false) {
     throw new EmpError("WORK_NOT_RETURNABLE", "Todo is not returnable", {
       wfid,
@@ -1710,7 +1726,6 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let fromWorks = await Engine._getFromActionsWithRoutes(tenant, tpRoot, wfRoot, workNode);
   for (let i = 0; i < fromWorks.length; i++) {
     let prevWorkid = fromWorks[i].workid;
-    console.log(prevWorkid, fromWorks[i].nodeType);
     //await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid, status: "ST_PASS" });
     await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid });
     await KVar.deleteMany({ tenant: tenant, wfid: wfid, objid: prevWorkid });
@@ -2833,7 +2848,6 @@ Engine.getPdsOfAllNodesForScript = async function (data) {
         delete kvars[key];
       }
     }
-    console.log(kvars);
     actions.each(async function (index, el) {
       let jq = Cheerio(el);
       let pds = jq.attr("role");
@@ -4204,17 +4218,28 @@ Engine.workflowGetLatest = async function (email, tenant, filter) {
   }
 };
 
-Engine.getWorkInfo = async function (email, tenant, todoid) {
+Engine.getWorkInfo = async function (emailInBrowser, tenant, todoid) {
+  //查找TODO，可以找到任何人的TODO
   let todo_filter = { tenant: tenant, todoid: todoid };
   let todo = await Todo.findOne(todo_filter);
   if (!todo) {
     return {};
   }
-  //如果是Rehearsal，则使用真实人的邮箱
-  if (todo.rehearsal) {
-    email = todo.doer;
+  let peopleInBrowser = emailInBrowser;
+  let shouldDoer = todo.doer;
+  //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  // Extremely important  BEGIN
+  //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  if (shouldDoer !== peopleInBrowser) {
+    if (todo.cellInfo.trim().length > 0) {
+      todo.cellInfo = "";
+    }
   }
-  if (!SystemPermController.hasPerm(email, "work", todo, "read"))
+  //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  // Extremely important  END
+  //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  if (!SystemPermController.hasPerm(shouldDoer, "work", todo, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this work");
   let filter = { tenant: tenant, wfid: todo.wfid };
   let wf = await Workflow.findOne(filter);
@@ -4227,7 +4252,7 @@ Engine.getWorkInfo = async function (email, tenant, todoid) {
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
 
-  return await Engine.__getWorkFullInfo(email, tenant, tpRoot, wfRoot, todo.wfid, todo);
+  return await Engine.__getWorkFullInfo(tenant, peopleInBrowser, tpRoot, wfRoot, todo.wfid, todo);
 };
 
 Engine.getWfHistory = async function (email, tenant, wfid, wf) {
@@ -4267,7 +4292,7 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
 //添加from_actions, following_ctions, parallel_actions, returnable and revocable
 
 /**
- * Engine.__getWorkFullInfo = async() Get the detail information about a work
+ * Get the detail information about a work
  *
  * @param {...} email - the user
  * @param {...} tenant - the Tenant
@@ -4278,13 +4303,22 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
  *
  * @return {...}
  */
-Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, todo) {
-  if (todo.rehearsal) email = todo.doer;
+Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRoot, wfid, todo) {
+  //////////////////////////////////////
+  // Attention: TodoOwner确定设为todo.doer？
+  // 应该是对的，之前只在rehearsal下设，是不对的
+  //////////////////////////////////////
+  //if (todo.rehearsal) TodoOwner = todo.doer;
+  TodoOwner = todo.doer;
+  //////////////////////////////////////
+  //////////////////////////////////////
   let tpNode = tpRoot.find("#" + todo.nodeid);
   let workNode = wfRoot.find("#" + todo.workid);
   let ret = {};
-  ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
-  for (const [key, value] of Object.entries(ret.kvars)) {
+  ret.kvars = await Parser.userGetVars(tenant, TodoOwner, todo.wfid, todo.workid, [], [], "any");
+  //这里为待输入数据
+  for (const [key, def] of Object.entries(ret.kvars)) {
+    //待输入数据中去除内部数据
     if (key[0] === "$") {
       delete ret.kvars[key];
     }
@@ -4292,9 +4326,18 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
   //workflow: 全部节点数据，
   //[],[], 白名单和黑名单都为空
   //yes 为取efficient数据
-  let ALL_VISIED_KVARS = await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
+  let ALL_VISIED_KVARS = await Parser.userGetVars(
+    tenant,
+    TodoOwner,
+    wfid,
+    "workflow",
+    [],
+    [],
+    "yes"
+  );
+  // 将 第二个参数的值， merge到第一个参数的键上
   Parser.mergeValueFrom(ret.kvars, ALL_VISIED_KVARS);
-
+  //将kvars数据转换为array,方便前端处理
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
   ret.todoid = todo.todoid;
   ret.tenant = todo.tenant;
@@ -4421,7 +4464,7 @@ Engine.__getWorkFullInfo = async function (email, tenant, tpRoot, wfRoot, wfid, 
     }
   }
 
-  ret.wf.history = await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
+  ret.wf.history = await Engine.__getWorkflowWorksHistory(TodoOwner, tenant, tpRoot, wfRoot, wfid);
 
   return ret;
 };

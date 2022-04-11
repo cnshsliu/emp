@@ -1407,10 +1407,10 @@ const WorkList = async function (req, h) {
 
 const WorkInfo = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     //如果有wfid，则找只属于这个wfid工作流的workitems
     let workitem = await Engine.getWorkInfo(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.todoid
     );
@@ -3693,7 +3693,6 @@ const FilePondProcess = async function (req, h) {
         let serverId = uuidv4();
         serverId = serverId.replace(/-/g, "");
         //serverId = Buffer.from(serverId, "hex").toString("base64");
-        console.log(serverId);
         let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
         if (fs.existsSync(filepondfile.folder) === false)
           fs.mkdirSync(filepondfile.folder, { recursive: true });

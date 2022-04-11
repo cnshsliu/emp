@@ -226,28 +226,48 @@ Parser.userGetVars = async function (
     //处理kvar的可见行 visi,
     for (const [key, valueDef] of Object.entries(retResult)) {
       //如果没有定义，visi，则公开
-      if (Tools.isEmpty(valueDef.visi)) continue;
-      //如果用户为NOBODY，则删掉var，将其保护起来
-      else if (checkVisiForWhom === "NOBODY") {
-        delete retResult[key];
-      } else {
-        //检查具体用户是否在visi中
-        let tmp = await Parser.getDoer(
-          tenant,
-          "",
-          valueDef.visi, //pds of visi  。 这里的visi可以是@lucas@steve，也可以是[somebody],因为后面带入了 retResult
-          checkVisiForWhom,
-          wfid,
-          null, //wfRoot
-          retResult //当前的kvars
-        );
-        visiPeople = tmp.map((x) => x.uid);
-        if (visiPeople.includes(checkVisiForWhom) === false) {
+      let hasVisi = Tools.hasValue(valueDef.visi);
+      if (hasVisi) {
+        if (checkVisiForWhom === "NOBODY") {
           delete retResult[key];
+        } else {
+          //检查具体用户是否在visi中
+          let tmp = await Parser.getDoer(
+            tenant,
+            "",
+            valueDef.visi, //pds of visi  。 这里的visi可以是@lucas@steve，也可以是[somebody],因为后面带入了 retResult
+            checkVisiForWhom,
+            wfid,
+            null, //wfRoot
+            retResult //当前的kvars
+          );
+          visiPeople = tmp.map((x) => x.uid);
+          if (visiPeople.includes(checkVisiForWhom) === false) {
+            delete retResult[key];
+          }
+        }
+      } else {
+        //去除CSV类控制
+        if (key.startsWith("csv_")) {
+          //取得csv的fileid
+          let fileId = valueDef.value;
+          //根据fileID差cell的author
+          let cell = await Cell.findOne(
+            { tenant: tenant, serverId: fileId },
+            { _id: 0, author: 1 }
+          ).lean();
+          if (cell) {
+            //如果cell的用户不是当前用户，则删除
+            if (cell.author !== checkVisiForWhom) {
+              delete retResult[key];
+            }
+          }
         }
       }
     }
   }
+
+  //Remove NOT_MINE csv cell
 
   return retResult;
 };
