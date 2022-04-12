@@ -298,7 +298,7 @@ const Tools = {
     );
   },
 
-  getFilePondFile: function (tenant, uid, fileName) {
+  getPondServerFile: function (tenant, uid, fileName) {
     let relativeFolder = `${tenant}/${uid}/`;
     let relativeFilePath = `${tenant}/${uid}/${fileName}`;
     let storedFolder = `${EmpConfig.attachment.folder}/${relativeFolder}`;

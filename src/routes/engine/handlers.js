@@ -4,6 +4,7 @@ const moment = require("moment");
 const Tenant = require("../../database/models/Tenant");
 const fs = require("fs");
 const { ZMQ } = require("../../lib/ZMQ");
+const Excel = require("exceljs");
 const Joi = require("joi");
 const { v4: uuidv4 } = require("uuid");
 const TimeZone = require("../../lib/timezone");
@@ -813,37 +814,84 @@ const WorkflowAddFile = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const __getCells = async function (tenant, myEmail, pondFile, poindServerFile) {
+  let cells = [];
+  console.log(pondFile.contentType);
+  switch (pondFile.contentType) {
+    case "text/csv":
+      cells = __getCSVCells(tenant, myEmail, poindServerFile);
+      break;
+    case "application/vnd.ms-excel":
+      throw new EmpError("NOT_SUPPORT_OLD_EXCEL", "We don't support old xls, use xlsx please");
+    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      cells = __getExcelCells(tenant, myEmail, poindServerFile);
+      break;
+    default:
+      throw new EmpError(
+        "CELL_FORMAT_NOT_SUPPORT",
+        "Not supported file format" + pondFile.realName
+      );
+  }
+  return cells;
+};
+
+const __getCSVCells = async function (tenant, myEmail, pondServerFile) {
+  let cells = [];
+  let missedUIDs = [];
+  const csv = Fs.readFileSync(pondServerFile.fullPath, "utf8");
+  let rows = csv.split(/[\n|\r]/);
+  let colsCount = 0;
+  let firstRow = -1;
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    if (rows[rowIndex].trim().length === 0) continue;
+    // 标题行钱可能有空行，前面一句跳过空行后，第一行不为空的行为firstRow
+    if (firstRow < 0) firstRow = rowIndex;
+    let cols = rows[rowIndex].split(",");
+    if (Tools.nbArray(cols) === false) {
+      continue;
+    }
+    cells.push(cols);
+    //firstRow后，都是数据行。数据行要检查第一列的用户ID是否存在
+  }
+  return cells;
+};
+
+const __getExcelCells = async function (tenant, myEmail, pondServerFile) {
+  let cells = [];
+  let missedUIDs = [];
+  const csv = Fs.readFileSync(pondServerFile.fullPath, "utf8");
+
+  const workbook = new Excel.Workbook();
+  await workbook.xlsx.readFile(pondServerFile.fullPath);
+  const worksheet = await workbook.getWorksheet();
+
+  worksheet.eachRow(function (row, rowIndex) {
+    let rowSize = row.cellCount;
+    let numValues = row.actualCellCount;
+    let cols = [];
+    row.eachCell(function (cell, colIndex) {
+      if (cell.type === 6) {
+        value = cell.result;
+      } else {
+        value = cell.value;
+      }
+      cols.push(value);
+    });
+    cells.push(cols);
+  });
+
+  return cells;
+};
 
 const __saveCSVAsCells = async function (tenant, myEmail, wfid, csvPondFiles) {
   const __doConvert = async (pondFile) => {
-    let missedUIDs = [];
-    let filepondfile = Tools.getFilePondFile(tenant, pondFile.author, pondFile.serverId);
-    const csv = Fs.readFileSync(filepondfile.fullPath, "utf8");
-    let cells = [];
-    let rows = csv.split(/[\n|\r]/);
-    let colsCount = 0;
-    let firstRow = -1;
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      if (rows[rowIndex].trim().length === 0) continue;
-      // 标题行钱可能有空行，前面一句跳过空行后，第一行不为空的行为firstRow
-      if (firstRow < 0) firstRow = rowIndex;
-      let cols = rows[rowIndex].split(",");
-      if (Tools.nbArray(cols) === false) {
-        continue;
-      }
-      cells.push(cols);
-      //firstRow后，都是数据行。数据行要检查第一列的用户ID是否存在
-      if (rowIndex > firstRow) {
-        if (
-          !(await User.findOne({
-            tenant: tenant,
-            email: Tools.makeEmailSameDomain(cols[0], myEmail),
-          }))
-        ) {
-          missedUIDs.push(cols[0]);
-        }
-      }
-    }
+    let pondServerFile = Tools.getPondServerFile(tenant, pondFile.author, pondFile.serverId);
+    console.log("=====================");
+    console.log(pondFile.contentType);
+    console.log(pondFile.realName);
+    console.log(pondServerFile.fullPath);
+    console.log("=====================");
+    let cells = await __getCells(tenant, myEmail, pondFile, pondServerFile);
 
     let cell = await Cell.findOneAndUpdate(
       { tenant: tenant, wfid: wfid, stepid: pondFile.stepid, forKey: pondFile.forKey },
@@ -858,6 +906,18 @@ const __saveCSVAsCells = async function (tenant, myEmail, wfid, csvPondFiles) {
       },
       { upsert: true, new: true }
     );
+    let missedUIDs = [];
+    for (let i = 1; i < cells.length; i++) {
+      let tobeCheckUid = cells[i][0];
+      if (
+        !(await User.findOne({
+          tenant: tenant,
+          email: Tools.makeEmailSameDomain(tobeCheckUid, myEmail),
+        }))
+      ) {
+        missedUIDs.push(tobeCheckUid);
+      }
+    }
     return missedUIDs;
   };
   let missedUIDs = [];
@@ -903,7 +963,7 @@ const WorkflowRemoveAttachment = async function (req, h) {
             (canDeleteAll || wfAttachments[i].author === email)
           ) {
             try {
-              let fileInfo = Tools.getFilePondFile(
+              let fileInfo = Tools.getPondServerFile(
                 tenant,
                 wfAttachments[i].author,
                 wfAttachments[i].serverId
@@ -3693,10 +3753,10 @@ const FilePondProcess = async function (req, h) {
         let serverId = uuidv4();
         serverId = serverId.replace(/-/g, "");
         //serverId = Buffer.from(serverId, "hex").toString("base64");
-        let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
-        if (fs.existsSync(filepondfile.folder) === false)
-          fs.mkdirSync(filepondfile.folder, { recursive: true });
-        fs.renameSync(filepond[i].path, filepondfile.fullPath);
+        let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+        if (fs.existsSync(pondServerFile.folder) === false)
+          fs.mkdirSync(pondServerFile.folder, { recursive: true });
+        fs.renameSync(filepond[i].path, pondServerFile.fullPath);
 
         ids = serverId;
       }
@@ -3712,9 +3772,9 @@ const FilePondRemove = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     let serverId = req.payload.serverId;
-    let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
+    let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
     try {
-      fs.unlinkSync(filepondfile.fullPath);
+      fs.unlinkSync(pondServerFile.fullPath);
     } catch (err) {
       console.error(err);
     }
@@ -3729,9 +3789,9 @@ const FilePondRevert = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     let serverId = req.payload;
-    let filepondfile = Tools.getFilePondFile(tenant, myEmail, serverId);
+    let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
     try {
-      fs.unlinkSync(filepondfile.fullPath);
+      fs.unlinkSync(pondServerFile.fullPath);
     } catch (err) {
       console.error(err);
     }
@@ -3758,8 +3818,8 @@ const WorkflowAttachmentViewer = async function (req, h) {
     let author = attach.author;
     let contentType = attach.contentType;
 
-    let filepondfile = Tools.getFilePondFile(tenant, author, serverId);
-    var readStream = fs.createReadStream(filepondfile.fullPath);
+    let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
+    var readStream = fs.createReadStream(pondServerFile.fullPath);
     return h
       .response(readStream)
       .header("cache-control", "no-cache")
@@ -3768,7 +3828,7 @@ const WorkflowAttachmentViewer = async function (req, h) {
       .header("Content-Type", contentType)
       .header(
         "Content-Disposition",
-        `attachment;filename="${encodeURIComponent(filepondfile.fileName)}"`
+        `attachment;filename="${encodeURIComponent(pondServerFile.fileName)}"`
       );
   } catch (err) {
     console.error(err);
