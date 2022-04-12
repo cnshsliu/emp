@@ -4348,6 +4348,9 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
   ret.workid = todo.workid;
   ret.title = todo.title;
   ret.cellInfo = todo.cellInfo;
+  if (TodoOwner !== peopleInBrowser) {
+    ret.cellInfo = "";
+  }
   if (ret.title.indexOf("[") >= 0) {
     ret.title = await Parser.replaceStringWithKVar(
       tenant,
