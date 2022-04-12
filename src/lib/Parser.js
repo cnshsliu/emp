@@ -267,6 +267,12 @@ Parser.userGetVars = async function (
     }
   }
 
+  for (const [key, valueDef] of Object.entries(retResult)) {
+    if (Tools.isEmpty(valueDef.type)) {
+      valueDef.type = Parser.getVarType(key, valueDef.value);
+    }
+  }
+
   //Remove NOT_MINE csv cell
 
   return retResult;
@@ -697,25 +703,50 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   return ret;
 };
 
+Parser.getVarType = function (varName, varValue) {
+  let retType = "plaintext";
+  let matchResult = varName.match(
+    "^(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|csv|radio|checkbox|cb|ou|usr|user|tbl)_"
+  );
+  if (matchResult) {
+    retType = matchResult[1];
+  } else {
+    //based on varValue type if no prefix_ in varName
+    matchResult = (typeof varValue).match("(number|string)");
+    if (matchResult) {
+      retType = matchResult[1];
+    }
+  }
+  switch (retType) {
+    case "usr":
+      retType = "user";
+      break;
+    case "dt":
+      retType = "datetime";
+      break;
+    case "sl":
+    case "sel":
+      retType = "select";
+      break;
+    case "ta":
+      retType = "textarea";
+      break;
+    case "cb":
+      retType = "checkbox";
+      break;
+  }
+  return retType;
+};
+
 Parser.kvarsToArray = function (kvars) {
   let kvarsArr = [];
   for (const [name, valueDef] of Object.entries(kvars)) {
     let tmp = { ...{ name: name }, ...valueDef };
     //START Speculate variable type
     //based on prefix_ of name
-    let matchResult = name.match(
-      "(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|csv|radio|checkbox|cb|ou|usr|user|tbl)_"
-    );
     tmp.type = "plaintext";
-    if (matchResult) {
-      tmp.type = matchResult[1];
-    } else {
-      //based on value type if no prefix_ in name
-      matchResult = (typeof valueDef.value).match("(number|string)");
-      if (matchResult) {
-        tmp.type = matchResult[1];
-      }
-    }
+    tmp.type = Parser.getVarType(name, valueDef.value);
+
     if (tmp.type === "cb") tmp.type = "checkbox";
     if (tmp.type === "ta") tmp.type = "textarea";
     if (tmp.type === "sl" || tmp.type === "sel" || tmp.type === "ou") tmp.type = "select";
