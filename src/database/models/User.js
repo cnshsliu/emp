@@ -21,6 +21,7 @@ const UserSchema = new Schema({
     default: "ADMIN",
   },
   avatar: { type: Mongoose.Schema.Types.String },
+  avatarinfo: { path: String, media: String },
   signature: { type: Mongoose.Schema.Types.String, default: "" },
 });
 

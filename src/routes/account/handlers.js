@@ -1158,16 +1158,18 @@ internals.Avatar = async function (req, h) {
   let uid = req.params.uid;
   let tmp = null;
   try {
-    tmp = await User.findOne({ _id: uid }).lean();
+    if (uid.match(/^[^@]+@[^@]+$/))
+      tmp = await User.findOne({ email: uid }, { avatarinfo: 1 }).lean();
+    else tmp = await User.findOne({ _id: uid }, { avatarinfo: 1 }).lean();
   } catch (e) {
     console.error(e.message);
   }
   if (Tools.hasValue(tmp)) {
-    if (Tools.hasValue(tmp.avatar) && Tools.hasValue(tmp.avatar.path)) {
-      if (fs.existsSync(tmp.avatar.path)) {
+    if (Tools.hasValue(tmp.avatarinfo) && Tools.hasValue(tmp.avatarinfo.path)) {
+      if (fs.existsSync(tmp.avatarinfo.path)) {
         return h
-          .response(fs.createReadStream(tmp.avatar.path))
-          .header("Content-Type", tmp.avatar.media);
+          .response(fs.createReadStream(tmp.avatarinfo.path))
+          .header("Content-Type", tmp.avatarinfo.media);
       }
     }
   }
@@ -1196,10 +1198,10 @@ internals.PostAvatar = async function (req, h) {
   };
   await User.findOneAndUpdate(
     { _id: payload.user_id },
-    { $set: { avatar: avatarinfo } },
+    { $set: { avatarinfo: avatarinfo } },
     { new: true }
   );
-  return "Got it.";
+  return { result: "OK" };
 };
 
 internals.SendInvitation = async function (req, h) {
