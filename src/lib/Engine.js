@@ -809,7 +809,6 @@ Engine.getWorkDoer = async function (tenant, work, currentUser) {
 /**
  * 完成一个Todo
  *
- * @param {...} Engine.__doneTodo = asynctenant -
  * @param {...} todo -
  * @param {...} doer -
  * @param {...} workid -
@@ -1204,7 +1203,7 @@ Engine.__doneTodo = async function (
   }
 
   try {
-    await Engine.postCommentForTodo(tenant, doer, todo, comment);
+    if (comment.trim().length > 0) await Engine.postCommentForTodo(tenant, doer, todo, comment);
   } catch (err) {
     console.error(err);
   }
@@ -1279,6 +1278,7 @@ Engine.setPeopleFromContent = async function (tenant, doer, content, people, ema
 
 //对每个@somebody存储，供somebody反向查询comment
 Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
+  if (content.trim().length === 0) return;
   let emails = [todo.wfstarter];
   let people = [Tools.getEmailPrefix(todo.wfstarter)];
   let doerCN = await Cache.getUserName(tenant, doer);
@@ -1612,7 +1612,8 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
     { upsert: false, new: true }
   );
   try {
-    await Engine.postCommentForTodo(tenant, email, old_todo, comment);
+    if (comment.trim().length > 0)
+      await Engine.postCommentForTodo(tenant, email, old_todo, comment);
   } catch (err) {}
 
   for (let i = 0; i < nexts.length; i++) {
@@ -1888,7 +1889,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   );
 
   try {
-    await Engine.postCommentForTodo(tenant, doer, todo, comment);
+    if (comment.trim().length > 0) await Engine.postCommentForTodo(tenant, doer, todo, comment);
   } catch (err) {}
 
   for (let i = 0; i < nexts.length; i++) {
