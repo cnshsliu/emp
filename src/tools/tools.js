@@ -1,6 +1,7 @@
 const Jimp = require("jimp");
 const zlib = require("zlib");
 const Moment = require("moment");
+const lodash = require("lodash");
 const sprintf = require("sprintf-js").sprintf;
 const EmpConfig = require("../config/emp");
 const replaceReg = / |　/gi;
@@ -323,6 +324,19 @@ const Tools = {
     var result = "";
     for (var i = length; i > 0; --i) result += chars[Math.floor(Math.random() * chars.length)];
     return result;
+  },
+  getUidsFromText: function (content) {
+    let people = [];
+    let m = content.match(/@([\S]+)/g);
+    if (m) {
+      for (let i = 0; i < m.length; i++) {
+        let anUid = m[i].substring(1);
+        anUid = Tools.qtb(anUid);
+        anUid = lodash.trimEnd(anUid, ".,? ");
+        people.push(anUid);
+      }
+    }
+    return people;
   },
 };
 module.exports = Tools;

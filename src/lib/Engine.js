@@ -1204,9 +1204,9 @@ Engine.__doneTodo = async function (
   }
 
   try {
-    Engine.sendCommentNotification(tenant, doer, wfid, todo, comment);
-  } catch (e) {
-    console.error(e);
+    await Engine.postCommentForTodo(tenant, doer, todo, comment);
+  } catch (err) {
+    console.error(err);
   }
   for (let i = 0; i < nexts.length; i++) {
     await Engine.sendNext(nexts[i]);
@@ -1263,62 +1263,127 @@ ${kvarsMD}
   return markdownMsg;
 };
 
-//对每个@somebody存储，供somebody反向查询comment
-Engine.sendCommentNotification = async function (tenant, doer, wfid, todo, content) {
-  //content = "hello @liukehong @yangsiyong @linyukui @suguotai hallo abcd";
-  if (typeof content !== "string") {
-    return;
-  }
-  if (Tools.isEmpty(content.trim())) {
-    return;
-  }
-  //找里面的 @somebody， regexp是@后面跟着的连续非空字符
-  let m = content.match(/@([\S]+)/g);
-  let emails = [todo.wfstarter];
-  if (m) {
-    for (let i = 0; i < m.length; i++) {
-      let anUid = m[i].substring(1);
-      anUid = Tools.qtb(anUid);
-      anUid = lodash.trimEnd(anUid, ".,?");
-      let toWhomEmail = Tools.makeEmailSameDomain(anUid, doer);
+Engine.setPeopleFromContent = async function (tenant, doer, content, people, emails) {
+  let tmp = Tools.getUidsFromText(content);
+  for (let i = 0; i < tmp.length; i++) {
+    let toWhomEmail = Tools.makeEmailSameDomain(tmp[i], doer);
+    let receiverCN = await Cache.getUserName(tenant, toWhomEmail);
+    if (receiverCN !== "USER_NOT_FOUND") {
+      people.push(tmp[i]);
       emails.push(toWhomEmail);
     }
   }
   emails = [...new Set(emails)];
-  for (let i = 0; i < emails.length; i++) {
-    let commentorCN = await Cache.getUserName(tenant, doer);
-    let receiverCN = await Cache.getUserName(tenant, emails[i]);
-    if (receiverCN === "USER_NOT_FOUND") continue;
+  people = [...new Set(people)];
+};
+
+//对每个@somebody存储，供somebody反向查询comment
+Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
+  let emails = [todo.wfstarter];
+  let people = [Tools.getEmailPrefix(todo.wfstarter)];
+  let doerCN = await Cache.getUserName(tenant, doer);
+  debugger;
+  await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
+  let frontendUrl = Tools.getFrontEndUrl();
+  let msg = {
+    tenant: todo.tenant,
+    doer: doer,
+    doerCN: doerCN,
+    subject: (todo.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
+    mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/>
+        From: ${doerCN}<br/>
+        On task: <a href="${frontendUrl}/work/@${todo.todoid}">${todo.title}</a> <br/>
+        Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
+        <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
+  };
+  let context = { wfid: todo.wfid, workid: todo.workid, todoid: todo.todoid };
+  await Engine.__postComment(
+    tenant,
+    doer,
+    "TODO",
+    todo.todoid,
+    content,
+    context,
+    people,
+    emails,
+    todo.rehearsal,
+    msg
+  );
+};
+Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
+  let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
+
+  let people = cmt.people;
+  let emails = [];
+  let doerCN = await Cache.getUserName(tenant, doer);
+  await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
+  let msg = {
+    tenant: todo.tenant,
+    doer: doer,
+    doerCN: doerCN,
+    subject: (todo.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
+    mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> <br/><br/> Metatocome`,
+  };
+  await Engine.__postComment(
+    tenant,
+    doer,
+    "COMMENT",
+    cmtid,
+    content,
+    cmt.context, //继承上一个comment的业务上下文
+    cmt.rehearsal,
+    msg
+  );
+};
+Engine.__postComment = async function (
+  tenant,
+  doer,
+  objtype,
+  objid,
+  content,
+  context,
+  people,
+  emails,
+  rehearsal,
+  emailMsg = null
+) {
+  try {
+    //找里面的 @somebody， regexp是@后面跟着的连续非空字符
     let comment = new Comment({
       tenant: tenant,
+      rehearsal: rehearsal,
       who: doer,
-      wfid: wfid,
-      workid: todo.workid,
-      todoid: todo.todoid,
-      toWhom: emails[i],
+      objtype: objtype,
+      objid: objid,
+      people: people,
       content: content,
+      context: context,
     });
     comment = await comment.save();
-    /// Send out comment email
-    let frontendUrl = Tools.getFrontEndUrl();
+    if (emailMsg) {
+      for (let i = 0; i < emails.length; i++) {
+        let receiverCN = await Cache.getUserName(tenant, emails[i]);
+        if (receiverCN === "USER_NOT_FOUND") continue;
+        let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
+        let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
 
-    let msgToSend = {
-      CMD: "CMD_sendMail",
-      tenant: todo.tenant,
-      recipient: todo.rehearsal ? todo.wfstarter : emails[i],
-      subject: (todo.rehearsal ? "Rehearsal: " : "") + `${commentorCN} comment "${todo.wftitle}"`,
-      mail_body: `Comment for you: <br/>${content}<br/>
-        From: ${commentorCN}<br/>
-        On task: <a href="${frontendUrl}/work/@${todo.todoid}">${todo.title}</a> <br/>
-        Process: <a href="${frontendUrl}/workflow/@{todo.wfid}">${todo.wftitle}</a><br/>
-        <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
-    };
-
-    await Engine.sendNext(msgToSend);
-
-    //await Engine.sendTenantMail(tenant, emails[i], subject, mail_body);
-
-    /// end of comment email
+        Engine.sendTenantMail(
+          tenant, //not rehearsal
+          rehearsal ? doer : emails[i],
+          subject,
+          body
+        ).then((res) => {
+          console.log(
+            "Mailer send email to ",
+            rehearsal ? doer + "(" + emails[i] + ")" : emails[i],
+            "subject:",
+            subject
+          );
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(err);
   }
 };
 
@@ -1544,7 +1609,9 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
     { $set: wfUpdate },
     { upsert: false, new: true }
   );
-  Engine.sendCommentNotification(tenant, email, wfid, old_todo, comment);
+  try {
+    await Engine.postCommentForTodo(tenant, email, old_todo, comment);
+  } catch (err) {}
 
   for (let i = 0; i < nexts.length; i++) {
     await Engine.sendNext(nexts[i]);
@@ -1818,7 +1885,9 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     { $set: { status: "ST_RETURNED" } }
   );
 
-  Engine.sendCommentNotification(tenant, doer, wfid, todo, comment);
+  try {
+    await Engine.postCommentForTodo(tenant, doer, todo, comment);
+  } catch (err) {}
 
   for (let i = 0; i < nexts.length; i++) {
     await Engine.sendNext(nexts[i]);
@@ -4289,6 +4358,25 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
   return ret;
 };
 
+Engine.getComments = async function (tenant, objtype, objid) {
+  let ret = {};
+  let cmts = await Comment.find({ tenant, objtype, objid }).lean();
+  if (cmts) {
+    for (let i = 0; i < cmts.length; i++) {
+      cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
+      cmts[i].splitted = splitComment(cmts[i].content);
+      let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id);
+      if (children) {
+        cmts[i]["children"] = children;
+      }
+    }
+
+    return cmts;
+  } else {
+    return null;
+  }
+};
+
 //添加from_actions, following_ctions, parallel_actions, returnable and revocable
 
 /**
@@ -4378,6 +4466,7 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
   ret.role = workNode.attr("role");
   ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
   ret.doer_string = workNode.attr("doer");
+  ret.comments = await Engine.getComments(tenant, "TODO", todo.id);
   ret.comment =
     Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
       ? []
@@ -4515,6 +4604,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     todoEntry.doer = todos[i].doer;
     todoEntry.doneby = todos[i].doneby;
     todoEntry.doneat = todos[i].doneat;
+    todoEntry.comments = await Engine.getComments(tenant, "TODO", todos[i].todoid);
     todoEntry.comment =
       Tools.isEmpty(todos[i].comment) || Tools.isEmpty(todos[i].comment.trim())
         ? []
@@ -4564,6 +4654,9 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     } else {
       if (tmpRet[i].comment.length > 0)
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
+      if (tmpRet[i].comments.length > 0) {
+        ret[existing_index].comments = [...ret[existing_index].comments, ...tmpRet[i].comments];
+      }
       ret[existing_index].doers.push({
         uid: tmpRet[i].doer,
         cn: await Cache.getUserName(tenant, tmpRet[i].doer),

@@ -4,12 +4,21 @@ var Mongoose = require("mongoose"),
 var CommentSchema = new Schema(
   {
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+    rehearsal: { type: Boolean, default: false },
     who: { type: String, required: true },
-    wfid: { type: String },
-    workid: { type: String },
-    todoid: { type: String },
-    toWhom: { type: String, required: true },
+    objtype: {
+      type: String,
+      enum: ["SITE", "TENANT", "TEMPLATE", "WORKFLOW", "WORK", "TODO", "COMMENT"],
+      default: "TENANT",
+    },
+    objid: { type: String },
+    people: [String],
     content: { type: String, default: "" },
+    context: {
+      wfid: String,
+      workid: String,
+      todoid: String,
+    },
   },
   { timestamps: true }
 );

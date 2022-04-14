@@ -1501,7 +1501,6 @@ const CheckCoworker = async function (req, h) {
 
     return user;
   } catch (err) {
-    console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
@@ -3349,6 +3348,24 @@ const CommentDeleteBeforeDays = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const CommentAdd = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    await Engine.postComment(
+      tenant,
+      myEmail,
+      req.payload.objtype,
+      req.payload.objid,
+      req.payload.content
+    );
+
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
 const TagDel = async function (req, h) {
   try {
@@ -4104,6 +4121,7 @@ module.exports = {
   CommentList,
   CommentDelete,
   CommentDeleteBeforeDays,
+  CommentAdd,
   TagAdd,
   TagDel,
   TagList,
