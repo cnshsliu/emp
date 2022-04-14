@@ -1179,29 +1179,34 @@ internals.Avatar = async function (req, h) {
 };
 
 internals.PostAvatar = async function (req, h) {
-  const payload = req.payload;
-  payload.tenant = req.auth.credentials.tenant._id;
-  payload.user_id = req.auth.credentials._id;
-  payload.email = req.auth.credentials.email;
+  try {
+    const payload = req.payload;
+    payload.tenant = req.auth.credentials.tenant._id;
+    payload.user_id = req.auth.credentials._id;
+    payload.email = req.auth.credentials.email;
 
-  await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
-  let media = payload.avatar.headers["content-type"];
-  const filename = `avatar_${payload.user_id}`;
-  let path = `${EmpConfig.avatar.folder}/${filename}`;
-  if (EmpConfig.avatar.folder.match(/.*\/$/)) {
-    path = `${EmpConfig.avatar.folder}${filename}`;
+    await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
+    let media = payload.avatar.headers["content-type"];
+    const filename = `avatar_${payload.user_id}`;
+    let path = `${EmpConfig.avatar.folder}/${filename}`;
+    if (EmpConfig.avatar.folder.match(/.*\/$/)) {
+      path = `${EmpConfig.avatar.folder}${filename}`;
+    }
+    fs.renameSync(payload.avatar.path, path);
+    let avatarinfo = {
+      path: path,
+      media: media,
+    };
+    await User.findOneAndUpdate(
+      { _id: payload.user_id },
+      { $set: { avatarinfo: avatarinfo } },
+      { new: true }
+    );
+    return { result: "Set Avatar OK" };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
-  fs.renameSync(payload.avatar.path, path);
-  let avatarinfo = {
-    path: path,
-    media: media,
-  };
-  await User.findOneAndUpdate(
-    { _id: payload.user_id },
-    { $set: { avatarinfo: avatarinfo } },
-    { new: true }
-  );
-  return { result: "Set Avatar OK" };
 };
 
 internals.SendInvitation = async function (req, h) {
