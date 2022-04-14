@@ -1314,14 +1314,14 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
   let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
 
   let people = cmt.people;
-  let emails = [];
+  let emails = cmt.people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
   let doerCN = await Cache.getUserName(tenant, doer);
   await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
   let msg = {
-    tenant: todo.tenant,
+    tenant: tenant,
     doer: doer,
     doerCN: doerCN,
-    subject: (todo.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
+    subject: (cmt.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
     mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> <br/><br/> Metatocome`,
   };
   await Engine.__postComment(
@@ -1331,6 +1331,8 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
     cmtid,
     content,
     cmt.context, //继承上一个comment的业务上下文
+    people,
+    emails,
     cmt.rehearsal,
     msg
   );

@@ -2127,9 +2127,8 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          objtype: Joi.string().required(),
-          objid: Joi.string().required,
-          content: Joi.string().required,
+          cmtid: Joi.string().required(),
+          content: Joi.string().required(),
         },
         validator: Joi,
       },

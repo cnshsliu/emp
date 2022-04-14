@@ -3352,15 +3352,10 @@ const CommentAdd = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    await Engine.postComment(
-      tenant,
-      myEmail,
-      req.payload.objtype,
-      req.payload.objid,
-      req.payload.content
-    );
+    await Engine.postCommentForComment(tenant, myEmail, req.payload.cmtid, req.payload.content);
+    let comments = await Engine.getComments(tenant, "COMMENT", req.payload.cmtid);
 
-    return h.response("Done");
+    return h.response(comments);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
