@@ -1201,7 +1201,7 @@ internals.PostAvatar = async function (req, h) {
     { $set: { avatarinfo: avatarinfo } },
     { new: true }
   );
-  return { result: "OK" };
+  return { result: "Set Avatar OK" };
 };
 
 internals.SendInvitation = async function (req, h) {
