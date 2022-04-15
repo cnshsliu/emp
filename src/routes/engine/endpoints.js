@@ -2136,6 +2136,47 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/comment/addforbiz",
+    handler: Handlers.CommentAddForBiz,
+    config: {
+      description: "Add Comment",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          objtype: Joi.string().required(),
+          objid: Joi.string().required(),
+          content: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/comment/loadmorepeers",
+    handler: Handlers.CommentLoadMorePeers,
+    config: {
+      description: "Add Comment",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          cmtid: Joi.string().required(),
+          currentlength: Joi.number().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/tag/add",
     handler: Handlers.TagAdd,
     config: {

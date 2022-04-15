@@ -3353,9 +3353,49 @@ const CommentAdd = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     await Engine.postCommentForComment(tenant, myEmail, req.payload.cmtid, req.payload.content);
-    let comments = await Engine.getComments(tenant, "COMMENT", req.payload.cmtid);
+    let comments = await Engine.getComments(tenant, "COMMENT", req.payload.cmtid, 3);
 
     return h.response(comments);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const CommentAddForBiz = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    if (req.payload.objtype === "TODO") {
+      let todo = await Todo.findOne({ tenant: tenant, todoid: req.payload.objid });
+      if (todo) {
+        await Engine.postCommentForTodo(tenant, myEmail, todo, req.payload.content);
+        let comments = await Engine.getComments(tenant, "TODO", req.payload.objid, 3);
+        return h.response(comments);
+      }
+    }
+
+    return h.response(null);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const CommentLoadMorePeers = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let currentlength = req.payload.currentlength;
+    let thisCmt = await Comment.findOne({ tenant: tenant, _id: req.payload.cmtid });
+    if (thisCmt) {
+      let comments = await Engine.getComments(
+        tenant,
+        thisCmt.objtype,
+        thisCmt.objid,
+        currentlength < 0 ? -1 : currentlength + 3
+      );
+
+      return h.response(comments);
+    }
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4117,6 +4157,8 @@ module.exports = {
   CommentDelete,
   CommentDeleteBeforeDays,
   CommentAdd,
+  CommentAddForBiz,
+  CommentLoadMorePeers,
   TagAdd,
   TagDel,
   TagList,

@@ -1282,7 +1282,6 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
   let emails = [todo.wfstarter];
   let people = [Tools.getEmailPrefix(todo.wfstarter)];
   let doerCN = await Cache.getUserName(tenant, doer);
-  debugger;
   await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
   let frontendUrl = Tools.getFrontEndUrl();
   let msg = {
@@ -1313,16 +1312,25 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
 Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
   let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
 
+  let theTodo = await Todo.findOne({ tenant: tenant, todoid: cmt.context.todoid }).lean();
   let people = cmt.people;
   let emails = cmt.people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
   let doerCN = await Cache.getUserName(tenant, doer);
+  let frontendUrl = Tools.getFrontEndUrl();
   await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
   let msg = {
     tenant: tenant,
     doer: doer,
     doerCN: doerCN,
     subject: (cmt.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
-    mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> <br/><br/> Metatocome`,
+    mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> 
+        On task: <a href="${frontendUrl}/work/@${cmt.context.todoid}">${
+      theTodo ? theTodo.title : "The Task"
+    } </a> <br/>
+        Process: <a href="${frontendUrl}/workflow/@${cmt.context.wfid}">${
+      theTodo ? theTodo.wftitle : "The Workflow"
+    }</a><br/>
+    <br/><br/> Metatocome`,
   };
   await Engine.__postComment(
     tenant,
@@ -4361,22 +4369,35 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
   return ret;
 };
 
-Engine.getComments = async function (tenant, objtype, objid) {
-  let ret = {};
-  let cmts = await Comment.find({ tenant, objtype, objid }).lean();
+Engine.getComments = async function (tenant, objtype, objid, depth = -1) {
+  //对objtype+objid的comment可能是多个
+  let cmtCount = await Comment.countDocuments({ tenant, objtype, objid });
+  if (cmtCount === 0) {
+    return { count: 0, cmts: [] };
+  }
+  let cmts;
+  if (depth === -1) {
+    cmts = await Comment.find({ tenant, objtype, objid }).sort({ createdAt: -1 }).lean();
+  } else {
+    cmts = await Comment.find({ tenant, objtype, objid })
+      .sort({ createdAt: -1 })
+      .limit(depth)
+      .lean();
+  }
   if (cmts) {
     for (let i = 0; i < cmts.length; i++) {
       cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
       cmts[i].splitted = splitComment(cmts[i].content);
-      let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id);
-      if (children) {
+      //每个 comment 自身还会有被评价
+      let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id, depth);
+      if (children.count > 0) {
         cmts[i]["children"] = children;
       }
     }
 
-    return cmts;
+    return { count: cmtCount, cmts: cmts };
   } else {
-    return null;
+    return { count: 0, cmts: [] };
   }
 };
 
@@ -4469,7 +4490,7 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
   ret.role = workNode.attr("role");
   ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
   ret.doer_string = workNode.attr("doer");
-  ret.comments = await Engine.getComments(tenant, "TODO", todo.id);
+  ret.comments = await Engine.getComments(tenant, "TODO", todo.todoid, 3);
   ret.comment =
     Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
       ? []
@@ -4607,7 +4628,8 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     todoEntry.doer = todos[i].doer;
     todoEntry.doneby = todos[i].doneby;
     todoEntry.doneat = todos[i].doneat;
-    todoEntry.comments = await Engine.getComments(tenant, "TODO", todos[i].todoid);
+    /*
+    todoEntry.comments = await Engine.getComments(tenant, "TODO", todos[i].todoid, 3);
     todoEntry.comment =
       Tools.isEmpty(todos[i].comment) || Tools.isEmpty(todos[i].comment.trim())
         ? []
@@ -4619,6 +4641,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
               splitted: splitComment(todos[i].comment.trim()),
             },
           ];
+          */
     if (todos[i].decision) todoEntry.decision = todos[i].decision;
     let kvars = await Parser.userGetVars(
       tenant,
@@ -4655,11 +4678,13 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       ret.push(tmpRet[i]);
       tmp.push(tmpRet[i].workid);
     } else {
+      /*
       if (tmpRet[i].comment.length > 0)
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
       if (tmpRet[i].comments.length > 0) {
         ret[existing_index].comments = [...ret[existing_index].comments, ...tmpRet[i].comments];
       }
+      */
       ret[existing_index].doers.push({
         uid: tmpRet[i].doer,
         cn: await Cache.getUserName(tenant, tmpRet[i].doer),
