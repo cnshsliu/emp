@@ -3380,18 +3380,24 @@ const CommentAddForBiz = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+//
+//Comment缺省加载3个，前端请求加载更多，
 const CommentLoadMorePeers = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     let currentlength = req.payload.currentlength;
+    //找到当前comment
     let thisCmt = await Comment.findOne({ tenant: tenant, _id: req.payload.cmtid });
     if (thisCmt) {
+      //寻找当前Comment的父对象更多的comment
       let comments = await Engine.getComments(
         tenant,
         thisCmt.objtype,
         thisCmt.objid,
-        currentlength < 0 ? -1 : currentlength + 3
+        //如果小于0，则不限制加载个数，否则，多加载三个即可
+        currentlength < 0 ? -1 : 3,
+        currentlength < 0 ? -1 : currentlength
       );
 
       return h.response(comments);

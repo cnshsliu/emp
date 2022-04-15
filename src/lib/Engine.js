@@ -4369,20 +4369,28 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
   return ret;
 };
 
-Engine.getComments = async function (tenant, objtype, objid, depth = -1) {
+Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = -1) {
   //对objtype+objid的comment可能是多个
   let cmtCount = await Comment.countDocuments({ tenant, objtype, objid });
   if (cmtCount === 0) {
     return { count: 0, cmts: [] };
   }
   let cmts;
-  if (depth === -1) {
-    cmts = await Comment.find({ tenant, objtype, objid }).sort({ createdAt: -1 }).lean();
-  } else {
+  if (skip >= 0 && depth >= 0) {
+    cmts = await Comment.find({ tenant, objtype, objid })
+      .sort({ createdAt: -1 })
+      .limit(depth)
+      .skip(skip)
+      .lean();
+  } else if (depth >= 0) {
     cmts = await Comment.find({ tenant, objtype, objid })
       .sort({ createdAt: -1 })
       .limit(depth)
       .lean();
+  } else if (skip >= 0) {
+    cmts = await Comment.find({ tenant, objtype, objid }).sort({ createdAt: -1 }).skip(skip).lean();
+  } else {
+    cmts = await Comment.find({ tenant, objtype, objid }).sort({ createdAt: -1 }).lean();
   }
   if (cmts) {
     for (let i = 0; i < cmts.length; i++) {
