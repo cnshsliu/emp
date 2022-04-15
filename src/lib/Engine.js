@@ -1275,6 +1275,7 @@ Engine.setPeopleFromContent = async function (tenant, doer, content, people, ema
   emails = [...new Set(emails)];
   people = [...new Set(people)];
   people = people.map((p) => Tools.getEmailPrefix(p));
+  return [people, emails];
 };
 
 //对每个@somebody存储，供somebody反向查询comment
@@ -1283,7 +1284,8 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
   let emails = [todo.wfstarter];
   let people = [Tools.getEmailPrefix(todo.wfstarter)];
   let doerCN = await Cache.getUserName(tenant, doer);
-  await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
+  debugger;
+  [people, emails] = await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
   let frontendUrl = Tools.getFrontEndUrl();
   let msg = {
     tenant: todo.tenant,
@@ -1319,7 +1321,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
   let emails = people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
   let doerCN = await Cache.getUserName(tenant, doer);
   let frontendUrl = Tools.getFrontEndUrl();
-  await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
+  [people, emails] = await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
   let msg = {
     tenant: tenant,
     doer: doer,
