@@ -1274,6 +1274,7 @@ Engine.setPeopleFromContent = async function (tenant, doer, content, people, ema
   }
   emails = [...new Set(emails)];
   people = [...new Set(people)];
+  people = people.map((p) => Tools.getEmailPrefix(p));
 };
 
 //对每个@somebody存储，供somebody反向查询comment
@@ -1314,7 +1315,8 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
 
   let theTodo = await Todo.findOne({ tenant: tenant, todoid: cmt.context.todoid }).lean();
   let people = cmt.people;
-  let emails = cmt.people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
+  people.push(Tools.getEmailPrefix(cmt.who));
+  let emails = people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
   let doerCN = await Cache.getUserName(tenant, doer);
   let frontendUrl = Tools.getFrontEndUrl();
   await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
@@ -1372,6 +1374,9 @@ Engine.__postComment = async function (
     comment = await comment.save();
     if (emailMsg) {
       for (let i = 0; i < emails.length; i++) {
+        if (emails[i] === doer) {
+          continue;
+        }
         let receiverCN = await Cache.getUserName(tenant, emails[i]);
         if (receiverCN === "USER_NOT_FOUND") continue;
         let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
@@ -4095,10 +4100,10 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
   }
 };
 
-Engine.stopWorkflow = async function (email, tenant, wfid) {
+Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -4131,8 +4136,8 @@ Engine.stopWorkflow = async function (email, tenant, wfid) {
 };
 
 Engine.restartWorkflow = async function (
-  email,
   tenant,
+  myEmail,
   wfid,
   starter = null,
   pbo = null,
@@ -4141,13 +4146,13 @@ Engine.restartWorkflow = async function (
 ) {
   let old_wfid = wfid;
   let old_wf = await Workflow.findOne({ tenant: tenant, wfid: old_wfid });
-  if (!SystemPermController.hasPerm(email, "workflow", old_wf, "update"))
+  if (!SystemPermController.hasPerm(myEmail, "workflow", old_wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let old_wfIO = await Parser.parse(old_wf.doc);
   let old_wfRoot = old_wfIO(".workflow");
   let old_pwfid = old_wfRoot.attr("pwfid");
   let old_pworkid = old_wfRoot.attr("pworkid");
-  await Engine.stopWorkflow(email, tenant, old_wfid);
+  await Engine.stopWorkflow(tenant, myEmail, old_wfid);
   let isoNow = Tools.toISOString(new Date());
   starter = Tools.defaultValue(starter, old_wf.starter);
   teamid = Tools.defaultValue(teamid, old_wf.teamid);
@@ -4199,24 +4204,76 @@ Engine.restartWorkflow = async function (
   return wf;
 };
 
-Engine.destroyWorkflow = async function (email, tenant, wfid) {
+Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
   let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "delete"))
+  if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "delete"))
     throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
-  let myGroup = await Cache.getMyGroup(email);
+  let myGroup = await Cache.getMyGroup(myEmail);
   //管理员可以destory
   //starter可以destroy rehearsal
   //starter可以destroy 尚在第一个活动上的流程
-  if (myGroup === "ADMIN" || (wf.starter === email && (wf.rehearsal || wf.pnodeid === "start"))) {
-    let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
-    await Todo.deleteMany({ tenant: tenant, wfid: wfid });
-    await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
-    await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
-    await KVar.deleteMany({ tenant: tenant, wfid: wfid });
-    await Work.deleteMany({ tenant: tenant, wfid: wfid });
-    await Route.deleteMany({ tenant: tenant, wfid: wfid });
-    //TODO: destroy and filepond upload
-    return ret;
+  if (myGroup === "ADMIN" || (wf.starter === myEmail && (wf.rehearsal || wf.pnodeid === "start"))) {
+    console.log("Destroy workflow:", wfid);
+    try {
+      console.log("\tDestroy Todo");
+      await Todo.deleteMany({ tenant: tenant, wfid: wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    try {
+      console.log("\tDestroy DelayTimer");
+      await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    try {
+      console.log("\tDestroy CbPoint");
+      await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    try {
+      console.log("\tDestroy KVar");
+      await KVar.deleteMany({ tenant: tenant, wfid: wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    try {
+      console.log("\tDestroy Work");
+      await Work.deleteMany({ tenant: tenant, wfid: wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    try {
+      console.log("\tDestroy Route");
+      await Route.deleteMany({ tenant: tenant, wfid: wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    try {
+      console.log("\tDestroy Comment");
+      await Comment.deleteMany({ tenant: tenant, "context.wfid": wfid });
+    } catch (err) {
+      console.log(err);
+    }
+    let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { attachments: 1 });
+    if (wf) {
+      console.log("\tDestroy attached files");
+      for (let i = 0; i < wf.attachments.length; i++) {
+        let serverId = wf.attachments[i].serverId;
+        let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+        try {
+          fs.unlinkSync(pondServerFile.fullPath);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
+      console.log("Destroy Workflow Done");
+      return ret;
+    } else {
+      return null;
+    }
   } else {
     throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
   }
@@ -4254,7 +4311,7 @@ Engine.getWorkflowPbo = async function (email, tenant, wfid) {
   return await Engine.getPboByWfId(tenant, wfid);
 };
 
-Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
+Engine.workflowGetList = async function (tenant, email, filter, sortdef) {
   if (!SystemPermController.hasPerm(email, "workflow", "", "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read workflow");
   filter.tenant = tenant;
@@ -4267,7 +4324,7 @@ Engine.workflowGetList = async function (email, tenant, filter, sortdef) {
   return wfs;
 };
 
-Engine.workflowGetLatest = async function (email, tenant, filter) {
+Engine.workflowGetLatest = async function (tenant, email, filter) {
   if (!SystemPermController.hasPerm(email, "workflow", "", "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read workflow");
   filter.tenant = tenant;
@@ -5071,14 +5128,13 @@ Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
 };
 
 /**
- * Engine.pauseWorkflow = async() 暂停一个工作流
  *
- * @param {...} Engine.pauseWorkflow = asynctenant -
+ * @param {...}
  * @param {...} wfid -
  *
  * @return {...}
  */
-Engine.pauseWorkflow = async function (email, tenant, wfid) {
+Engine.pauseWorkflow = async function (tenant, email, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
   if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
@@ -5109,14 +5165,13 @@ Engine.pauseWorkflow = async function (email, tenant, wfid) {
 };
 
 /**
- * Engine.resumeWorkflow = async() 重启一个工作流
+ *  重启一个工作流
  *
- * @param {...} Engine.resumeWorkflow = asynctenant -
  * @param {...} wfid -
  *
  * @return {...}
  */
-Engine.resumeWorkflow = async function (email, tenant, wfid) {
+Engine.resumeWorkflow = async function (tenant, email, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
   if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))

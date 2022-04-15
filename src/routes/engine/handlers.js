@@ -929,7 +929,7 @@ const __saveCSVAsCells = async function (tenant, myEmail, wfid, csvPondFiles) {
 const WorkflowRemoveAttachment = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
     let attachmentsToDelete = req.payload.attachments;
     if (attachmentsToDelete.length <= 0) return h.response("Done");
@@ -937,7 +937,7 @@ const WorkflowRemoveAttachment = async function (req, h) {
     let filter = { tenant: tenant, wfid: wfid };
     let wf = await Workflow.findOne(filter);
 
-    let me = await User.findOne({ tenant: tenant, email: email }).populate("tenant").lean();
+    let me = await User.findOne({ tenant: tenant, email: myEmail }).populate("tenant").lean();
     let canDeleteAll = false;
     let isAdmin = false;
     try {
@@ -946,7 +946,7 @@ const WorkflowRemoveAttachment = async function (req, h) {
       isAdmin = false;
     }
     if (isAdmin) canDeleteAll = true;
-    else if (wf.starter === email) canDeleteAll = true;
+    else if (wf.starter === myEmail) canDeleteAll = true;
 
     let wfAttachments = wf.attachments;
     for (let i = 0; i < attachmentsToDelete.length; i++) {
@@ -960,7 +960,7 @@ const WorkflowRemoveAttachment = async function (req, h) {
         for (let i = 0; i < wfAttachments.length; i++) {
           if (
             wfAttachments[i].serverId === tobeDel.serverId &&
-            (canDeleteAll || wfAttachments[i].author === email)
+            (canDeleteAll || wfAttachments[i].author === myEmail)
           ) {
             try {
               let fileInfo = Tools.getPondServerFile(
@@ -996,9 +996,9 @@ const WorkflowRemoveAttachment = async function (req, h) {
 const WorkflowPause = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let status = await Engine.pauseWorkflow(email, tenant, wfid);
+    let status = await Engine.pauseWorkflow(tenant, myEmail, wfid);
     return { wfid: wfid, status: status };
   } catch (err) {
     console.error(err);
@@ -1008,9 +1008,9 @@ const WorkflowPause = async function (req, h) {
 const WorkflowResume = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let status = await Engine.resumeWorkflow(email, tenant, wfid);
+    let status = await Engine.resumeWorkflow(tenant, myEmail, wfid);
     return { wfid: wfid, status: status };
   } catch (err) {
     console.error(err);
@@ -1020,9 +1020,9 @@ const WorkflowResume = async function (req, h) {
 const WorkflowStop = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let status = await Engine.stopWorkflow(email, tenant, wfid);
+    let status = await Engine.stopWorkflow(tenant, myEmail, wfid);
     return { wfid: wfid, status: status };
   } catch (err) {
     console.error(err);
@@ -1032,9 +1032,9 @@ const WorkflowStop = async function (req, h) {
 const WorkflowRestart = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let status = await Engine.restartWorkflow(email, tenant, wfid);
+    let status = await Engine.restartWorkflow(tenant, myEmail, wfid);
     return { wfid: wfid, status: status };
   } catch (err) {
     console.error(err);
@@ -1045,10 +1045,40 @@ const WorkflowRestart = async function (req, h) {
 const WorkflowDestroy = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let ret = await Engine.destroyWorkflow(email, tenant, wfid);
+    let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
     return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowDestroyByTitle = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let wftitle = req.payload.wftitle;
+    let wfs = await Workflow.find({ tenant: tenant, wftitle: wftitle }, { _id: 0, wfid: 1 }).lean();
+    for (let i = 0; i < wfs.length; i++) {
+      await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
+    }
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const WorkflowDestroyByTplid = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+    let wfs = await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean();
+    for (let i = 0; i < wfs.length; i++) {
+      await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
+    }
+    return h.response("Done");
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1057,10 +1087,10 @@ const WorkflowDestroy = async function (req, h) {
 const WorkflowRestartThenDestroy = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
-    let newWf = await Engine.restartWorkflow(email, tenant, wfid);
-    await Engine.destroyWorkflow(email, tenant, wfid);
+    let newWf = await Engine.restartWorkflow(tenant, myEmail, wfid);
+    await Engine.destroyWorkflow(tenant, myEmail, wfid);
     return h.response(newWf);
   } catch (err) {
     console.error(err);
@@ -1071,28 +1101,28 @@ const WorkflowRestartThenDestroy = async function (req, h) {
 const WorkflowOP = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
     let ret = {};
     switch (req.payload.op) {
       case "pause":
-        ret = { wfid: wfid, status: await Engine.pauseWorkflow(email, tenant, wfid) };
+        ret = { wfid: wfid, status: await Engine.pauseWorkflow(tenant, myEmail, wfid) };
         break;
       case "resume":
-        ret = { wfid: wfid, status: await Engine.resumeWorkflow(email, tenant, wfid) };
+        ret = { wfid: wfid, status: await Engine.resumeWorkflow(tenant, myEmail, wfid) };
         break;
       case "stop":
-        ret = { wfid: wfid, status: await Engine.stopWorkflow(email, tenant, wfid) };
+        ret = { wfid: wfid, status: await Engine.stopWorkflow(tenant, myEmail, wfid) };
         break;
       case "restart":
-        ret = { wfid: wfid, status: await Engine.restartWorkflow(email, tenant, wfid) };
+        ret = { wfid: wfid, status: await Engine.restartWorkflow(tenant, myEmail, wfid) };
         break;
       case "destroy":
-        ret = await Engine.destroyWorkflow(email, tenant, wfid);
+        ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
         break;
       case "restartthendestroy":
-        ret = await Engine.restartWorkflow(email, tenant, wfid);
-        await Engine.destroyWorkflow(email, tenant, wfid);
+        ret = await Engine.restartWorkflow(tenant, myEmail, wfid);
+        await Engine.destroyWorkflow(tenant, myEmail, wfid);
         break;
       default:
         throw new EmpError(
@@ -1133,10 +1163,10 @@ const WorkflowSetTitle = async function (req, h) {
 const WorkflowList = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let filter = req.payload.filter;
     let sortDef = req.payload.sortdef;
-    return await Engine.workflowGetList(email, tenant, filter, sortDef);
+    return await Engine.workflowGetList(tenant, myEmail, filter, sortDef);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1326,9 +1356,9 @@ const WorkflowSearch = async function (req, h) {
 const WorkflowGetLatest = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let filter = req.payload.filter;
-    return await Engine.workflowGetLatest(email, tenant, filter);
+    return await Engine.workflowGetLatest(tenant, myEmail, filter);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1521,10 +1551,10 @@ const TransferWork = async function (req, h) {
 
 const WorkGetHtml = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     //如果有wfid，则找只属于这个wfid工作流的workitems
     let workitem = await Engine.getWorkInfo(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.workid
     );
@@ -1541,9 +1571,9 @@ const WorkGetHtml = async function (req, h) {
 
 const WorkDo = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     return await Engine.doWork(
-      email,
+      myEmail,
       req.payload.todoid,
       req.auth.credentials.tenant._id,
       req.payload.doer,
@@ -1560,9 +1590,9 @@ const WorkDo = async function (req, h) {
 };
 const WorkflowStatus = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let ret = await Engine.getWorkflowOrNodeStatus(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.wfid
     );
@@ -1574,9 +1604,9 @@ const WorkflowStatus = async function (req, h) {
 };
 const WorkStatus = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     return await Engine.getWorkflowOrNodeStatus(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.wfid,
       req.payload.workid
@@ -1589,9 +1619,9 @@ const WorkStatus = async function (req, h) {
 
 const WorkRevoke = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     return await Engine.revokeWork(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.wfid,
       req.payload.todoid,
@@ -1697,9 +1727,9 @@ const WorkAddAdhoc = async function (req, h) {
 
 const WorkSendback = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     return await Engine.sendback(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.wfid,
       req.payload.todoid,
@@ -1718,9 +1748,9 @@ const WorkSendback = async function (req, h) {
  */
 const WorkGetTrack = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     return await Engine.getTrack(
-      email,
+      myEmail,
       req.auth.credentials.tenant._id,
       req.payload.wfid,
       req.payload.workid
@@ -2125,10 +2155,10 @@ const WorkflowDownload = async function (req, h) {
 
 const WorkflowGetKVars = async function (req, h) {
   try {
-    let email = req.auth.credentials.email;
+    let myEmail = req.auth.credentials.email;
     let kvars = Engine.getKVars(
       req.auth.credentials.tenant._id,
-      email,
+      myEmail,
       req.payload.wfid,
       req.payload.workid
     );
@@ -4103,6 +4133,8 @@ module.exports = {
   WorkflowStop,
   WorkflowRestart,
   WorkflowDestroy,
+  WorkflowDestroyByTitle,
+  WorkflowDestroyByTplid,
   WorkflowStatus,
   WorkflowDownload,
   WorkflowGetKVars,

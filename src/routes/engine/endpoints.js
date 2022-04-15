@@ -825,6 +825,44 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/workflow/destroy/by/title",
+    handler: Handlers.WorkflowDestroyByTitle,
+    config: {
+      description: "Destroy workflows by title",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wftitle: Joi.string().trim().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/workflow/destroy/by/tplid",
+    handler: Handlers.WorkflowDestroyByTplid,
+    config: {
+      description: "Destroy workflows by tplid",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().trim().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/workflow/restart/then/destroy",
     handler: Handlers.WorkflowRestartThenDestroy,
     config: {
@@ -836,7 +874,7 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          wfid: Joi.string().required(),
+          wfid: Joi.string().trim().required(),
         },
         validator: Joi,
       },
