@@ -1315,8 +1315,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
     mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/>
 
         From: ${doerCN}<br/>
-        Click to see it on task: <a href="${frontendUrl}/work/@${todo.todoid}#ANCHOR">${todo.title}</a> <br/>
-        On task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
+        Click to see it on task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
         Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
   };
