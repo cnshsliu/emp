@@ -1313,8 +1313,10 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
     doerCN: doerCN,
     subject: (todo.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
     mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/>
+
         From: ${doerCN}<br/>
-        On task: <a href="${frontendUrl}/work/@${todo.todoid}">${todo.title}</a> <br/>
+        Click to see it on task: <a href="${frontendUrl}/work/@${todo.todoid}#ANCHOR">${todo.title}</a> <br/>
+        On task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
         Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
   };
@@ -1348,9 +1350,9 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
     doerCN: doerCN,
     subject: (cmt.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
     mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> 
-        On task: <a href="${frontendUrl}/work/@${cmt.context.todoid}#ANCHOR">${
-      theTodo ? theTodo.title : "The Task"
-    } </a> <br/>
+        Click to see it on task: <a href="${frontendUrl}/work/@${
+      cmt.context.todoid
+    }?anchor=ANCHOR">${theTodo ? theTodo.title : "The Task"} </a> <br/>
         Process: <a href="${frontendUrl}/workflow/@${cmt.context.wfid}">${
       theTodo ? theTodo.wftitle : "The Workflow"
     }</a><br/>
