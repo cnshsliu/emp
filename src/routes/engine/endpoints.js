@@ -80,6 +80,26 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/template/batch/start",
+    handler: Handlers.TemplateBatchStart,
+    config: {
+      description: "Start workflow in batch for many people",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+          starters: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/template/delcron",
     handler: Handlers.TemplateDelCron,
     config: {

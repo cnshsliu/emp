@@ -486,7 +486,7 @@ Engine.scheduleAllValidCrons = async function () {
   }
 };
 
-Engine.batchStartWorkflow = async (cron) => {
+Engine.startWorkflowByCron = async (cron) => {
   let doers = await Common.getDoer(
     cron.tenant,
     "", //Team id
@@ -497,15 +497,35 @@ Engine.batchStartWorkflow = async (cron) => {
     null, //kvarString
     false
   ); //
-  console.log("Batch Start Workflow for ", doers.length, " Doers");
+  console.log("Cron Start Workflow for ", doers.length, " people");
   let emails = doers.map((x) => x.uid);
+  await Engine.__batchStartWorkflow(cron.tenant, cron.tplid, emails, "Cron");
+};
+
+Engine.startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
+  let doers = await Common.getDoer(
+    tenant,
+    "", //Team id
+    starters, //PDS
+    directorEmail,
+    null,
+    null, //expalinPDS 没有workflow实例
+    null, //kvarString
+    false
+  ); //
+  let directorCN = await Cache.getUserName(tenant, directorEmail);
+  console.log(directorCN, " start Workflow for ", doers.length, " people");
+  let emails = doers.map((x) => x.uid);
+  //await Engine.__batchStartWorkflow(tenant, tplid, emails, directorCN);
+};
+Engine.__batchStartWorkflow = async (tenant, tplid, emails, sender) => {
   for (let i = 0; i < emails.length; i++) {
-    let processTitle = (await Cache.getUserName(cron.tenant, emails[i])) + ": " + cron.tplid;
+    let processTitle = (await Cache.getUserName(tenant, emails[i])) + ": " + tplid;
     let msgToSend = {
       CMD: "CMD_startWorkflow",
       rehearsal: false,
-      tenant: cron.tenant,
-      tplid: cron.tplid,
+      tenant: tenant,
+      tplid: tplid,
       starter: emails[i],
       pbo: [],
       teamid: "",
@@ -516,7 +536,7 @@ Engine.batchStartWorkflow = async (cron) => {
       pkvars: {},
       runmode: "standalone",
       files: [],
-      sender: "Cron",
+      sender: sender,
     };
 
     await Engine.sendNext(msgToSend);
@@ -531,7 +551,7 @@ Engine.scheduleCron = async (cron) => {
     async () => {
       try {
         if (cron.method === "STARTWORKFLOW") {
-          Engine.batchStartWorkflow(cron).then((res) => {});
+          Engine.startWorkflowByCron(cron).then((res) => {});
         }
       } catch (e) {
         console.error(e);

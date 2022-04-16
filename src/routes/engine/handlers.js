@@ -435,6 +435,23 @@ const TemplateAddCron = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const TemplateBatchStart = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let tplid = req.payload.tplid;
+    let starters = req.payload.starters.trim();
+    let myGroup = await Cache.getMyGroup(myEmail);
+    if (myGroup !== "ADMIN") {
+      throw new EmpError("NOT_ADMIN", `Only admins can start workflow in batch mode.`);
+    }
+    await Engine.startBatchWorkflow(tenant, starters, tplid, myEmail);
+    return h.response("Done");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
 const TemplateDelCron = async function (req, h) {
   try {
@@ -4097,6 +4114,7 @@ module.exports = {
   TemplateSetPboAt,
   TemplateEditLog,
   TemplateAddCron,
+  TemplateBatchStart,
   TemplateDelCron,
   TemplateGetCrons,
   TemplateSetWecomBot,
