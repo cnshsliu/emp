@@ -1478,9 +1478,9 @@
     "safe-buffer" "~5.1.1"
 
 "cookie@^0.4.0":
-  "integrity" "sha1-vrQ35wIrO21JAZ0IhmUwPr6cFLo="
-  "resolved" "https://registry.npm.taobao.org/cookie/download/cookie-0.4.0.tgz"
-  "version" "0.4.0"
+  "integrity" "sha512-aSWTXFzaKWkvHO1Ny/s+ePFpvKsPnjc551iI41v3ny/ow6tBG5Vd+FuqGNhh1LxOmVzOlGUriIlOaokOvhaStA=="
+  "resolved" "https://registry.npmjs.org/cookie/-/cookie-0.4.2.tgz"
+  "version" "0.4.2"
 
 "core-js@^3.20.3":
   "integrity" "sha512-vVl8j8ph6tRS3B8qir40H7yw7voy17xL0piAjlbBUsH7WIfzoedL/ZOr1OV9FyZQLWXsayOJyV4tnRyXR85/ag=="
@@ -2542,6 +2542,11 @@
   "version" "6.0.0"
   dependencies:
     "yallist" "^4.0.0"
+
+"markd@^1.0.0":
+  "integrity" "sha1-zYk4rKxqlgsynrRniT+WEczhz1k="
+  "resolved" "https://registry.npmjs.org/markd/-/markd-1.0.0.tgz"
+  "version" "1.0.0"
 
 "marked@^4.0.12":
   "integrity" "sha512-hgibXWrEDNBWgGiK18j/4lkS6ihTe9sxtV4Q1OQppb/0zzyPSzoFANBa5MfsG/zgsWklmNnhm0XACZOH/0HBiQ=="

@@ -497,6 +497,7 @@ Engine.batchStartWorkflow = async (cron) => {
     null, //kvarString
     false
   ); //
+  console.log("Batch Start Workflow for ", doers.length, " Doers");
   let emails = doers.map((x) => x.uid);
   for (let i = 0; i < emails.length; i++) {
     let processTitle = (await Cache.getUserName(cron.tenant, emails[i])) + ": " + cron.tplid;
@@ -1284,7 +1285,6 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
   let emails = [todo.wfstarter];
   let people = [Tools.getEmailPrefix(todo.wfstarter)];
   let doerCN = await Cache.getUserName(tenant, doer);
-  debugger;
   [people, emails] = await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
   let frontendUrl = Tools.getFrontEndUrl();
   let msg = {
@@ -2277,12 +2277,6 @@ Client.yarkNode = async function (obj) {
   } else if (tpNode.hasClass("SCRIPT")) {
     let code = tpNode.find("code").first().text().trim();
     let parsed_code = Parser.base64ToCode(code);
-    console.log(`[Workflow SCPT] code:`);
-    console.log("===CODE====");
-    console.log(code);
-    console.log("===PARSED==");
-    console.log(parsed_code);
-    console.log("===========");
     //取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
     let kvarsForScript = await Parser.userGetVars(
       obj.tenant,
@@ -2351,10 +2345,9 @@ Client.yarkNode = async function (obj) {
         parsed_code,
         callbackId
       );
-      console.log("[Workflow SCPT] return: ", codeRetString);
     } catch (e) {
-      codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
       console.error(e);
+      codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
     }
     try {
       //先尝试解析JSON
@@ -3739,13 +3732,13 @@ Client.cloneTodo = function (from_todo, newValues) {
   return new Todo(clone_obj);
 };
 
-Engine.log = function (tenant, wfid, txt, json) {
-  console.log(txt);
+Engine.log = function (tenant, wfid, txt, json, withConsole = false) {
+  if (withConsole) console.log(txt);
   let isoNow = Tools.toISOString(new Date());
   let logfilename = Engine.getWfLogFilename(tenant, wfid);
   fs.writeFileSync(logfilename, `${isoNow}\t${txt}\n`, { flag: "a+" });
   if (json) {
-    console.log(JSON.stringify(json, null, 2));
+    if (withConsole) console.log(JSON.stringify(json, null, 2));
     fs.writeFileSync(logfilename, `${JSON.stringify(json, null, 2)}\n`, { flag: "a+" });
   }
 };
@@ -3787,19 +3780,7 @@ Engine.runCode = async function (
   let emp_node_modules = process.env.EMP_NODE_MODULES;
   let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
   let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
-  console.log(pdsResolved_json);
 
-  Engine.log(tenant, wfid, "[Script]");
-
-  /* for (const [key, valueDef] of Object.entries(kvars_json)) {
-    if (key.startsWith("tbl_")) {
-      try {
-        kvars_json[key]["value"] = JSON.parse(Parser.base64ToCode(kvars_json[key]["value"]));
-      } catch (e) {
-        console.warn(e);
-      }
-    }
-  } */
   let all_code = `
 module.paths.push('${emp_node_modules}');
 module.paths.push('${emp_tenant_folder}/emplib');
@@ -3912,9 +3893,12 @@ async function runcode() {
 }
 runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.stringify(x)); else console.log(x);
 });`;
-  let scriptFilename = `${emp_tenant_folder}/${wfid}/${lodash.uniqueId("mtc_")}.js`;
+  let wfidfolder = `${emp_tenant_folder}/${wfid}`;
+  if (!fs.existsSync(wfidfolder)) fs.mkdirSync(wfidfolder, { mode: 0o700, recursive: true });
+  let scriptFilename = `${wfidfolder}/${lodash.uniqueId("mtc_")}.js`;
   fs.writeFileSync(scriptFilename, all_code);
   let cmdName = "node " + scriptFilename;
+  console.log("Run ", cmdName);
 
   let ret = JSON.stringify({ RET: "DEFAULT" });
   let stdOutRet = "";
@@ -3926,7 +3910,11 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     let returnedLines = stdout.trim();
     //////////////////////////////////////////////////
     // Write logs
+    Engine.log(tenant, wfid, "Script============");
+    Engine.log(tenant, wfid, code);
+    Engine.log(tenant, wfid, "============Script");
     Engine.log(tenant, wfid, returnedLines);
+    Engine.log(tenant, wfid, "==================");
 
     // write returnedLines to a file associated with wfid
     //////////////////////////////////////////////////
@@ -4016,6 +4004,31 @@ Engine.startWorkflow = async function (
   runmode = "standalone",
   uploadedFiles
 ) {
+  if (parent_vars === null || parent_vars === undefined) {
+    parent_vars = {};
+  }
+  parent_vars["starter"] = {
+    label: "Starter",
+    value: starter,
+    type: "plaintext",
+    name: "starter",
+  };
+  parent_vars["starterCN"] = {
+    value: await Cache.getUserName(tenant, starter),
+    label: "StarterCN",
+    type: "plaintext",
+    name: "starterCN",
+  };
+  let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
+  if (starterStaff) {
+    parent_vars["ou_SOU"] = {
+      label: "StarterOU",
+      value: starterStaff.ou,
+      type: "plaintext",
+      name: "ou_SOU",
+    };
+  }
+
   let filter = { tenant: tenant, tplid: tplid };
   let tpl = await Template.findOne(filter);
   let isoNow = Tools.toISOString(new Date());
@@ -4217,61 +4230,70 @@ Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
   if (myGroup === "ADMIN" || (wf.starter === myEmail && (wf.rehearsal || wf.pnodeid === "start"))) {
     console.log("Destroy workflow:", wfid);
     try {
-      console.log("\tDestroy Todo");
+      process.stdout.write("\tDestroy Todo\r");
       await Todo.deleteMany({ tenant: tenant, wfid: wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy Todo: ", err.message);
     }
     try {
-      console.log("\tDestroy DelayTimer");
+      process.stdout.write("\tDestroy DelayTimer\r");
       await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy DelayTimer: ", err.message);
     }
     try {
-      console.log("\tDestroy CbPoint");
+      process.stdout.write("\tDestroy CbPoint\r");
       await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy CbPoint: ", err.message);
     }
     try {
-      console.log("\tDestroy KVar");
+      process.stdout.write("\tDestroy KVar\r");
       await KVar.deleteMany({ tenant: tenant, wfid: wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy KVar: ", err.message);
     }
     try {
-      console.log("\tDestroy Work");
+      process.stdout.write("\tDestroy Work\r");
       await Work.deleteMany({ tenant: tenant, wfid: wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy Work: ", err.message);
     }
     try {
-      console.log("\tDestroy Route");
+      process.stdout.write("\tDestroy Route\r");
       await Route.deleteMany({ tenant: tenant, wfid: wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy Route: ", err.message);
     }
     try {
-      console.log("\tDestroy Comment");
+      process.stdout.write("\tDestroy Comment\r");
       await Comment.deleteMany({ tenant: tenant, "context.wfid": wfid });
     } catch (err) {
-      console.log(err);
+      console.log("\tDestroy Comment: ", err.message);
+    }
+    try {
+      process.stdout.write("\tDestroy code folder\r");
+      let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
+      let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+      let wfidfolder = `${emp_tenant_folder}/${wfid}`;
+      fs.unlinkSync(wfidfolder);
+    } catch (err) {
+      console.log("\tDestroy code: ", err.message);
     }
     let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { attachments: 1 });
     if (wf) {
-      console.log("\tDestroy attached files");
+      process.stdout.write("\tDestroy attached files\r");
       for (let i = 0; i < wf.attachments.length; i++) {
         let serverId = wf.attachments[i].serverId;
         let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
         try {
           fs.unlinkSync(pondServerFile.fullPath);
         } catch (err) {
-          console.error(err);
+          console.log("\tDestroy attached: ", err.message);
         }
       }
       let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
-      console.log("Destroy Workflow Done");
+      console.log("Destroy workflow:", wfid, ", Done");
       return ret;
     } else {
       return null;
@@ -5313,9 +5335,9 @@ Common.getDoer = async function (
   kvarString,
   insertDefaultStarter
 ) {
-  let ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+  let ret = [];
   if (pds === "DEFAULT") {
-    return ret;
+    return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
   }
   //先吧kvarString变为kvar对象
   let kvars = {};
@@ -5344,7 +5366,16 @@ Common.getDoer = async function (
       return kv[0];
     });
   }
-  ret = await Parser.getDoer(tenant, teamid, pds, starter, wfid, wfRoot, kvars);
+  ret = await Parser.getDoer(
+    tenant,
+    teamid,
+    pds,
+    starter,
+    wfid,
+    wfRoot,
+    kvars,
+    insertDefaultStarter
+  );
   //如果返回为空，并且需要插入缺省starter，则返回缺省starter
   if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
     ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];

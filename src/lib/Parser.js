@@ -409,6 +409,9 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   let ret = [];
   aRole = aRole.trim();
   let doer = starter;
+  if(aRole === 'STARTER')
+      return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+
   //没有设Team或者没有设Role，就用starter
   //因为这是从Team中取数据，所以，当Teamid等于NOTSET或者DEFAULT的时候，直接返回stater是合理的
   if (Tools.isEmpty(aRole) || aRole === "DEFAULT") {
@@ -618,11 +621,24 @@ Parser.injectCells = async (tenant, kvars) => {
  *
  * @return {...}
  */
-Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kvars) {
+Parser.getDoer = async function (
+  tenant,
+  teamid,
+  pds,
+  starter,
+  wfid,
+  wfRoot,
+  kvars,
+  insertDefaultStarter = true
+) {
   //If there is team definition in PDS, use it.
   //if PDS is empty, always use starter
 
-  if (Tools.isEmpty(pds)) return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+  if (Tools.isEmpty(pds)) {
+    if (insertDefaultStarter)
+      return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+    else return [];
+  }
   if (pds.match(/\[(.+)\]/)) {
     if (kvars) {
       pds = await Parser.replaceStringWithKVar(tenant, pds, kvars, false);
@@ -630,7 +646,6 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
       throw new EmpError("GET_DOER_NO_KVARS", "pds replacement but there is no  kvars");
     }
   }
-  if (!starter) debugger;
 
   //PDS-level team is defined as "T:team_name"
   let teamInPDS = Parser.getTeamInPDS(pds);
@@ -638,9 +653,9 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
   teamid = teamInPDS ? teamInPDS : teamid;
 
   let ret = [];
-  let starterEmailSuffix = starter.substring(starter.indexOf("@"));
+  let starterEmailDomain = starter.substring(starter.indexOf("@"));
   //与Starter的邮箱域名同样的，是TenantAccount
-  let tenantAccountPattern = new RegExp("^(.+)" + starterEmailSuffix);
+  let tenantAccountPattern = new RegExp("^(.+)" + starterEmailDomain);
   let arr = Parser.splitStringToArray(pds);
   let tmp = [];
 
@@ -660,7 +675,9 @@ Parser.getDoer = async function (tenant, teamid, pds, starter, wfid, wfRoot, kva
       let email = rdsPart;
       if (email[0] === "@") email = email.substring(1).trim().toLowerCase();
       email = Tools.makeEmailSameDomain(email, starter);
-      tmp = [{ uid: email, cn: await Cache.getUserName(tenant, email) }];
+      let cn = await Cache.getUserName(tenant, email);
+      if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
+      else tmp = [{ uid: `${email}`, cn: cn }];
     } else if (rdsPart.startsWith("L:")) {
       tmp = await Parser.getLeaderByPosition(tenant, starter, rdsPart);
     } else if (rdsPart.startsWith("P:")) {

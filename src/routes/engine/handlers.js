@@ -722,28 +722,6 @@ const WorkflowStart = async function (req, h) {
     let kvars = req.payload.kvars;
     let uploadedFiles = req.payload.uploadedFiles;
 
-    kvars["starter"] = {
-      label: "Starter",
-      value: starter,
-      type: "plaintext",
-      name: "starter",
-    };
-    kvars["starterCN"] = {
-      value: await Cache.getUserName(tenant, starter),
-      label: "StarterCN",
-      type: "plaintext",
-      name: "starterCN",
-    };
-    let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
-    if (starterStaff) {
-      kvars["ou_SOU"] = {
-        label: "StarterOU",
-        value: starterStaff.ou,
-        type: "plaintext",
-        name: "ou_SOU",
-      };
-    }
-
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
 
