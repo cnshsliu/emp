@@ -1348,7 +1348,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
     doerCN: doerCN,
     subject: (cmt.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
     mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> 
-        On task: <a href="${frontendUrl}/work/@${cmt.context.todoid}">${
+        On task: <a href="${frontendUrl}/work/@${cmt.context.todoid}#ANCHOR">${
       theTodo ? theTodo.title : "The Task"
     } </a> <br/>
         Process: <a href="${frontendUrl}/workflow/@${cmt.context.wfid}">${
@@ -1403,6 +1403,7 @@ Engine.__postComment = async function (
         if (receiverCN === "USER_NOT_FOUND") continue;
         let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
         let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
+        body = emailMsg.mail_body.replace("ANCHOR", "tcmt_" + comment._id.toString());
 
         Engine.sendTenantMail(
           tenant, //not rehearsal
