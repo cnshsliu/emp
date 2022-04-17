@@ -1398,6 +1398,7 @@ Engine.__postComment = async function (
     if (emailMsg) {
       for (let i = 0; i < emails.length; i++) {
         if (emails[i] === doer) {
+          console.log("Bypass: comment's author email to him/herself");
           continue;
         }
         let receiverCN = await Cache.getUserName(tenant, emails[i]);
@@ -4449,6 +4450,8 @@ Engine.getWfHistory = async function (email, tenant, wfid, wf) {
 const splitComment = function (str) {
   //确保@之前有空格
   str = str.replace(/([\S])@/g, "$1 @");
+  //确保@ID之后有空格
+  str = str.replace(/@(\w+)/g, "@$1 ");
   //按空字符分割
   let tmp = str.split(/\s/);
   if (Array.isArray(tmp)) return tmp;

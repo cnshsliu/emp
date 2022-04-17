@@ -327,7 +327,7 @@ const Tools = {
   },
   getUidsFromText: function (content) {
     let people = [];
-    let m = content.match(/@([\S]+)/g);
+    let m = content.match(/@([\w]+)/g);
     if (m) {
       for (let i = 0; i < m.length; i++) {
         let anUid = m[i].substring(1);
