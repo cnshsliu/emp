@@ -4739,8 +4739,8 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     todoEntry.doer = todos[i].doer;
     todoEntry.doneby = todos[i].doneby;
     todoEntry.doneat = todos[i].doneat;
-    /*
     todoEntry.comments = await Engine.getComments(tenant, "TODO", todos[i].todoid, 3);
+    /*
     todoEntry.comment =
       Tools.isEmpty(todos[i].comment) || Tools.isEmpty(todos[i].comment.trim())
         ? []
@@ -4792,10 +4792,10 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       /*
       if (tmpRet[i].comment.length > 0)
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
+      */
       if (tmpRet[i].comments.length > 0) {
         ret[existing_index].comments = [...ret[existing_index].comments, ...tmpRet[i].comments];
       }
-      */
       ret[existing_index].doers.push({
         uid: tmpRet[i].doer,
         cn: await Cache.getUserName(tenant, tmpRet[i].doer),
