@@ -1529,6 +1529,29 @@ const CheckCoworker = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+const CheckCoworkers = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let uids = req.payload.uids;
+    uids = [...new Set(uids)];
+
+    let ret = "";
+    for (let i = 0; i < uids.length; i++) {
+      let uid = uids[i][0] === "@" ? uids[i].substring(1) : uids[i];
+      let cn = await Cache.getUserName(tenant, Tools.makeEmailSameDomain(uid, myEmail));
+      if (cn === "USER_NOT_FOUND") {
+        ret += "<span class='text-danger'>" + uids[i] + "</span> ";
+      } else {
+        ret += uids[i] + "(" + cn + ") ";
+      }
+    }
+
+    return h.response(ret);
+  } catch (err) {
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
 
 const TransferWork = async function (req, h) {
   try {
@@ -4175,6 +4198,7 @@ module.exports = {
   TeamCopyto,
   TeamSearch,
   CheckCoworker,
+  CheckCoworkers,
   TransferWork,
   OrgChartImport,
   OrgChartAddOrDeleteEntry,

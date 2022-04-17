@@ -2333,6 +2333,25 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/check/coworkers",
+    handler: Handlers.CheckCoworkers,
+    config: {
+      description: "Append user name if found",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          uids: Joi.array().items(Joi.string()).required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/transfer/work",
     handler: Handlers.TransferWork,
     config: {
