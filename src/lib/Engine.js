@@ -516,7 +516,7 @@ Engine.startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
   let directorCN = await Cache.getUserName(tenant, directorEmail);
   console.log(directorCN, " start Workflow for ", doers.length, " people");
   let emails = doers.map((x) => x.uid);
-  //await Engine.__batchStartWorkflow(tenant, tplid, emails, directorCN);
+  await Engine.__batchStartWorkflow(tenant, tplid, emails, directorCN);
 };
 Engine.__batchStartWorkflow = async (tenant, tplid, emails, sender) => {
   for (let i = 0; i < emails.length; i++) {
