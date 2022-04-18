@@ -503,9 +503,14 @@ const TemplateRename = async function (req, h) {
     if (Tools.isEmpty(tpl.authorName)) {
       tpl.authorName = await Cache.getUserName(tenant, tpl.author);
     }
-    tpl = await tpl.save();
-
-    return h.response(tpl);
+    try {
+      tpl = await tpl.save();
+      return h.response(tpl.tplid);
+    } catch (err) {
+      if (err.message.indexOf("duplicate key"))
+        throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
+      else throw new EmpError("DB_ERROR", err.message);
+    }
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);

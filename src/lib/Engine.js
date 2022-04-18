@@ -4056,9 +4056,10 @@ Engine.startWorkflow = async function (
   let tpl = await Template.findOne(filter);
   let isoNow = Tools.toISOString(new Date());
   wfid = Tools.isEmpty(wfid) ? uuidv4() : wfid;
-  wftitle = Tools.isEmpty(wftitle)
-    ? (await Cache.getUserName(tenant, starter)) + "/" + tplid
-    : wftitle;
+
+  let varedTplid = tplid;
+  varedTplid = await Parser.replaceStringWithKVar(tenant, tplid, parent_vars, INJECT_INTERNAL_VARS);
+  wftitle = Tools.isEmpty(wftitle) ? varedTplid : wftitle;
   teamid = Tools.isEmpty(teamid) ? "" : teamid;
   let startDoc =
     `<div class="process">` +
