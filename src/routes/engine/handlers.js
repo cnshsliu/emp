@@ -1373,20 +1373,21 @@ const WorkList = async function (req, h) {
   let tenant = req.auth.credentials.tenant._id;
   //如果有wfid，则找只属于这个wfid工作流的workitems
   let myEmail = req.auth.credentials.email;
+  let doer = req.payload.doer ? req.payload.doer : myEmail;
   try {
     let myGroup = await Cache.getMyGroup(myEmail);
     let filter = {
       tenant: req.auth.credentials.tenant._id,
     };
     filter["$or"] = [
-      { rehearsal: false, doer: req.payload.doer },
+      { rehearsal: false, doer: doer },
       { rehearsal: true, wfstarter: myEmail },
     ];
 
     let hasPermForWork = await Engine.__hasPermForWork(
       req.auth.credentials.tenant._id,
       req.auth.credentials.email,
-      req.payload.doer
+      doer
     );
     if (hasPermForWork === false) {
       return { total: 0, objs: [] };

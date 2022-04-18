@@ -1291,7 +1291,7 @@ internals.endpoints = [
           Authorization: Joi.string(),
         }).unknown(),
         payload: {
-          doer: Joi.string().required(),
+          doer: Joi.string().optional().allow(""),
           pattern: Joi.string().empty("").optional(),
           tplid: Joi.string().optional().allow(""),
           tagsForFilter: Joi.array().items(Joi.string().allow("")).optional(),
