@@ -409,8 +409,7 @@ Parser.getSingleRoleDoerByTeam = async function (tenant, teamid, aRole, starter,
   let ret = [];
   aRole = aRole.trim();
   let doer = starter;
-  if(aRole === 'STARTER')
-      return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+  if (aRole === "STARTER") return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
 
   //没有设Team或者没有设Role，就用starter
   //因为这是从Team中取数据，所以，当Teamid等于NOTSET或者DEFAULT的时候，直接返回stater是合理的
@@ -578,6 +577,9 @@ Parser.replaceStringWithKVar = async function (tenant, theString, kvars, withInt
 Parser.injectInternalVars = (kvars) => {
   let internalVars = {};
   let now = Moment(new Date());
+  internalVars["$$date"] = { label: "Date", value: now.format("YYYY-MM-DD") };
+  internalVars["$$time"] = { label: "Time", value: now.format("HH-mm-ss") };
+  internalVars["$$datetime"] = { label: "DateTime", value: now.format("YYYY-MM-DDTHH-mm-ss") };
   internalVars["$$isoWeek"] = { label: "ISOWeek", value: now.isoWeek() };
   internalVars["$$isoWeeksInISOWeekYear"] = {
     label: "ISOWeeksInSIOWeekYear",
