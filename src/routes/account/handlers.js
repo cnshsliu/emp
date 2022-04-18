@@ -1170,6 +1170,10 @@ internals.Avatar = async function (req, h) {
         return h
           .response(fs.createReadStream(tmp.avatarinfo.path))
           .header("Content-Type", tmp.avatarinfo.media);
+      } else {
+        return h
+          .response(fs.createReadStream(EmpConfig.avatar.folder + "/default.png"))
+          .header("Content-Type", "image/png");
       }
     }
   }
