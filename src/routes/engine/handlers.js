@@ -35,6 +35,7 @@ const EmpConfig = require("../../config/emp");
 const lodash = require("lodash");
 const Fs = require("fs");
 const Cache = require("../../lib/Cache");
+const Const = require("../../lib/Const");
 
 const EmailSchema = Joi.string().email();
 const asyncFilter = async (arr, predicate) => {
@@ -3371,12 +3372,37 @@ const CommentList = async function (req, h) {
 };
 const CommentDelete = async function (req, h) {
   try {
+    let deleteFollowing = async (tenant, objid) => {
+      let filter = { tenant: tenant, objid: objid };
+      let cmts = await Comment.find(filter, { _id: 1 });
+      for (let i = 0; i < cmts.length; i++) {
+        await deleteFollowing(tenant, cmts[i]._id);
+      }
+      await Comment.deleteOne(filter);
+    };
     let tenant = req.auth.credentials.tenant._id;
     let commentid = req.payload.commentid;
     let filter = { tenant: tenant, _id: commentid };
+    //Find the comment to be deleted.
+    let cmt = await Comment.findOne(filter);
+    //Find the objtype and objid of it's parent
+    let objtype = cmt.objtype;
+    let objid = cmt.objid;
+
+    //Delete childrens recursively.
+    await deleteFollowing(tenant, cmt._id);
+    //Delete this one
     await Comment.deleteOne(filter);
 
-    return h.response("Done");
+    //Revisit parents
+    let parent_comments = await Engine.getComments(
+      tenant,
+      objtype,
+      objid,
+      Const.COMMENT_LOAD_NUMBER
+    );
+
+    return h.response({ comments: parent_comments, thisComment: cmt });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3402,19 +3428,41 @@ const CommentDeleteBeforeDays = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
-const CommentAdd = async function (req, h) {
+const CommentAddForComment = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    await Engine.postCommentForComment(tenant, myEmail, req.payload.cmtid, req.payload.content);
-    let comments = await Engine.getComments(tenant, "COMMENT", req.payload.cmtid, 3);
+    let thisComment = await Engine.postCommentForComment(
+      tenant,
+      myEmail,
+      req.payload.cmtid,
+      req.payload.content
+    );
+    let comments = await Engine.getComments(
+      tenant,
+      "COMMENT",
+      req.payload.cmtid,
+      Const.COMMENT_LOAD_NUMBER
+    );
 
-    return h.response(comments);
+    return h.response({ comments, thisComment });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+
+const CommentDelNewTimeout = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    return h.response({ timeout: Const.DEL_NEW_COMMENT_TIMEOUT });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const CommentAddForBiz = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -3422,9 +3470,19 @@ const CommentAddForBiz = async function (req, h) {
     if (req.payload.objtype === "TODO") {
       let todo = await Todo.findOne({ tenant: tenant, todoid: req.payload.objid });
       if (todo) {
-        await Engine.postCommentForTodo(tenant, myEmail, todo, req.payload.content);
-        let comments = await Engine.getComments(tenant, "TODO", req.payload.objid, 3);
-        return h.response(comments);
+        let thisComment = await Engine.postCommentForTodo(
+          tenant,
+          myEmail,
+          todo,
+          req.payload.content
+        );
+        let comments = await Engine.getComments(
+          tenant,
+          "TODO",
+          req.payload.objid,
+          Const.COMMENT_LOAD_NUMBER
+        );
+        return h.response({ comments, thisComment });
       }
     }
 
@@ -3434,6 +3492,7 @@ const CommentAddForBiz = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+
 //
 //Comment缺省加载3个，前端请求加载更多，
 const CommentLoadMorePeers = async function (req, h) {
@@ -3450,7 +3509,7 @@ const CommentLoadMorePeers = async function (req, h) {
         thisCmt.objtype,
         thisCmt.objid,
         //如果小于0，则不限制加载个数，否则，多加载三个即可
-        currentlength < 0 ? -1 : 3,
+        currentlength < 0 ? -1 : Const.COMMENT_LOAD_NUMBER,
         currentlength < 0 ? -1 : currentlength
       );
 
@@ -4220,8 +4279,9 @@ module.exports = {
   CommentList,
   CommentDelete,
   CommentDeleteBeforeDays,
-  CommentAdd,
+  CommentAddForComment,
   CommentAddForBiz,
+  CommentDelNewTimeout,
   CommentLoadMorePeers,
   TagAdd,
   TagDel,

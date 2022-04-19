@@ -39,12 +39,11 @@ const zmq = require("zeromq");
 const { EmpError } = require("./EmpError");
 const { isEmpty } = require("../tools/tools.js");
 const EmpConfig = require("../config/emp");
+const Const = require("./Const");
 
 const Engine = {};
 const Client = {};
 const Common = {};
-const INJECT_INTERNAL_VARS = true;
-const NO_INTERNAL_VARS = false;
 
 const supportedClasses = [
   "ACTION",
@@ -1036,7 +1035,7 @@ Engine.__doneTodo = async function (
         tenant,
         comment,
         ALL_VISIED_KVARS,
-        INJECT_INTERNAL_VARS
+        Const.INJECT_INTERNAL_VARS
       );
     }
   }
@@ -1320,7 +1319,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
   };
   let context = { wfid: todo.wfid, workid: todo.workid, todoid: todo.todoid };
-  await Engine.__postComment(
+  return await Engine.__postComment(
     tenant,
     doer,
     "TODO",
@@ -1357,7 +1356,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
     }</a><br/>
     <br/><br/> Metatocome`,
   };
-  await Engine.__postComment(
+  return await Engine.__postComment(
     tenant,
     doer,
     "COMMENT",
@@ -1395,33 +1394,43 @@ Engine.__postComment = async function (
       context: context,
     });
     comment = await comment.save();
+    //TODO: send TIMEOUT seconds later, then check if still exists, if not, don't send email
     if (emailMsg) {
-      for (let i = 0; i < emails.length; i++) {
-        if (emails[i] === doer) {
-          console.log("Bypass: comment's author email to him/herself");
-          continue;
-        }
-        let receiverCN = await Cache.getUserName(tenant, emails[i]);
-        if (receiverCN === "USER_NOT_FOUND") continue;
-        let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
-        let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
-        body = emailMsg.mail_body.replace("ANCHOR", "tcmt_" + comment._id.toString());
+      setTimeout(async () => {
+        let theComment = await Comment.findOne({ tenant: tenant, _id: comment._id });
+        if (theComment) {
+          for (let i = 0; i < emails.length; i++) {
+            if (emails[i] === doer) {
+              console.log("Bypass: comment's author email to him/herself");
+              continue;
+            }
+            let receiverCN = await Cache.getUserName(tenant, emails[i]);
+            if (receiverCN === "USER_NOT_FOUND") continue;
+            let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
+            let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
+            //ANCHOR, use to scroll to attached comment by comment id.
+            body = emailMsg.mail_body.replace("ANCHOR", "tcmt_" + comment._id.toString());
 
-        Engine.sendTenantMail(
-          tenant, //not rehearsal
-          rehearsal ? doer : emails[i],
-          subject,
-          body
-        ).then((res) => {
-          console.log(
-            "Mailer send email to ",
-            rehearsal ? doer + "(" + emails[i] + ")" : emails[i],
-            "subject:",
-            subject
-          );
-        });
-      }
+            Engine.sendTenantMail(
+              tenant, //not rehearsal
+              rehearsal ? doer : emails[i],
+              subject,
+              body
+            ).then((res) => {
+              console.log(
+                "Mailer send email to ",
+                rehearsal ? doer + "(" + emails[i] + ")" : emails[i],
+                "subject:",
+                subject
+              );
+            });
+          }
+        } else {
+          console.log("Don't send comment email, since HAS been deleted");
+        }
+      }, (Const.DEL_NEW_COMMENT_TIMEOUT + 5) * 1000);
     }
+    return comment;
   } catch (err) {
     console.warn(err);
   }
@@ -1556,7 +1565,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
         tenant,
         comment,
         ALL_VISIED_KVARS,
-        INJECT_INTERNAL_VARS
+        Const.INJECT_INTERNAL_VARS
       );
     }
   }
@@ -1878,7 +1887,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
         tenant,
         comment,
         ALL_VISIED_KVARS,
-        INJECT_INTERNAL_VARS
+        Const.INJECT_INTERNAL_VARS
       );
     }
     todo = await Todo.findOneAndUpdate(
@@ -2184,14 +2193,14 @@ Client.yarkNode = async function (obj) {
                 wfRoot,
                 KVARS_WITHOUT_VISIBILITY,
                 tmp_subject,
-                INJECT_INTERNAL_VARS
+                Const.INJECT_INTERNAL_VARS
               );
               mail_body = await Client.parseContent(
                 tenant,
                 wfRoot,
                 KVARS_WITHOUT_VISIBILITY,
                 tmp_body,
-                INJECT_INTERNAL_VARS
+                Const.INJECT_INTERNAL_VARS
               );
               let tblHtml = `<table style="font-family: Arial, Helvetica, sans-serif; border-collapse: collapse; width: 100%;">`;
               tblHtml += `<thead><tr>`;
@@ -2243,14 +2252,14 @@ Client.yarkNode = async function (obj) {
               wfRoot,
               KVARS_WITHOUT_VISIBILITY,
               tmp_subject,
-              INJECT_INTERNAL_VARS
+              Const.INJECT_INTERNAL_VARS
             );
             mail_body = await Client.parseContent(
               tenant,
               wfRoot,
               KVARS_WITHOUT_VISIBILITY,
               tmp_body,
-              INJECT_INTERNAL_VARS
+              Const.INJECT_INTERNAL_VARS
             );
           } catch (error) {
             console.warn(error.message);
@@ -2844,7 +2853,7 @@ Client.yarkNode = async function (obj) {
         tenant,
         tpNodeTitle,
         KVARS_WITHOUT_VISIBILITY,
-        INJECT_INTERNAL_VARS
+        Const.INJECT_INTERNAL_VARS
       );
     }
     //
@@ -4058,7 +4067,12 @@ Engine.startWorkflow = async function (
   wfid = Tools.isEmpty(wfid) ? uuidv4() : wfid;
 
   let varedTplid = tplid;
-  varedTplid = await Parser.replaceStringWithKVar(tenant, tplid, parent_vars, INJECT_INTERNAL_VARS);
+  varedTplid = await Parser.replaceStringWithKVar(
+    tenant,
+    tplid,
+    parent_vars,
+    Const.INJECT_INTERNAL_VARS
+  );
   wftitle = Tools.isEmpty(wftitle) ? varedTplid : wftitle;
   teamid = Tools.isEmpty(teamid) ? "" : teamid;
   let startDoc =
@@ -4583,7 +4597,7 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
       tenant,
       ret.title,
       ALL_VISIED_KVARS,
-      INJECT_INTERNAL_VARS
+      Const.INJECT_INTERNAL_VARS
     );
   }
   ret.status = todo.status;
@@ -4605,7 +4619,7 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
   ret.role = workNode.attr("role");
   ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
   ret.doer_string = workNode.attr("doer");
-  ret.comments = await Engine.getComments(tenant, "TODO", todo.todoid, 3);
+  ret.comments = await Engine.getComments(tenant, "TODO", todo.todoid, Const.COMMENT_LOAD_NUMBER);
   ret.comment =
     Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
       ? []
@@ -4637,7 +4651,7 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
       tenant,
       tmpInstruction,
       ALL_VISIED_KVARS,
-      INJECT_INTERNAL_VARS
+      Const.INJECT_INTERNAL_VARS
     );
   }
   ret.instruct = Parser.codeToBase64(tmpInstruction);

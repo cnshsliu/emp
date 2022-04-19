@@ -2175,9 +2175,9 @@ internals.endpoints = [
   {
     method: "POST",
     path: "/comment/add",
-    handler: Handlers.CommentAdd,
+    handler: Handlers.CommentAddForComment,
     config: {
-      description: "Add Comment",
+      description: "Add Comment for comment",
       tags: ["api"],
       auth: "token",
       validate: {
@@ -2197,7 +2197,7 @@ internals.endpoints = [
     path: "/comment/addforbiz",
     handler: Handlers.CommentAddForBiz,
     config: {
-      description: "Add Comment",
+      description: "Add Comment for biz object (such as TODO)",
       tags: ["api"],
       auth: "token",
       validate: {
@@ -2229,6 +2229,23 @@ internals.endpoints = [
           cmtid: Joi.string().required(),
           currentlength: Joi.number().required(),
         },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/comment/delnewtimeout",
+    handler: Handlers.CommentDelNewTimeout,
+    config: {
+      description: "Timeout value of delete newly created comment",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {},
         validator: Joi,
       },
     },
