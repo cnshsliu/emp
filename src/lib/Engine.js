@@ -3939,7 +3939,11 @@ const MtcSendCBPid = MtcSendCallbackPointId;
 const MtcSendContext=function(url){
   let wfInfo = {tplid: tplid, wfid:wfid};
 
-  MtcAPIAgent.post(url, {context:{...wfInfo, ...kvars}});
+  try{
+    MtcAPIAgent.post(url, {context:{...wfInfo, ...kvars}});
+  }catch(error){
+    console.error(error.message);
+  }
 };
 async function runcode() {
   try{
