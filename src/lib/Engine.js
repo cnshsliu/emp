@@ -4033,8 +4033,14 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
       //如果在运行模式下,遇到Exception,则再控制台输出错误,并返回预设值
       console.error(e);
 
+      let msgs = e.message.split("\n");
+      msgs.splice(0, 2);
+      msgs = msgs.filter((x) => {
+        return x.trim() !== "";
+      });
+      msgs.splice(3);
       ret = JSON.stringify({
-        ERR: e.message,
+        ERR: msgs.join("\n"),
         RET: "DEFAULT",
       });
     }
