@@ -1855,6 +1855,26 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/workflow/node/rerun",
+    handler: Handlers.NodeRerun,
+    config: {
+      description: "Rerun a node",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          nodeid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/my/sysperm",
     handler: Handlers.MySystemPerm,
     config: {

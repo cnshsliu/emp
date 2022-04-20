@@ -2955,6 +2955,37 @@ Client.yarkNode = async function (obj) {
   }
 };
 
+Engine.rerunNode = async function (tenant, wfid, nodeid) {
+  let wf_filter = { tenant: tenant, wfid: wfid };
+  let wf = await Workflow.findOne(wf_filter);
+  let wfIO = await Parser.parse(wf.doc);
+  let tpRoot = wfIO(".template");
+  let wfRoot = wfIO(".workflow");
+  let tpNode = tpRoot.find("#" + nodeid);
+  debugger;
+  let workNode = wfRoot.find(`.work.SCRIPT[nodeid="${nodeid}"]`).last();
+  if (!workNode) {
+    console.log("Rerun SCRIPT node failed, workNode not found");
+  }
+  //TODO : delete old SCRIPT with ST_DONE status
+  let an = {
+    CMD: "yarkNode",
+    tenant: tenant,
+    teamid: wf.teamid,
+    from_nodeid: workNode.attr("from_nodeid"),
+    from_workid: workNode.attr("from_workid"),
+    tplid: wf.tplid,
+    wfid: wfid,
+    rehearsal: wf.rehearsal,
+    byroute: workNode.attr("byroute"),
+    selector: "#" + nodeid,
+    starter: wf.starter,
+    round: workNode.attr("round"),
+  };
+  console.log(an);
+  await Engine.sendNext(an);
+};
+
 //TODO:
 Engine.getPdsOfAllNodesForScript = async function (data) {
   let ret = {};
