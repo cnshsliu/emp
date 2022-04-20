@@ -2141,8 +2141,10 @@ Client.yarkNode = async function (obj) {
       );
       if (Array.isArray(doers) === false) {
         console.error("C.GetDoer should return array", 5);
-      } else {
-        doers = [doers];
+        if (doers.uid) doers = [doers];
+        else {
+          doers = [];
+        }
       }
       let mail_subject = "Message from Metatocome";
       let mail_body = "Message from Metatocome";
@@ -2238,48 +2240,52 @@ Client.yarkNode = async function (obj) {
         }
       } else {
         //根据doer取用户
-        for (let i = 0; i < doers.length; i++) {
-          let recipient = doers[i].uid;
-          let doerCN = await Cache.getUserName(tenant, recipient);
-          try {
-            let tmp_subject = tpNode.find("subject").first().text();
-            let tmp_body = tpNode.find("content").first().text();
-            //因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
-            //userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
-            KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
-            mail_subject = await Client.parseContent(
-              tenant,
-              wfRoot,
-              KVARS_WITHOUT_VISIBILITY,
-              tmp_subject,
-              Const.INJECT_INTERNAL_VARS
-            );
-            mail_body = await Client.parseContent(
-              tenant,
-              wfRoot,
-              KVARS_WITHOUT_VISIBILITY,
-              tmp_body,
-              Const.INJECT_INTERNAL_VARS
-            );
-          } catch (error) {
-            console.warn(error.message);
-          }
-          try {
-            let factRecipients = recipient;
-            if (wf.rehearsal) {
-              mail_subject = "Rehearsal: " + mail_subject;
-              recipient = wf.starter;
+        try {
+          for (let i = 0; i < doers.length; i++) {
+            let recipient = doers[i].uid;
+            let doerCN = await Cache.getUserName(tenant, recipient);
+            try {
+              let tmp_subject = tpNode.find("subject").first().text();
+              let tmp_body = tpNode.find("content").first().text();
+              //因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
+              //userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
+              KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
+              mail_subject = await Client.parseContent(
+                tenant,
+                wfRoot,
+                KVARS_WITHOUT_VISIBILITY,
+                tmp_subject,
+                Const.INJECT_INTERNAL_VARS
+              );
+              mail_body = await Client.parseContent(
+                tenant,
+                wfRoot,
+                KVARS_WITHOUT_VISIBILITY,
+                tmp_body,
+                Const.INJECT_INTERNAL_VARS
+              );
+            } catch (error) {
+              console.warn(error.message);
             }
-            Engine.log(tenant, obj.wfid, "Queue send email", {
-              fact: factRecipients,
-              to: recipient,
-              subject: mail_subject,
-              body: mail_body,
-            });
-            await Engine.sendTenantMail(tenant, recipient, mail_subject, mail_body);
-          } catch (error) {
-            console.error(error);
+            try {
+              let factRecipients = recipient;
+              if (wf.rehearsal) {
+                mail_subject = "Rehearsal: " + mail_subject;
+                recipient = wf.starter;
+              }
+              Engine.log(tenant, obj.wfid, "Queue send email", {
+                fact: factRecipients,
+                to: recipient,
+                subject: mail_subject,
+                body: mail_body,
+              });
+              await Engine.sendTenantMail(tenant, recipient, mail_subject, mail_body);
+            } catch (emailError) {
+              console.error(emailError);
+            }
           }
+        } catch (informNodeProcDoerErr) {
+          console.log(informNodeProcDoerErr);
         }
       }
       wfRoot.append(
@@ -2300,10 +2306,11 @@ Client.yarkNode = async function (obj) {
         obj.rehearsal,
         obj.starter
       );
-    } catch (error) {
+    } catch (informNodeError) {
+      console.log("INFORM node exception:" + informNodeError.message);
       Engine.log(tenant, obj.wfid, "INFORM node exception", {
         nodeid: tpNode.attr("id"),
-        message: error.message,
+        message: informNodeError.message,
       });
     }
   } else if (tpNode.hasClass("SCRIPT")) {
