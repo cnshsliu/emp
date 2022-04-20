@@ -668,6 +668,7 @@ Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
+    //current selector, current node
     wf.cselector = nexts.map((x) => x.selector);
   }
   wf.doc = wfIO.html();
@@ -1186,9 +1187,11 @@ Engine.__doneTodo = async function (
       if (nexts.length > 0) {
         wf.pnodeid = nexts[0].from_nodeid;
         wf.pworkid = nexts[0].from_workid;
+        //current selector, current node
         wf.cselector = nexts.map((x) => x.selector);
         wfUpdate["pnodeid"] = wf.pnodeid;
         wfUpdate["pworkid"] = wf.pworkid;
+        //current selector, current node
         wfUpdate["cselector"] = wf.cselector;
       }
     } else {
@@ -1494,6 +1497,7 @@ Engine.doCallback = async function (cbp, payload) {
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
+    //current selector, current node
     wf.cselector = nexts.map((x) => x.selector);
     wfUpdate["pnodeid"] = wf.pnodeid;
     wfUpdate["pworkid"] = wf.pworkid;
@@ -1536,7 +1540,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  let info = await Engine.__getWorkFullInfo(tenant, email, tpRoot, wfRoot, wfid, old_todo);
+  let info = await Engine.__getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, old_todo);
   if (info.revocable === false) {
     throw new EmpError("WORK_NOT_REVOCABLE", "Todo is not revocable", {
       wfid,
@@ -1648,6 +1652,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   if (nexts.length > 0) {
     wf.pnodeid = nexts[0].from_nodeid;
     wf.pworkid = nexts[0].from_workid;
+    //current selector, current node
     wf.cselector = nexts.map((x) => x.selector);
     wfUpdate["pnodeid"] = wf.pnodeid;
     wfUpdate["pworkid"] = wf.pworkid;
@@ -1826,7 +1831,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
-  let info = await Engine.__getWorkFullInfo(tenant, email, tpRoot, wfRoot, wfid, todo);
+  let info = await Engine.__getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, todo);
   if (info.returnable === false) {
     throw new EmpError("WORK_NOT_RETURNABLE", "Todo is not returnable", {
       wfid,
@@ -1909,6 +1914,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   if (nexts.length > 0) {
     wfUpdate["pnodeid"] = nexts[0].from_nodeid;
     wfUpdate["pworkid"] = nexts[0].from_workid;
+    //current selector, current node
     wfUpdate["cselector"] = nexts.map((x) => x.selector);
   }
   wfUpdate["doc"] = wfIO.html();
@@ -2962,7 +2968,6 @@ Engine.rerunNode = async function (tenant, wfid, nodeid) {
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
   let tpNode = tpRoot.find("#" + nodeid);
-  debugger;
   let workNode = wfRoot.find(`.work.SCRIPT[nodeid="${nodeid}"]`).last();
   if (!workNode) {
     console.log("Rerun SCRIPT node failed, workNode not found");
@@ -3940,7 +3945,7 @@ const MtcSendContext=function(url){
   let wfInfo = {tplid: tplid, wfid:wfid};
 
   try{
-    MtcAPIAgent.post(url, {context:{...wfInfo, ...kvars}});
+    MtcAPIAgent.post(url, {context:{...wfInfo}, kvars: kvars});
   }catch(error){
     console.error(error.message);
   }
@@ -4135,6 +4140,7 @@ Engine.startWorkflow = async function (
     tenant: tenant,
     wfid: wfid,
     pboat: pboat,
+    endpoint: tpl.endpoint,
     wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
@@ -4274,6 +4280,7 @@ Engine.restartWorkflow = async function (
     tenant: tenant,
     wfid: new_wfid,
     pboat: pboat,
+    endpoint: old_wf.endpoint,
     wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
@@ -4499,7 +4506,15 @@ Engine.getWorkInfo = async function (emailInBrowser, tenant, todoid) {
   let tpRoot = wfIO(".template");
   let wfRoot = wfIO(".workflow");
 
-  return await Engine.__getWorkFullInfo(tenant, peopleInBrowser, tpRoot, wfRoot, todo.wfid, todo);
+  return await Engine.__getWorkFullInfo(
+    tenant,
+    peopleInBrowser,
+    wf,
+    tpRoot,
+    wfRoot,
+    todo.wfid,
+    todo
+  );
 };
 
 Engine.getWfHistory = async function (email, tenant, wfid, wf) {
@@ -4592,7 +4607,15 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
  *
  * @return {...}
  */
-Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRoot, wfid, todo) {
+Engine.__getWorkFullInfo = async function (
+  tenant,
+  peopleInBrowser,
+  theWf,
+  tpRoot,
+  wfRoot,
+  wfid,
+  todo
+) {
   //////////////////////////////////////
   // Attention: TodoOwner确定设为todo.doer？
   // 应该是对的，之前只在rehearsal下设，是不对的
@@ -4681,6 +4704,8 @@ Engine.__getWorkFullInfo = async function (tenant, peopleInBrowser, tpRoot, wfRo
         ];
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
   ret.wf = {};
+  ret.wf.endpoint = theWf.endpoint;
+  ret.wf.tplid = theWf.tplid;
   ret.wf.kvars = ALL_VISIED_KVARS;
   ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
   ret.wf.starter = wfRoot.attr("starter");

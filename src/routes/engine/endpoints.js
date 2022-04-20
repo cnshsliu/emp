@@ -515,10 +515,10 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/template/set/pboat",
-    handler: Handlers.TemplateSetPboAt,
+    path: "/template/set/prop",
+    handler: Handlers.TemplateSetProp,
     config: {
-      description: "Set template pboat",
+      description: "Set template prop",
       tags: ["api"],
       auth: "token",
       validate: {
@@ -534,6 +534,7 @@ internals.endpoints = [
             "ANY_RUNNING",
             "ANY_ANY"
           ),
+          endpoint: Joi.string().required().trim().allow(""),
         },
         validator: Joi,
       },

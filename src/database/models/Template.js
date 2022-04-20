@@ -11,6 +11,7 @@ var TemplateSchema = new Schema(
       enum: ["STARTER_START", "STARTER_RUNNING", "STARTER_ANY", "ANY_RUNNING", "ANY_ANY"],
       default: "ANY_RUNNING",
     },
+    endpoint: { type: String, default: "" },
     author: { type: String, required: [true, "不能为空"], index: true },
     lastUpdateBy: String,
     lastUpdateBwid: String, //Browser window it;

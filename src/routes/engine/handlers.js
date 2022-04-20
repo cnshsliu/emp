@@ -2058,7 +2058,7 @@ const TemplateSetAuthor = async function (req, h) {
   }
 };
 
-const TemplateSetPboAt = async function (req, h) {
+const TemplateSetProp = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -2070,7 +2070,7 @@ const TemplateSetPboAt = async function (req, h) {
     if (myGroup !== "ADMIN") filter["author"] = myEmail;
     let tpl = await Template.findOneAndUpdate(
       filter,
-      { $set: { pboat: req.payload.pboat } },
+      { $set: { pboat: req.payload.pboat, endpoint: req.payload.endpoint } },
       { upsert: false, new: true }
     );
     if (!tpl) {
@@ -4213,7 +4213,7 @@ module.exports = {
   TemplateSetVisi,
   TemplateClearVisi,
   TemplateSetAuthor,
-  TemplateSetPboAt,
+  TemplateSetProp,
   TemplateEditLog,
   TemplateAddCron,
   TemplateBatchStart,
