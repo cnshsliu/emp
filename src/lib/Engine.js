@@ -5418,7 +5418,7 @@ Common.getDoer = async function (
   insertDefaultStarter
 ) {
   let ret = [];
-  if (pds === "DEFAULT") {
+  if (!pds || (pds && pds === "DEFAULT")) {
     return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
   }
   //先吧kvarString变为kvar对象
