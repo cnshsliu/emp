@@ -2070,7 +2070,13 @@ const TemplateSetProp = async function (req, h) {
     if (myGroup !== "ADMIN") filter["author"] = myEmail;
     let tpl = await Template.findOneAndUpdate(
       filter,
-      { $set: { pboat: req.payload.pboat, endpoint: req.payload.endpoint } },
+      {
+        $set: {
+          pboat: req.payload.pboat,
+          endpoint: req.payload.endpoint,
+          endpointmode: req.payload.endpointmode,
+        },
+      },
       { upsert: false, new: true }
     );
     if (!tpl) {
@@ -3901,13 +3907,11 @@ const DemoAPI = async function (req, h) {
   };
 };
 const DemoPostContext = async function (req, h) {
-  Mailman.SimpleSend(
-    "lucas@xihuanwu.com",
-    "",
-    "",
-    "Demo Post Context",
-    JSON.stringify(req.payload.context)
-  );
+  let receiver = process.env.DEMO_ENDPOINT_EMAIL_RECEIVER;
+  receiver ||= "lucas@xihuanwu.com";
+  console.log("Mailman to ", receiver);
+
+  Mailman.SimpleSend(receiver, "", "", "Demo Post Context", JSON.stringify(req.payload.mtcdata));
   return "Received";
 };
 const FilePondProcess = async function (req, h) {

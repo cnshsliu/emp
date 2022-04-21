@@ -1,3 +1,4 @@
+const { Worker, SHARE_ENV } = require("worker_threads");
 const cronEngine = require("node-cron");
 const Wreck = require("@hapi/wreck");
 const Https = require("https");
@@ -32,6 +33,7 @@ const Cache = require("./Cache");
 const TimeZone = require("./timezone");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
+const path = require("path");
 const util = require("util");
 const Exec = util.promisify(require("child_process").exec);
 //const https = require('https');
@@ -1016,18 +1018,19 @@ Engine.__doneTodo = async function (
     `[DoTask] [${todo.title}] [${todo.tplid}] [${doer}] [${userDecision}] [${workDecision}] [${completeFlag}] [${CFNameMap[completeFlag]}]`
   );
 
+  //如果有comment，则需要对comment中的[varname]进行替换处理
   if (comment) {
     let ALL_VISIED_KVARS = {};
     //只有comment中有handlebars({{) 或字符替换 [, 才需要查询所有kvars
     if (comment.indexOf("{{") >= 0 || comment.indexOf("[") >= 0) {
       ALL_VISIED_KVARS = await Parser.userGetVars(
         tenant,
-        doer,
+        doer, //check visi for doer
         todo.wfid,
-        "workflow",
+        Const.FOR_WHOLE_PROCESS,
         [],
         [],
-        "yes" //efficient
+        Const.VAR_IS_EFFICIENT //efficient
       );
     }
     comment = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, comment);
@@ -1041,10 +1044,13 @@ Engine.__doneTodo = async function (
     }
   }
 
-  //如果可以完成当前节点
+  //////////////////////////////////////////////////
+  // START -- 如果可以完成当前节点
+  //////////////////////////////////////////////////
   let nexts = [];
   let wfUpdate = {};
   if (completeFlag < CF.CAN_DONE) {
+    //把work对象设为DONE
     let theWork = await Work.findOneAndUpdate(
       { tenant: tenant, wfid: todo.wfid, workid: todo.workid },
       {
@@ -1066,7 +1072,7 @@ Engine.__doneTodo = async function (
       value: workDecision,
     };
     //////////////////////////////////////////////////
-    //  Extremely importnant
+    //  START - Extremely importnant， csv_参数必须为仅doer可见
     //////////////////////////////////////////////////
     for (const [key, valueDef] of Object.entries(kvarsFromBrowserInput)) {
       if (key.startsWith("csv_")) {
@@ -1074,7 +1080,7 @@ Engine.__doneTodo = async function (
       }
     }
     //////////////////////////////////////////////////
-    //  Extremely importnant
+    //  END -- Extremely importnant
     //////////////////////////////////////////////////
     await Parser.setVars(
       tenant,
@@ -1084,11 +1090,12 @@ Engine.__doneTodo = async function (
       todo.workid,
       kvarsFromBrowserInput,
       doer,
-      "yes"
+      Const.VAR_IS_EFFICIENT
     );
     //////////////////////////////////////////////////
     // 发送WeComBotMessage
     try {
+      // 当前节点是否发送weCom BOT message
       if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
         logMsg = `This node ${theWork.title} need to send wecom`;
         Engine.log(tenant, todo.wfid, logMsg);
@@ -1096,12 +1103,14 @@ Engine.__doneTodo = async function (
           { tenat: tenant, tplid: wf.tplid },
           { _id: 0, author: 1 }
         );
+        //找名字固定为 wecombots_tpl的且内容包含当前tplid的列表
         let wecomBot = await List.findOne({
           tenant: tenant,
           author: template.author,
           name: "wecombots_tpl",
           entries: { $elemMatch: { key: wf.tplid } },
         }).select({
+          // 从列表中过滤当前tplid
           entries: {
             $elemMatch: { key: wf.tplid },
           },
@@ -1109,6 +1118,7 @@ Engine.__doneTodo = async function (
         logMsg = `Query List, ${wecomBot ? "successfully" : "not found"}`;
         Engine.log(tenant, todo.wfid, logMsg);
         if (wecomBot) {
+          //如果当前tplid在 wecombots_tpl中
           let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
             tenant,
             doer,
@@ -1120,16 +1130,22 @@ Engine.__doneTodo = async function (
           logMsg = `Query List got bot keys ${wecomBot.entries[0].items}`;
           Engine.log(tenant, todo.wfid, logMsg);
           try {
+            //到当前tplid的所有bots keys
             let botKeys = wecomBot.entries[0].items.split(";");
             if (botKeys.length > 0) {
               let botsNumber = botKeys.length;
+              //随机选择一个bot key
               let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
               let botKey = botKeys[botIndex];
               let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-              await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
-                logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
-                Engine.log(tenant, todo.wfid, logMsg);
-              });
+              Engine.callWebApiPoster({ url: wecomAPI, data: markdownMsg })
+                .then((res) => {
+                  logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
+                  Engine.log(tenant, todo.wfid, logMsg);
+                })
+                .catch((err) => {
+                  console.error("Error from Engine.callWebApiPoster" + err.message);
+                });
             }
           } catch (e) {
             console.error(e);
@@ -1146,12 +1162,11 @@ Engine.__doneTodo = async function (
     } catch (wecomError) {
       console.error(wecomError.message);
     }
-    //////////////////////////////////////////////////
-    //////////////////////////////////////////////////
-    //////////////////////////////////////////////////
 
+    //////////////////////////////////////////////////
+    // START -- 处理这个非ADHOC 节点
+    //////////////////////////////////////////////////
     if (workNode.hasClass("ADHOC") === false) {
-      Engine.log(tenant, todo.wfid, "This workNode does not has ADHOC");
       await Common.procNext(
         tenant,
         teamid,
@@ -1179,6 +1194,7 @@ Engine.__doneTodo = async function (
       }
       //If hasEnd, then make sure there is only one #end in the nexts array
       if (hasEnd) {
+        //先把所有 #end过滤掉，然后加上当前#end，从而保证只有一个#end
         nexts = nexts.filter((x) => {
           return x.selector !== "#end";
         });
@@ -1189,24 +1205,34 @@ Engine.__doneTodo = async function (
         wf.pworkid = nexts[0].from_workid;
         //current selector, current node
         wf.cselector = nexts.map((x) => x.selector);
+        //
+        //wfUpdate用于最后修改workflow对象
         wfUpdate["pnodeid"] = wf.pnodeid;
         wfUpdate["pworkid"] = wf.pworkid;
         //current selector, current node
         wfUpdate["cselector"] = wf.cselector;
       }
-    } else {
-      Engine.log(tenant, todo.wfid, "This workNode has ADHOC class, no nexts was scanned");
     }
+    //////////////////////////////////////////////////
+    // END -- 处理这个非ADHOC 节点
+    //////////////////////////////////////////////////
   }
+  //////////////////////////////////////////////////
+  // END -- 如果可以完成当前节点
+  //////////////////////////////////////////////////
 
+  //////////////////////////////////////////////////
+  // 修改Workflow对象
   wfUpdate["doc"] = wfIO.html();
-  wf = await Workflow.updateOne(
+  await Workflow.updateOne(
     { tenant: tenant, wfid: wf.wfid },
     { $set: wfUpdate },
     { upsert: false, new: true }
   );
+  let wf_without_doc = await Workflow.findOne({ tenant: tenant, wfid: wf.wfid }, { doc: 0 }).lean();
 
-  // 完成TODO
+  //////////////////////////////////////////////////
+  // 修改TODO对象， 完成TODO
   todo.comment = comment;
   todo.status = "ST_DONE";
   if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
@@ -1225,16 +1251,97 @@ Engine.__doneTodo = async function (
     await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
   }
 
+  ////////////////////////////////////////////////////
+  //参数输入区里的comment同时添加为讨论区的comment
+  ////////////////////////////////////////////////////
   try {
     if (comment.trim().length > 0) await Engine.postCommentForTodo(tenant, doer, todo, comment);
   } catch (err) {
     console.error(err);
   }
+
+  ////////////////////////////////////////////////////
+  //送出next
+  ////////////////////////////////////////////////////
   for (let i = 0; i < nexts.length; i++) {
     await Engine.sendNext(nexts[i]);
   }
 
+  ////////////////////////////////////////////////////
+  // 调用endpoint
+  ////////////////////////////////////////////////////
+  let theEndpoint = wf_without_doc.endpoint;
+  let theEndpointMode = wf_without_doc.endpointmode;
+  if (
+    theEndpoint &&
+    theEndpoint.trim() &&
+    theEndpoint.trim().startsWith("https://") &&
+    ["both", "server"].includes(theEndpointMode)
+  ) {
+    let endpoint = theEndpoint.trim();
+    let ALL_KVARS_WITHOUT_VISI_SET = await Parser.userGetVars(
+      tenant,
+      Const.VISI_FOR_NOBODY, //check visi for doer
+      wf_without_doc.wfid,
+      Const.FOR_WHOLE_PROCESS,
+      [],
+      [],
+      Const.VAR_IS_EFFICIENT //efficient
+    );
+    for (const [key, valueDef] of Object.entries(ALL_KVARS_WITHOUT_VISI_SET)) {
+      delete valueDef.breakrow;
+      delete valueDef.placeholder;
+      delete valueDef.type;
+      delete valueDef.ui;
+      delete valueDef.required;
+      delete valueDef.id;
+      delete valueDef.visi;
+      delete valueDef.when;
+    }
+    let data = {
+      mtcdata: {
+        mode: "server",
+        context: {
+          tplid: wf.tplid,
+          wfid: wf.wfid,
+          wftitle: wf.wftitle,
+          todoid: todo.todoid,
+          title: todo.title,
+          doer: doer,
+        },
+        route: workResultRoute,
+        kvars: ALL_KVARS_WITHOUT_VISI_SET,
+      },
+    };
+    console.log("//////////////////////////////////////////////////");
+    console.log(`[CALL ENDPOINT] ${endpoint}`);
+    Engine.callWebApiPoster({ endpoint, data })
+      .then((res) => {
+        console.log(res);
+      })
+      .catch((err) => {
+        console.error("Error from Engine.callWebApiPoster" + err.message);
+      });
+
+    console.log("//////////////////////////////////////////////////");
+  }
+
   return { workid: todo.workid, todoid: todo.todoid };
+};
+
+// msg: {endpoint: URL,data: JSON}
+Engine.callWebApiPoster = async function (msg) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.dirname(__filename) + "/WebApiPoster.js", {
+      env: SHARE_ENV,
+      workerData: msg,
+    });
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) reject(new Error(`WebApiPoster Worker stopped with exit code ${code}`));
+    });
+  });
 };
 
 Engine.buildWorkDoneMarkdownMessage = async function (
@@ -1472,7 +1579,7 @@ Engine.doCallback = async function (cbp, payload) {
       cbp.workid,
       payload.kvars,
       "EMP",
-      "yes"
+      Const.VAR_IS_EFFICIENT
     );
   }
 
@@ -1535,7 +1642,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
   if (!SystemPermController.hasPerm(email, "work", old_todo, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this work");
   let wf = await Workflow.findOne({ wfid: wfid });
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let tpRoot = wfIO(".template");
@@ -1560,10 +1667,10 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
         obj.tenant,
         email,
         obj.wfid,
-        "workflow",
+        Const.FOR_WHOLE_PROCESS,
         [],
         [],
-        "yes"
+        Const.VAR_IS_EFFICIENT
       );
       comment = await Parser.replaceStringWithKVar(
         tenant,
@@ -1825,7 +1932,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   let isoNow = Tools.toISOString(new Date());
   let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
   let wfUpdate = {};
-  if (!SystemPermController.hasPerm(fact_email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(fact_email, Const.ENTITY_WORKFLOW, wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 
   let wfIO = await Parser.parse(wf.doc);
@@ -1883,10 +1990,10 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
         tenant,
         doer,
         todo.wfid,
-        "workflow",
+        Const.FOR_WHOLE_PROCESS,
         [],
         [],
-        "yes"
+        Const.VAR_IS_EFFICIENT
       );
       comment = await Parser.replaceStringWithKVar(
         tenant,
@@ -1908,7 +2015,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     todo.workid,
     kvars,
     fact_doer,
-    "yes"
+    Const.VAR_IS_EFFICIENT
   );
 
   if (nexts.length > 0) {
@@ -1980,7 +2087,7 @@ Client.setKVarFromString = async function (tenant, round, wfid, nodeid, workid, 
       kvObj[kv[0].trim()] = v;
     }
   }
-  await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP", "yes");
+  await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP", Const.VAR_IS_EFFICIENT);
 };
 
 Client.getNodeType = function (jq) {
@@ -2158,12 +2265,12 @@ Client.yarkNode = async function (obj) {
 
       let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
         obj.tenant,
-        "NOBODY", //except all visi controled kvars
+        Const.VISI_FOR_NOBODY, //except all visi controled kvars
         obj.wfid,
-        "workflow",
+        Const.FOR_WHOLE_PROCESS,
         [],
         [],
-        "yes"
+        Const.VAR_IS_EFFICIENT
       );
       //TODO: add csv support in INFORM properties
       let attach_csv = tpNode.find("csv").first().text();
@@ -2327,10 +2434,10 @@ Client.yarkNode = async function (obj) {
       obj.tenant,
       "EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
       obj.wfid,
-      "workflow", //整个工作流
+      Const.FOR_WHOLE_PROCESS, //整个工作流
       [],
       [],
-      "yes" //efficient
+      Const.VAR_IS_EFFICIENT //efficient
     );
     await Parser.injectCells(tenant, kvarsForScript);
     kvarsForScript = Parser.injectInternalVars(kvarsForScript);
@@ -2451,7 +2558,16 @@ Client.yarkNode = async function (obj) {
     //设置通过kvar()方法设置的进程参数
     codeRetObj["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: codeRetDecision };
     if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
-      await Parser.setVars(tenant, obj.round, obj.wfid, nodeid, workid, codeRetObj, "EMP", "yes");
+      await Parser.setVars(
+        tenant,
+        obj.round,
+        obj.wfid,
+        nodeid,
+        workid,
+        codeRetObj,
+        "EMP",
+        Const.VAR_IS_EFFICIENT
+      );
     }
   } else if (tpNode.hasClass("AND")) {
     let andDone = await Common.checkAnd(
@@ -2628,10 +2744,10 @@ Client.yarkNode = async function (obj) {
       obj.tenant,
       "EMP",
       obj.wfid,
-      "workflow",
+      Const.FOR_WHOLE_PROCESS,
       [],
       [],
-      "yes"
+      Const.VAR_IS_EFFICIENT
     );
     let pbo = await Engine.getPboByWfId(obj.tenant, obj.wfid);
     let sub_tpl_id = tpNode.attr("sub").trim();
@@ -2687,6 +2803,7 @@ Client.yarkNode = async function (obj) {
         `<div class="work SUB ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${obj.round}"  at="${isoNow}"></div>`
       );
     }
+    //END of SUB
   } else if (tpNode.hasClass("END")) {
     Engine.log(tenant, obj.wfid, "Process Ending");
     wfRoot.append(
@@ -2724,10 +2841,10 @@ Client.yarkNode = async function (obj) {
         obj.tenant,
         "EMP",
         obj.wfid,
-        "workflow",
+        Const.FOR_WHOLE_PROCESS,
         [],
         [],
-        "yes"
+        Const.VAR_IS_EFFICIENT
       );
       await Parser.setVars(
         obj.tenant,
@@ -2737,7 +2854,7 @@ Client.yarkNode = async function (obj) {
         parent_workid,
         child_kvars,
         "EMP",
-        "yes"
+        Const.VAR_IS_EFFICIENT
       );
       //KVAR above, 在流程结束时设置父亲流程中当前节点的参数
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
@@ -2768,6 +2885,7 @@ Client.yarkNode = async function (obj) {
       await parent_wf.save();
     }
     Engine.log(tenant, obj.wfid, "End");
+    //END of END node
   } else {
     //ACTION
     //An Action node which should be done by person
@@ -2855,12 +2973,12 @@ Client.yarkNode = async function (obj) {
     if (tpNodeTitle.indexOf("[") >= 0) {
       let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
         obj.tenant,
-        "NOBODY", //exclude all visied controled vars
+        Const.VISI_FOR_NOBODY, //exclude all visied controled vars
         obj.wfid,
-        "workflow",
+        Const.FOR_WHOLE_PROCESS,
         [],
         [],
-        "yes"
+        Const.VAR_IS_EFFICIENT
       );
       tpNodeTitle = await Parser.replaceStringWithKVar(
         tenant,
@@ -2873,10 +2991,12 @@ Client.yarkNode = async function (obj) {
     //
     //
 
+    //singleRunning的意思是： 无论多少round，总按一个动作执行
     let singleRunning = Tools.blankToDefault(tpNode.attr("sr"), "false") === "true";
     //TODO: singleRunning
     let existingRunningNodeWork = wfRoot.find(`.work.ST_RUN[nodeid="${nodeid}"]`);
     if (!(singleRunning && existingRunningNodeWork.length > 0)) {
+      //如果  不是 “singleRunning并且有多个运行中的同节点work"
       wfRoot.append(
         `<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${thisRound}"  at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`
       );
@@ -2891,7 +3011,7 @@ Client.yarkNode = async function (obj) {
       workid,
       varsFromTemplateNode,
       "EMP",
-      "no"
+      Const.VAR_NOT_EFFICIENT
     );
     let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
     let existingSameNodeWorks = await Work.find({
@@ -2934,7 +3054,7 @@ Client.yarkNode = async function (obj) {
         cells: cells,
       });
     }
-  }
+  } //End of ACTION
   //End of all node type processing
 
   wfUpdate["doc"] = wfIO.html();
@@ -2959,8 +3079,17 @@ Client.yarkNode = async function (obj) {
   for (let i = 0; i < parent_nexts.length; i++) {
     await Engine.sendNext(parent_nexts[i]);
   }
+
+  //////////////////////////////////////////////////
+  //  START send to workflow endpoint
+  //////////////////////////////////////////////////
+
+  //////////////////////////////////////////////////
+  //  END send to workflow endpoint
+  //////////////////////////////////////////////////
 };
 
+//Only SCRIPT is supported at this moment.
 Engine.rerunNode = async function (tenant, wfid, nodeid) {
   let wf_filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(wf_filter);
@@ -3334,7 +3463,7 @@ Engine.defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId,
       wfid: wfid,
       nodeid: { $in: tobeDefiedNodeIds },
     };
-    await KVar.updateMany(filter, { $set: { eff: "no" } });
+    await KVar.updateMany(filter, { $set: { eff: Const.VAR_NOT_EFFICIENT } });
     //run deep further
     for (let i = 0; i < tobeDefiedNodeIds.length; i++) {
       await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, tobeDefiedNodeIds[i], defiedNodes);
@@ -3729,7 +3858,6 @@ Client.newTodo = async function (
 };
 
 Engine.WreckPost = async (url, content) => {
-  console.log("WreckPost", url);
   const wreck = Wreck.defaults({
     headers: { "x-foo-bar": 123 },
     agents: {
@@ -4141,6 +4269,7 @@ Engine.startWorkflow = async function (
     wfid: wfid,
     pboat: pboat,
     endpoint: tpl.endpoint,
+    endpointmode: tpl.endpointmode,
     wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
@@ -4155,7 +4284,7 @@ Engine.startWorkflow = async function (
   attachments = attachments.map((x) => {
     if (x.serverId) {
       x.author = starter;
-      x.forWhat = "workflow";
+      x.forWhat = Const.ENTITY_WORKFLOW;
       x.forWhich = wfid;
       x.forKey = "pbo";
     }
@@ -4164,7 +4293,16 @@ Engine.startWorkflow = async function (
   wf.attachments = attachments;
   wf = await wf.save();
   parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
-  await Parser.setVars(tenant, 0, wfid, "parent", "workflow", parent_vars, "EMP", "yes");
+  await Parser.setVars(
+    tenant,
+    0,
+    wfid,
+    "parent",
+    Const.FOR_WHOLE_PROCESS,
+    parent_vars,
+    "EMP",
+    Const.VAR_IS_EFFICIENT
+  );
   let an = {
     CMD: "yarkNode",
     tenant: tenant,
@@ -4210,7 +4348,7 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
 Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -4253,7 +4391,7 @@ Engine.restartWorkflow = async function (
 ) {
   let old_wfid = wfid;
   let old_wf = await Workflow.findOne({ tenant: tenant, wfid: old_wfid });
-  if (!SystemPermController.hasPerm(myEmail, "workflow", old_wf, "update"))
+  if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, old_wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let old_wfIO = await Parser.parse(old_wf.doc);
   let old_wfRoot = old_wfIO(".workflow");
@@ -4281,6 +4419,7 @@ Engine.restartWorkflow = async function (
     wfid: new_wfid,
     pboat: pboat,
     endpoint: old_wf.endpoint,
+    endpointmode: old_wf.endpointmode,
     wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
@@ -4293,7 +4432,16 @@ Engine.restartWorkflow = async function (
   });
   wf.attachments = await Engine.getPbo(old_wf);
   wf = await wf.save();
-  await Parser.copyVars(tenant, old_wfid, "parent", "workflow", new_wfid, "parent", "workflow", 0);
+  await Parser.copyVars(
+    tenant,
+    old_wfid,
+    "parent",
+    Const.FOR_WHOLE_PROCESS,
+    new_wfid,
+    "parent",
+    Const.FOR_WHOLE_PROCESS,
+    0
+  );
   let an = {
     CMD: "yarkNode",
     tenant: tenant,
@@ -4314,7 +4462,7 @@ Engine.restartWorkflow = async function (
 
 Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
   let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
-  if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "delete"))
+  if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "delete"))
     throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
   let myGroup = await Cache.getMyGroup(myEmail);
   //管理员可以destory
@@ -4398,7 +4546,7 @@ Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
 Engine.setPboByWfId = async function (email, tenant, wfid, pbos) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let attachments = wf.attachments;
   attachments = attachments.filter((x) => x.forKey !== "pbo");
@@ -4429,7 +4577,7 @@ Engine.getWorkflowPbo = async function (email, tenant, wfid) {
 };
 
 Engine.workflowGetList = async function (tenant, email, filter, sortdef) {
-  if (!SystemPermController.hasPerm(email, "workflow", "", "read"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, "", "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read workflow");
   filter.tenant = tenant;
   let option = {};
@@ -4442,7 +4590,7 @@ Engine.workflowGetList = async function (tenant, email, filter, sortdef) {
 };
 
 Engine.workflowGetLatest = async function (tenant, email, filter) {
-  if (!SystemPermController.hasPerm(email, "workflow", "", "read"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, "", "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read workflow");
   filter.tenant = tenant;
   let wfs = await Workflow.find(
@@ -4546,7 +4694,15 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
   //取得当前workid的kvars, efficient可以是no
   ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
   //取得efficient为yes的所有变量值
-  let existingVars = await Parser.userGetVars(tenant, email, todo.wfid, "workflow", [], [], "yes");
+  let existingVars = await Parser.userGetVars(
+    tenant,
+    email,
+    todo.wfid,
+    Const.FOR_WHOLE_PROCESS,
+    [],
+    [],
+    Const.VAR_IS_EFFICIENT
+  );
   Parser.mergeValueFrom(ret.kvars, existingVars);
 
   ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
@@ -4642,10 +4798,10 @@ Engine.__getWorkFullInfo = async function (
     tenant,
     TodoOwner,
     wfid,
-    "workflow",
+    Const.FOR_WHOLE_PROCESS,
     [],
     [],
-    "yes"
+    Const.VAR_IS_EFFICIENT
   );
   // 将 第二个参数的值， merge到第一个参数的键上
   Parser.mergeValueFrom(ret.kvars, ALL_VISIED_KVARS);
@@ -4705,6 +4861,7 @@ Engine.__getWorkFullInfo = async function (
   //取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
   ret.wf = {};
   ret.wf.endpoint = theWf.endpoint;
+  ret.wf.endpointmode = theWf.endpointmode;
   ret.wf.tplid = theWf.tplid;
   ret.wf.kvars = ALL_VISIED_KVARS;
   ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
@@ -4852,7 +5009,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       todos[i].workid,
       [],
       [],
-      "yes"
+      Const.VAR_IS_EFFICIENT
     );
     todoEntry.kvarsArr = Parser.kvarsToArray(kvars);
     todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui && x.ui.includes("input"));
@@ -5251,7 +5408,7 @@ Engine.getStatusFromClass = function (node) {
 Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -5274,7 +5431,7 @@ Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
 Engine.pauseWorkflow = async function (tenant, email, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -5311,7 +5468,7 @@ Engine.pauseWorkflow = async function (tenant, email, wfid) {
 Engine.resumeWorkflow = async function (tenant, email, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "update"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
     throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
   let wfIO = await Parser.parse(wf.doc);
   let wfRoot = wfIO(".workflow");
@@ -5402,12 +5559,20 @@ Engine.resumeDelayTimers = async function (tenant, wfid) {
 Engine.getKVars = async function (tenant, email, wfid, workid) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter, { doc: 0 });
-  if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
+  if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
     throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
   if (workid) {
-    return await Parser.userGetVars(tenant, email, wfid, workid, [], [], "yes");
+    return await Parser.userGetVars(tenant, email, wfid, workid, [], [], Const.VAR_IS_EFFICIENT);
   } else {
-    return await Parser.userGetVars(tenant, email, wfid, "workflow", [], [], "yes");
+    return await Parser.userGetVars(
+      tenant,
+      email,
+      wfid,
+      Const.FOR_WHOLE_PROCESS,
+      [],
+      [],
+      Const.VAR_IS_EFFICIENT
+    );
   }
 };
 
@@ -5458,12 +5623,12 @@ Common.getDoer = async function (
   if (pds.match(/\[(.+)\]/)) {
     kvars = await Parser.userGetVars(
       tenant,
-      "NOBODY", //不包含所有有visi控制的参数
+      Const.VISI_FOR_NOBODY, //不包含所有有visi控制的参数
       wfid,
-      "workflow",
+      Const.FOR_WHOLE_PROCESS,
       [],
       [],
-      "yes" //efficient
+      Const.VAR_IS_EFFICIENT //efficient
     );
   }
   // 如果有kvarString，则解析String，替换前面准备好的kvars
@@ -5509,7 +5674,7 @@ Engine.getTrack = async function (email, tenant, wfid, workid) {
   try {
     let wf_filter = { wfid: wfid };
     let wf = await Workflow.findOne(wf_filter);
-    if (!SystemPermController.hasPerm(email, "workflow", wf, "read"))
+    if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
       throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
     let wfIO = await Parser.parse(wf.doc);
     let wfRoot = wfIO(".workflow");

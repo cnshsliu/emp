@@ -12,6 +12,7 @@ var TemplateSchema = new Schema(
       default: "ANY_RUNNING",
     },
     endpoint: { type: String, default: "" },
+    endpointmode: { type: String, default: "both" },
     author: { type: String, required: [true, "不能为空"], index: true },
     lastUpdateBy: String,
     lastUpdateBwid: String, //Browser window it;

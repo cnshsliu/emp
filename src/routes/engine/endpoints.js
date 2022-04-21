@@ -535,6 +535,7 @@ internals.endpoints = [
             "ANY_ANY"
           ),
           endpoint: Joi.string().required().trim().allow(""),
+          endpointmode: Joi.string().required().trim().valid("both", "server", "user"),
         },
         validator: Joi,
       },
@@ -1542,14 +1543,14 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/demo/context",
+    path: "/demo/receive/data",
     handler: Handlers.DemoPostContext,
     config: {
       description: "demo api return some data",
       tags: ["api"],
       validate: {
         payload: {
-          context: Joi.object().optional(),
+          mtcdata: Joi.object().optional(),
         },
         validator: Joi,
       },

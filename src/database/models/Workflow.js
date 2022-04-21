@@ -30,6 +30,7 @@ var WorkflowSchema = new Schema(
       default: "ANY_RUNNING",
     },
     endpoint: { type: String, default: "" },
+    endpointmode: { type: String, default: "both" },
     wftitle: { type: String, required: true },
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
     teamid: { type: String, required: false, default: "" },

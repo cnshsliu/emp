@@ -1,6 +1,7 @@
 const Cheerio = require("cheerio").default;
 const lodash = require("lodash");
 const Moment = require("moment");
+const Const = require("./Const");
 const Tools = require("../tools/tools.js");
 const { EmpError } = require("./EmpError");
 const Team = require("../database/models/Team");
@@ -158,7 +159,7 @@ Parser.mergeVars = async function (tenant, vars, newVars_json) {
  * @param {...} tenant -
  * @param {...} checkVisiForWhom - 用户过滤Visi
  * @param {...} wfid - The id of workflow
- * @param {...} objid - the id of object, for whole workflow, use "workflow", for work, use it's workid
+ * @param {...} objid - the id of object, for whole workflow, use Const.FOR_WHOLE_PROCESS, for work, use it's workid
  * @param {...} doers = [] -只要不是空字符串数组，则只检查数组里的用户
  * @param {...} notdoers = [] 只要不是空字符串数组，则去除数组里的用户
  */
@@ -188,7 +189,7 @@ Parser.userGetVars = async function (
   };
   let filter = {};
   //如果是workflow，则就是查询流程中所有数据，否则，只查询objid这个节点的数据
-  if (objid === "workflow") {
+  if (objid === Const.FOR_WHOLE_PROCESS) {
     filter = { tenant: tenant, wfid: wfid };
   } else {
     filter = { tenant: tenant, wfid: wfid, objid: objid };
@@ -228,7 +229,7 @@ Parser.userGetVars = async function (
       //如果没有定义，visi，则公开
       let hasVisi = Tools.hasValue(valueDef.visi);
       if (hasVisi) {
-        if (checkVisiForWhom === "NOBODY") {
+        if (checkVisiForWhom === Const.VISI_FOR_NOBODY) {
           delete retResult[key];
         } else {
           //检查具体用户是否在visi中
@@ -510,7 +511,15 @@ Parser.copyVars = async function (
 };
 Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, doer, efficient) {
   if (JSON.stringify(newvars) === "{}") return;
-  let oldVars = await Parser.userGetVars(tenant, "EMP", wfid, objid, [], [], "yes");
+  let oldVars = await Parser.userGetVars(
+    tenant,
+    "EMP",
+    wfid,
+    objid,
+    [],
+    [],
+    Const.VAR_IS_EFFICIENT
+  );
   for (const [name, valueDef] of Object.entries(newvars)) {
     if (typeof valueDef.value === "string") {
       while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
@@ -519,7 +528,7 @@ Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, do
   }
 
   let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
-  let base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
+  let mergedVars_base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
   let filter = { tenant: tenant, wfid: wfid, objid: objid, doer: doer };
   doer = lodash.isEmpty(doer) ? "EMP" : doer;
   await KVar.deleteMany(filter);
@@ -530,7 +539,7 @@ Parser.setVars = async function (tenant, round, wfid, nodeid, objid, newvars, do
     nodeid: nodeid,
     objid: objid,
     doer: doer,
-    content: base64_vars_string,
+    content: mergedVars_base64_vars_string,
     eff: efficient.toLowerCase(),
   });
   kvar = await kvar.save();
