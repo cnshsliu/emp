@@ -8,6 +8,28 @@ const internals = {
   VISI_FOR_NOBODY: "NOBODY",
   FOR_WHOLE_PROCESS: "workflow",
   ENTITY_WORKFLOW: "workflow",
+  supportedClasses: [
+    "ACTION",
+    "SCRIPT",
+    "AND",
+    "OR",
+    "TIMER",
+    "GROUND",
+    "START",
+    "END",
+    "INFORM",
+    "THROUGH",
+  ],
+  supportedSTStatus: [
+    "ST_RUN",
+    "ST_PAUSE",
+    "ST_DONE",
+    "ST_STOP",
+    "ST_IGNORE",
+    "ST_RETURNED",
+    "ST_REVOKED",
+    "ST_END",
+  ],
 };
 
 module.exports = internals;

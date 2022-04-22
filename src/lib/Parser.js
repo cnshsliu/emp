@@ -9,7 +9,6 @@ const KVar = require("../database/models/KVar");
 const Cell = require("../database/models/Cell");
 const Cache = require("./Cache");
 const OrgChartHelper = require("./OrgChartHelper");
-//const Engine = require("./Engine");
 
 const Parser = {};
 ////////////////////////////////////////////////////
@@ -929,6 +928,23 @@ Parser.tidyKVars = function (kvars) {
     delete def["type"];
   }
   return kvars;
+};
+Parser.getNodeType = function (jq) {
+  for (let i = 0; i < Const.supportedClasses.length; i++) {
+    if (jq.hasClass(Const.supportedClasses[i])) {
+      return Const.supportedClasses[i];
+    }
+  }
+  return "UNKNOWN";
+};
+Parser.removeSTClasses = function (jq, classesToRemove) {
+  classesToRemove.map((x) => {
+    jq.removeClass(x);
+  });
+};
+Parser.clearSTClass = function (jq) {
+  debugger;
+  Parser.removeSTClasses(jq, Const.supportedSTStatus);
 };
 
 console.log(

@@ -1,4 +1,4 @@
-const { Worker, SHARE_ENV } = require("worker_threads");
+const { Worker, isMainThread, SHARE_ENV } = require("worker_threads");
 const cronEngine = require("node-cron");
 const Wreck = require("@hapi/wreck");
 const Https = require("https");
@@ -28,7 +28,6 @@ const OrgChartHelper = require("./OrgChartHelper");
 const lodash = require("lodash");
 const Tools = require("../tools/tools.js");
 const SystemPermController = require("./SystemPermController");
-const { ZMQ } = require("./ZMQ");
 const Cache = require("./Cache");
 const TimeZone = require("./timezone");
 const { v4: uuidv4 } = require("uuid");
@@ -37,39 +36,19 @@ const path = require("path");
 const util = require("util");
 const Exec = util.promisify(require("child_process").exec);
 //const https = require('https');
-const zmq = require("zeromq");
+// const zmq = require("zeromq");
+// const { ZMQ } = require("./ZMQ");
+let zmq;
+let ZMQ;
+if (isMainThread) {
+  zmq = require("zeromq");
+  ZMQ = require("./ZMQ");
+}
 const { EmpError } = require("./EmpError");
-const { isEmpty } = require("../tools/tools.js");
-const EmpConfig = require("../config/emp");
 const Const = require("./Const");
 
 const Engine = {};
 const Client = {};
-const Common = {};
-
-const supportedClasses = [
-  "ACTION",
-  "SCRIPT",
-  "AND",
-  "OR",
-  "TIMER",
-  "GROUND",
-  "START",
-  "END",
-  "INFORM",
-  "THROUGH",
-];
-
-const supportedSTStatus = [
-  "ST_RUN",
-  "ST_PAUSE",
-  "ST_DONE",
-  "ST_STOP",
-  "ST_IGNORE",
-  "ST_RETURNED",
-  "ST_REVOKED",
-  "ST_END",
-];
 
 const CF = {
   ONE_DOER: 1,
@@ -90,6 +69,20 @@ const CFNameMap = {
 };
 
 const crontabsMap = {};
+
+const callYarkNodeWorker = async function (msg) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.dirname(__filename) + "/YarkNodeWorker.js", {
+      env: SHARE_ENV,
+      workerData: msg,
+    });
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) reject(new Error(`YarkNodeWorker stopped with exit code ${code}`));
+    });
+  });
+};
 
 /**
  * Ensure the function fn to be run only once
@@ -152,305 +145,6 @@ Client.clientInit = async function () {
   });
 };
 
-/**
- * Client.formatRoute() Format route value to 'DEFAULT' if it is undefined/null/blank
- *
- * @param {...} Client.route -
- *
- * @return {...}
- */
-Client.formatRoute = function (route) {
-  let ret = route;
-  if (Array.isArray(route)) return route;
-  else if (route === undefined) ret = ["DEFAULT"];
-  else if (route === null) ret = ["DEFAULT"];
-  else if (route === "") ret = ["DEFAULT"];
-  else if (typeof route === "string") {
-    ret = route.split(",");
-  } else ret = [`${route}`];
-
-  return ret;
-};
-
-/**
- * Check whether the status of all previous nodes were ST_DONE
- *
- * @param {...} tenant - Tenant
- * @param {...} wfid - workflow id
- * @param {...} tpRoot - template root node
- * @param {...} wfRoot - workflow root node
- * @param {...} nodeid - the nodeid which will be checked whether the status of it's previous nodes are all ST_DONE
- * @param {...} route -
- * @param {...} nexts -
- *
- * @return {...} true if the status of all previous nodes are ST_DONE, false if the status of any previous node is not ST_DONE
- */
-Common.checkAnd = async function (
-  tenant,
-  wfid,
-  round,
-  tpRoot,
-  wfRoot,
-  theANDnodeid, //AND节点的nodeid;
-  theAndNode,
-  from_workid,
-  route,
-  nexts
-) {
-  let ret = true;
-  let counterPartRound = round; //先用当前AND的 Round
-  let counterPart = theAndNode.attr("cp");
-  let counterPartPassedRoutesNumber = 0;
-  //在该版本之前已经运行的流程，可能会有问题。因为没有counterPart. 手工修复可以吗？
-  if (counterPart) {
-    /*
-    let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }).sort(
-      "-round"
-    );
-    counterPartRound = work.round;
-    */
-    let route = await Route.findOne({
-      tenant: tenant,
-      wfid: wfid,
-      from_nodeid: counterPart,
-    }).sort("-round");
-    counterPartRound = route.round;
-    counterPartPassedRoutesNumber = await Route.countDocuments({
-      tenant: tenant,
-      wfid: wfid,
-      from_nodeid: counterPart,
-      round: counterPartRound,
-    });
-  }
-  let fromNodeIds = await Engine._getFromNodeIds(tpRoot, theANDnodeid);
-  let routeFilter = {
-    tenant: tenant,
-    wfid: wfid,
-    //TODO:  to think
-    ////////////////////////////////////////////////////
-    // 在AND节点前有彼此独立的分支
-    // 比如在周报中，前面有一个节点分成两路，每一路中都
-    // 可能有多次退回，导致两路上的round不一致，在最后
-    // AND检查时，会因为两个round不一致，永远查不到在同
-    // 一个round中的与前序节点个数相同的Route。因此AND
-    // 也就总是通过不了. 图示：
-    // https://cdn.jsdelivr.net/gh/cnshsliu/static.xhw.mtc/img/doc/and_decision_after_round.png
-    // 这种情况下，应该不用管round
-    // ///////////////
-    // 但在另一种情况下，当AND之后有返回， 如
-    // https://cdn.jsdelivr.net/gh/cnshsliu/static.xhw.mtc/img/doc/and_decision_before_round.png
-    // 如果不管round，之前已经通过的routes会被算作完成，如在上图中，
-    // 第二轮执行Step2.1->Step2.1.1 之后，因为Step2.2有被执行过，
-    // 就不会等第二轮的Step2.2，直接判为AND通过
-    //TODO: 这个问题怎么解决呢？ OR也一样
-    ////////////////////////////////////////////////////
-    //round, //包含round，可以走通第二种情况，但走不通第一种情况
-    ////////////////////////////////////////////////////
-    // 使用模版CounterPart机制后，只需要检查counterPartRound做对比
-    ////////////////////////////////////////////////////
-    round: { $lte: counterPartRound },
-    from_nodeid: { $in: fromNodeIds },
-    to_nodeid: theANDnodeid,
-    status: "ST_PASS",
-  };
-  console.log("Check AND counterPart and Round", counterPart, counterPartRound);
-  //routeFromNodes 有Route对象的节点，status可能是PASS，也可能是INGORE
-  let routeFromNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
-  //要么，
-  if (
-    (counterPartPassedRoutesNumber === fromNodeIds.length &&
-      fromNodeIds.length === routeFromNodes.length) ||
-    (counterPartPassedRoutesNumber < fromNodeIds.length &&
-      fromNodeIds.length === counterPartPassedRoutesNumber)
-  ) {
-    //if (routeFromNodes.length === fromNodeIds.length) {
-    console.log(
-      `AND done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) === from node numbers (${fromNodeIds.length})`
-    );
-  } else {
-    console.log(
-      `AND not done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) !== from node numbers (${fromNodeIds.length})`
-    );
-  }
-  return routeFromNodes.length === fromNodeIds.length;
-};
-
-/**
- * Check if the status of any previous nodes is ST_DONE
- *
- * @param {...} tenant - Tenant
- * @param {...} wfid - workflow id
- * @param {...} tpRoot - template root node
- * @param {...} wfRoot - workflow root node
- * @param {...} nodeid - the nodeid which will be checked whether the status of any previous node is ST_DONE
- * @param {...} route -
- * @param {...} nexts -
- *
- * @return {...} true if the status of any previous node is ST_DONE, false if none of the previous nodes has ST_DONE status.
- */
-Common.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, route, nexts) {
-  let ret = false;
-  /*
-  let route_param = route;
-  let linkSelector = `.link[to="${nodeid}"]`;
-  tpRoot.find(linkSelector).each(function (i, el) {
-    let linkObj = Cheerio(el);
-    let fromid = linkObj.attr("from");
-    let wfSelector = `.work.ST_DONE[nodeid="${fromid}"]`;
-    if (wfRoot.find(wfSelector).length > 0) {
-      ret = true;
-    }
-  });
-  */
-  let from_work = wfRoot.find("#" + from_workid);
-  let prl_id = from_work.attr("prl_id");
-  let parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, from_work);
-  if (parallel_actions.length > 0) {
-    for (let i = 0; i < parallel_actions.length; i++) {
-      if (parallel_actions[i].status === "ST_DONE") {
-        ret = true;
-        break;
-      }
-    }
-  } else {
-    /*
-     * ParallelAction仅包含相同Route指向的节点，此时，OR之前的节点可能由于Route不同，而导致ParallelAction
-     * 只有一个，导致在ProcNext中不会设置 parallel_id
-     * 然后 _getParallelActions返回数组元素数为0
-     */
-    ret = true;
-  }
-  return ret;
-};
-
-/**
- * Common.ignore4Or() 一个节点完成后,忽略那些未完成的兄弟节点
- *
- * @param {...} Common.ignore4tenant -
- * @param {...} wfid -
- * @param {...} tpRoot -
- * @param {...} wfRoot -
- * @param {...} nodeid - Id of the node whose front-nodes with ST_RUN status will be set ST_IGNORE status
- * @param {...} route -
- * @param {...} nexts -
- *
- * @return {...}
- */
-Common.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) {
-  let ret = false;
-  let route_param = route;
-  //找到指向OR的所有连接
-  let linkSelector = `.link[to="${nodeid}"]`;
-  tpRoot.find(linkSelector).each(async function (i, el) {
-    let linkObj = Cheerio(el);
-    let fromid = linkObj.attr("from");
-    //选择前置节点
-    let wfSelector = `.work[nodeid="${fromid}"]`;
-    let work = wfRoot.find(wfSelector);
-    if (work.hasClass("ST_RUN")) {
-      //如果该前置节点状态为ST_RUN, 则设置其为ST_IGNORE
-      work.removeClass("ST_RUN");
-      work.addClass("ST_IGNORE");
-
-      //同时,到数据库中,把该节点对应的Todo对象状态设为ST_IGNORE
-      let todoFilter = {
-        tenant: tenant,
-        workid: work.attr("id"),
-        status: "ST_RUN",
-      };
-      await Todo.findOneAndUpdate(todoFilter, { $set: { status: "ST_IGNORE" } }, { new: true });
-    }
-  });
-  return ret;
-};
-
-/**
- * Common.__getFutureSecond()  Get the milisecond of exact expire time of delay timer
- *
- * @param {...} Common.__wfRoot - the root node of workflow
- * @param {...} delayString - delay timer configuration string
- *
- * @return {...} the exact millisecond of the expiration of a delay timer
- */
-Common.__getFutureSecond = function (wfRoot, delayString) {
-  let ret = 0;
-  let g = delayString.match(/^(start)?(\+?)(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+)?/);
-  let t = [];
-  let procType = "START+";
-  if (g !== null) {
-    t = [
-      parseInt(g[3]),
-      parseInt(g[4]),
-      parseInt(g[5]),
-      parseInt(g[6]),
-      parseInt(g[7]),
-      parseInt(g[8]),
-    ];
-    if (g[1] && g[2]) {
-      //如果 start+ 开头
-      //表示该时间为从流程启动开始往后的一个时间点
-      procType = "START+";
-    } else if (g[2]) {
-      //如果 只有 +号 开头
-      //表示该时间为从现在开始往后的一个时间点
-      procType = "NOW+";
-    } else procType = "FIXTIME";
-    //如果前面没有 start+,也没有+号, 则表示该时间为固定设定时间
-  } else {
-    //如果 配置字符串格式有误,则缺省为从现在往后60分钟
-    t = [0, 0, 0, 0, 60, 0];
-    procType = "NOW+";
-  }
-
-  let dt = new Date();
-  switch (procType) {
-    case "START+":
-      //取wfRoot的启动时间戳
-      dt = new Date(wfRoot.attr("at"));
-      dt.setFullYear(dt.getFullYear() + t[0]);
-      dt.setMonth(dt.getMonth() + t[1]);
-      dt.setDate(dt.getDate() + t[2]);
-      dt.setHours(dt.getHours() + t[3]);
-      dt.setMinutes(dt.getMinutes() + t[4]);
-      dt.setSeconds(dt.getSeconds() + t[5]);
-      break;
-    case "NOW+":
-      dt.setFullYear(dt.getFullYear() + t[0]);
-      dt.setMonth(dt.getMonth() + t[1]);
-      dt.setDate(dt.getDate() + t[2]);
-      dt.setHours(dt.getHours() + t[3]);
-      dt.setMinutes(dt.getMinutes() + t[4]);
-      dt.setSeconds(dt.getSeconds() + t[5]);
-      break;
-    case "FIXTIME":
-      try {
-        dt.setFullYear(t[0]);
-        dt.setMonth(t[1]);
-        dt.setDate(t[2]);
-        dt.setHours(t[3]);
-        dt.setMinutes(t[4]);
-        dt.setSeconds(t[5]);
-      } catch (error) {
-        //如因用户指定的FIXTIME格式有误导致出错,则自动设为60分钟后
-        dt.setMinutes(dt.getMinutes() + 60);
-      }
-      break;
-  }
-  ret = dt.getTime();
-
-  return ret;
-};
-
-Common.setupCron = async function () {
-  if (Common.settingCron) return;
-  try {
-    Common.settingCron = true;
-    await Crontab.updateMany({}, { $set: { scheduled: false } });
-    await Engine.rescheduleCrons();
-  } finally {
-    Common.settingCron = false;
-  }
-};
 Engine.cleanupFaultCrons = async function () {
   let crons = await Crontab.find();
   for (let i = 0; i < crons.length; i++) {
@@ -488,7 +182,7 @@ Engine.scheduleAllValidCrons = async function () {
 };
 
 Engine.startWorkflowByCron = async (cron) => {
-  let doers = await Common.getDoer(
+  let doers = await Engine.getDoer(
     cron.tenant,
     "", //Team id
     cron.starters, //PDS
@@ -504,7 +198,7 @@ Engine.startWorkflowByCron = async (cron) => {
 };
 
 Engine.startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
-  let doers = await Common.getDoer(
+  let doers = await Engine.getDoer(
     tenant,
     "", //Team id
     starters, //PDS
@@ -575,58 +269,6 @@ Engine.stopCronTask = async function (cronId) {
   }
 };
 
-/**
- * Common.checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
- *
- * @param {...}
- *
- * @return {...}
- */
-Common.checkDelayTimer = async function () {
-  //禁止同时多个线程进行检查
-  if (Common.checkingTimer) return;
-  try {
-    Common.checkingTimer = true;
-    let now = new Date();
-    //查找状态为ST_RUN,且 时间早于当前时间的DelayTimer;
-    //时间早于当前时间,表明该定时器已超时;
-    //也就是,从数据库中找到所有已超时或到时的DelayTimer
-    let filter = { wfstatus: "ST_RUN", time: { $lt: now.getTime() } };
-    let delayTimers = await DelayTimer.find(filter);
-    let nexts = [];
-    let tobeDeletedDelayTimerWfIds = [];
-    for (let i = 0; i < delayTimers.length; i++) {
-      try {
-        await Engine.runScheduled(
-          {
-            tenant: delayTimers[i].tenant,
-            tplid: delayTimers[i].tplid,
-            teamid: delayTimers[i].teamid,
-            wfid: delayTimers[i].wfid,
-            nodeid: delayTimers[i].nodeid,
-            workid: delayTimers[i].workid,
-          },
-          tobeDeletedDelayTimerWfIds,
-          false
-        );
-      } catch (e) {
-        console.error(e);
-      }
-      await DelayTimer.deleteOne({ _id: delayTimers[i]._id });
-    }
-
-    //////////////////////////////////////////////////
-    //DelayTimer每次都会被删除，因此无须最后再次清理
-    //tobeDeletedDelayTimerWfIds = [...new Set(tobeDeletedDelayTimerWfIds)];
-    //await DelayTimer.deleteMany({ wfid: { $in: tobeDeletedDelayTimerWfIds } });
-    //////////////////////////////////////////////////
-  } catch (err) {
-    console.error(err);
-  } finally {
-    Common.checkingTimer = false;
-  }
-};
-
 Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
   let wffilter = {
     tenant: obj.tenant,
@@ -651,7 +293,7 @@ Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
     timerWorkNode.removeClass("ST_RUN").addClass("ST_DONE");
   }
   //ProcNext, 后续节点在nexts
-  await Common.procNext(
+  await Engine.procNext(
     obj.tenant,
     obj.teamid,
     obj.tplid,
@@ -683,39 +325,6 @@ Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
       await Engine.sendNext(nexts[i]);
     }
   }
-};
-
-/**
- * Common.endAllWorks = async() 结束全部工作项: 将工作流中所有运行中的节点设为ST_END
- *
- * @param {...}
- * @param {...} wfid -
- * @param {...} tpRoot -
- * @param {...} wfRoot -
- *
- * @return {...}
- */
-Common.endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
-  let workSelector = ".work.ST_RUN";
-  wfRoot.find(workSelector).each(async function (i, el) {
-    let work = Cheerio(el);
-    work.removeClass("ST_RUN");
-    work.addClass("ST_END");
-  });
-  await Todo.updateMany(
-    {
-      tenant: tenant,
-      wfid: wfid,
-      status: "ST_RUN",
-    },
-    { $set: { status: "ST_IGNORE" } },
-    { timestamps: false }
-  );
-  await Todo.updateMany(
-    { tenant: tenant, wfid: wfid },
-    { $set: { wfstatus: "ST_DONE" } },
-    { timestamps: false }
-  );
 };
 
 Engine.__hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
@@ -1138,13 +747,13 @@ Engine.__doneTodo = async function (
               let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
               let botKey = botKeys[botIndex];
               let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-              Engine.callWebApiPoster({ url: wecomAPI, data: markdownMsg })
+              Engine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
                 .then((res) => {
                   logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
                   Engine.log(tenant, todo.wfid, logMsg);
                 })
                 .catch((err) => {
-                  console.error("Error from Engine.callWebApiPoster" + err.message);
+                  console.error("Error from Engine.callWebApiPosterWorker" + err.message);
                 });
             }
           } catch (e) {
@@ -1167,7 +776,7 @@ Engine.__doneTodo = async function (
     // START -- 处理这个非ADHOC 节点
     //////////////////////////////////////////////////
     if (workNode.hasClass("ADHOC") === false) {
-      await Common.procNext(
+      await Engine.procNext(
         tenant,
         teamid,
         todo.tplid,
@@ -1315,12 +924,12 @@ Engine.__doneTodo = async function (
     };
     console.log("//////////////////////////////////////////////////");
     console.log(`[CALL ENDPOINT] ${endpoint}`);
-    Engine.callWebApiPoster({ endpoint, data })
+    Engine.callWebApiPosterWorker({ endpoint, data })
       .then((res) => {
         console.log(res);
       })
       .catch((err) => {
-        console.error("Error from Engine.callWebApiPoster" + err.message);
+        console.error("Error from Engine.callWebApiPosterWorker" + err.message);
       });
 
     console.log("//////////////////////////////////////////////////");
@@ -1330,7 +939,7 @@ Engine.__doneTodo = async function (
 };
 
 // msg: {endpoint: URL,data: JSON}
-Engine.callWebApiPoster = async function (msg) {
+Engine.callWebApiPosterWorker = async function (msg) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(path.dirname(__filename) + "/WebApiPoster.js", {
       env: SHARE_ENV,
@@ -1584,7 +1193,7 @@ Engine.doCallback = async function (cbp, payload) {
   }
 
   let nexts = [];
-  await Common.procNext(
+  await Engine.procNext(
     cbp.tenant,
     teamid,
     cbp.tplid,
@@ -1791,7 +1400,7 @@ Engine.addAdhoc = async function (payload) {
   let wfRoot = wfIO(".workflow");
   let workid = uuidv4();
 
-  let doers = await Common.getDoer(
+  let doers = await Engine.getDoer(
     payload.tenant,
     wf.teamid,
     payload.doer,
@@ -1874,7 +1483,7 @@ Engine.explainPds = async function (payload) {
     }
   }
 
-  let doers = await Common.getDoer(
+  let doers = await Engine.getDoer(
     payload.tenant,
     theTeamid,
     payload.pds,
@@ -2059,18 +1668,6 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
   return todoid;
 };
 
-Common.getEmailRecipientsFromDoers = function (doers) {
-  let ret = "";
-  for (let i = 0; i < doers.length; i++) {
-    if (i === 0) {
-      ret += doers[i].uid;
-    } else {
-      ret += ", " + doers[i].uid;
-    }
-  }
-  return ret;
-};
-
 Client.setKVarFromString = async function (tenant, round, wfid, nodeid, workid, setValueString) {
   let tmpArr = setValueString.split(";");
   tmpArr = tmpArr.map((x) => x.trim());
@@ -2090,16 +1687,7 @@ Client.setKVarFromString = async function (tenant, round, wfid, nodeid, workid, 
   await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP", Const.VAR_IS_EFFICIENT);
 };
 
-Client.getNodeType = function (jq) {
-  for (let i = 0; i < supportedClasses.length; i++) {
-    if (jq.hasClass(supportedClasses[i])) {
-      return supportedClasses[i];
-    }
-  }
-  return "UNKNOWN";
-};
-
-Client.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInternal) {
+Engine.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInternal) {
   if (Tools.hasValue(inputStr) === false) return "";
   let ret = Engine.compileContent(wfRoot, kvars, Parser.base64ToCode(inputStr));
   if (ret.indexOf("[") >= 0) {
@@ -2143,8 +1731,16 @@ Client.startWorkflow = async function (msg) {
   });
 };
 
-//Client是指ZMQ接受 yarkNode消息的client
 Client.yarkNode = async function (obj) {
+  await Engine.yarkNode_internal(obj);
+
+  // callYarkNodeWorker(obj).then((res) => {
+  //   console.log(res);
+  // });
+};
+
+//Client是指ZMQ接受 yarkNode消息的client
+Engine.yarkNode_internal = async function (obj) {
   let nexts = [];
   let parent_nexts = [];
   if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
@@ -2166,8 +1762,8 @@ Client.yarkNode = async function (obj) {
   let fromNodeTitle = fromNode.find("p").text().trim();
   let tpNodeTitle = tpNode.find("p").text().trim();
   let originalNodeTitle = tpNodeTitle;
-  let fromType = Client.getNodeType(fromNode);
-  let toType = Client.getNodeType(tpNode);
+  let fromType = Parser.getNodeType(fromNode);
+  let toType = Parser.getNodeType(tpNode);
   if (tpNode.length < 1) {
     console.error(obj.selector, " not found, direct to #end");
     let an = {
@@ -2224,7 +1820,7 @@ Client.yarkNode = async function (obj) {
     wfRoot.append(
       `<div class="work START ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="DEFAULT" round="${obj.round}" at="${isoNow}"></div>`
     );
-    await Common.procNext(
+    await Engine.procNext(
       obj.tenant,
       teamid,
       obj.tplid,
@@ -2242,7 +1838,7 @@ Client.yarkNode = async function (obj) {
   } else if (tpNode.hasClass("INFORM")) {
     //这里的GetDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
     try {
-      let doers = await Common.getDoer(
+      let doers = await Engine.getDoer(
         obj.tenant,
         teamid,
         tpNode.attr("role"),
@@ -2261,7 +1857,7 @@ Client.yarkNode = async function (obj) {
       }
       let mail_subject = "Message from Metatocome";
       let mail_body = "Message from Metatocome";
-      //let recipients = Common.getEmailRecipientsFromDoers(doers);
+      //let recipients = Engine.getEmailRecipientsFromDoers(doers);
 
       let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
         obj.tenant,
@@ -2303,14 +1899,14 @@ Client.yarkNode = async function (obj) {
               KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
               let tmp_subject = tpNode.find("subject").first().text();
               let tmp_body = tpNode.find("content").first().text();
-              mail_subject = await Client.parseContent(
+              mail_subject = await Engine.parseContent(
                 tenant,
                 wfRoot,
                 KVARS_WITHOUT_VISIBILITY,
                 tmp_subject,
                 Const.INJECT_INTERNAL_VARS
               );
-              mail_body = await Client.parseContent(
+              mail_body = await Engine.parseContent(
                 tenant,
                 wfRoot,
                 KVARS_WITHOUT_VISIBILITY,
@@ -2363,14 +1959,14 @@ Client.yarkNode = async function (obj) {
               //因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
               //userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
               KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
-              mail_subject = await Client.parseContent(
+              mail_subject = await Engine.parseContent(
                 tenant,
                 wfRoot,
                 KVARS_WITHOUT_VISIBILITY,
                 tmp_subject,
                 Const.INJECT_INTERNAL_VARS
               );
-              mail_body = await Client.parseContent(
+              mail_body = await Engine.parseContent(
                 tenant,
                 wfRoot,
                 KVARS_WITHOUT_VISIBILITY,
@@ -2404,7 +2000,7 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" route="${obj.route}" round="${obj.round}" at="${isoNow}"></div>`
       );
-      await Common.procNext(
+      await Engine.procNext(
         obj.tenant,
         teamid,
         obj.tplid,
@@ -2535,7 +2131,7 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`
       );
-      await Common.procNext(
+      await Engine.procNext(
         obj.tenant,
         teamid,
         obj.tplid,
@@ -2570,7 +2166,7 @@ Client.yarkNode = async function (obj) {
       );
     }
   } else if (tpNode.hasClass("AND")) {
-    let andDone = await Common.checkAnd(
+    let andDone = await Engine.checkAnd(
       obj.tenant,
       obj.wfid,
       obj.round,
@@ -2587,7 +2183,7 @@ Client.yarkNode = async function (obj) {
       // 如果 AND 完成
       if (andNodeExisting.length > 0) {
         // 如果AND完成且存在旧节点
-        Common.clearSTClass(andNodeExisting);
+        Parser.clearSTClass(andNodeExisting);
         andNodeExisting.addClass("ST_DONE");
         andNodeExisting.attr("doneat", isoNow);
         andNodeExisting.attr("byroute", obj.byroute);
@@ -2614,7 +2210,7 @@ Client.yarkNode = async function (obj) {
         //刚刚新建的ROUTE，to_workid不用改
       }
       //既然AND已经完成，那么，就可以继续处理AND后面的节点
-      await Common.procNext(
+      await Engine.procNext(
         obj.tenant,
         teamid,
         obj.tplid,
@@ -2634,7 +2230,7 @@ Client.yarkNode = async function (obj) {
       if (andNodeExisting.length > 0) {
         // 如果AND没有完成且存在旧节点
         // 不管状态是什么，设为RUN
-        Common.clearSTClass(andNodeExisting);
+        Parser.clearSTClass(andNodeExisting);
         andNodeExisting.addClass("ST_RUN");
         //byroute应该没有什么用
         andNodeExisting.attr("byroute", obj.byroute);
@@ -2661,7 +2257,7 @@ Client.yarkNode = async function (obj) {
     }
   } else if (tpNode.hasClass("OR")) {
     //OR不需要检查，只要碰到，就会完成
-    /* let orDone = Common.checkOr(
+    /* let orDone = Engine.checkOr(
       obj.tenant,
       obj.wfid,
       tpRoot,
@@ -2677,8 +2273,8 @@ Client.yarkNode = async function (obj) {
         `<div class="work OR ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
       );
       //OR需要忽略掉其它未执行的兄弟节点
-      Common.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
-      await Common.procNext(
+      Engine.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
+      await Engine.procNext(
         obj.tenant,
         teamid,
         obj.tplid,
@@ -2698,8 +2294,8 @@ Client.yarkNode = async function (obj) {
     wfRoot.append(
       `<div class="work THROUGH ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
     );
-    //Common.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
-    await Common.procNext(
+    //Engine.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
+    await Engine.procNext(
       obj.tenant,
       teamid,
       obj.tplid,
@@ -2720,7 +2316,7 @@ Client.yarkNode = async function (obj) {
     );
     let nodeSelector = `.node#${nodeid}`;
     let delayString = tpRoot.find(nodeSelector).find("code").text().trim();
-    let time = Common.__getFutureSecond(wfRoot, delayString);
+    let time = Engine.__getFutureSecond(wfRoot, delayString);
     let delayTimer = new DelayTimer({
       tenant: obj.tenant,
       round: obj.round,
@@ -2783,7 +2379,7 @@ Client.yarkNode = async function (obj) {
       wfRoot.append(
         `<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
       );
-      await Common.procNext(
+      await Engine.procNext(
         obj.tenant,
         teamid,
         obj.tplid,
@@ -2809,7 +2405,7 @@ Client.yarkNode = async function (obj) {
     wfRoot.append(
       `<div class="work END ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}"  byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`
     );
-    await Common.endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
+    await Engine.endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
     await Engine.stopDelayTimers(obj.tenant, obj.wfid);
     wfUpdate["status"] = "ST_DONE";
     wfRoot.removeClass("ST_RUN");
@@ -2860,7 +2456,7 @@ Client.yarkNode = async function (obj) {
       let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
       //console.log(`Child kvars ${JSON.stringify(child_kvars)}`);
       //console.log(`Child RET ${child_route}`);
-      await Common.procNext(
+      await Engine.procNext(
         obj.tenant,
         teamid,
         parent_tplid,
@@ -2935,7 +2531,7 @@ Client.yarkNode = async function (obj) {
         }
       }
     } else {
-      doerOrDoers = await Common.getDoer(
+      doerOrDoers = await Engine.getDoer(
         obj.tenant,
         teamid,
         tpNode.attr("role"), //pds
@@ -3240,210 +2836,6 @@ Engine.compileContent = function (wfRoot, all_kvars, txt) {
   return ret;
 };
 
-Common.getWorkflowStatus = function (wfRoot) {
-  let ret = "ST_UNKNOWN";
-  let tmparr = wfRoot.attr("class").split(" ");
-  for (let i = 0; i < tmparr.length; i++) {
-    if (tmparr[i].startsWith("ST_")) ret = tmparr[i];
-  }
-  return ret;
-};
-Common.getWorkflowDoneAt = function (wfRoot) {
-  return wfRoot.attr("doneat");
-};
-
-// 获取从某个节点开始往后的Routing Options
-Common.getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
-  let linkSelector = '.link[from="' + nodeid + '"]';
-  let routings = [];
-  tpRoot.find(linkSelector).each(function (i, el) {
-    let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
-    if (routings.indexOf(option) < 0) routings.push(option);
-  });
-  if (routings.length > 1 && routings.includes("DEFAULT")) {
-    routings = routings.filter((x) => x !== "DEFAULT");
-  }
-  //前端会自动判断如果routings数组为空，则自动显示为一个按钮DONE
-  //但前面一个注释掉的语句，不能放开注释
-  //因为当除了DEFAULT以外，还有一个选项时，DEFAULT是需要出现的
-  //这种情况发生在，在建模时，一个节点的后面有多个链接，但有一个或多个链接没有设置routing值
-  if (removeOnlyDefault) {
-    if (routings.length === 1 && routings[0] === "DEFAULT") {
-      routings = [];
-    }
-  }
-  return routings;
-};
-Common.getInstruct = function (tpRoot, nodeid) {
-  let ret = "";
-  let tpNode = tpRoot.find("#" + nodeid);
-  if (tpNode) {
-    ret = tpNode.find(".instruct").first().text().trim();
-  }
-  return ret;
-};
-Common.procNext = async function (
-  tenant,
-  teamid,
-  tplid,
-  wfid,
-  tpRoot,
-  wfRoot,
-  this_nodeid,
-  this_workid,
-  decision,
-  nexts,
-  round,
-  rehearsal,
-  starter
-) {
-  let linkSelector = '.link[from="' + this_nodeid + '"]';
-  let routingOptionsInTemplate = [];
-  ////////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////////
-  //原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
-  //但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
-  //let defiedNodes = [];
-  //await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
-  ////////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////////
-  let linksInTemplate = tpRoot.find(linkSelector);
-  tpRoot.find(linkSelector).each(function (i, el) {
-    //SEE HERE
-    let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
-    if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
-  });
-
-  if (routingOptionsInTemplate.length === 0) {
-    //This node has no following node, it's a to-be-grounded node
-    //只要linkSelector选到了节点，至少有一个option会放到routingOptionsInTemplate数组中
-    //See last SEE HERE comment
-    return;
-  }
-  //routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
-  //也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
-  let routes = Client.formatRoute(decision);
-  if (Array.isArray(routes) === false) {
-    routes = [decision];
-  }
-
-  //把模版中的后续decision和ProcNext的decision数组进行交集
-  let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
-  if (foundRoutes.length === 0) {
-    console.error(
-      "decision '" +
-        JSON.stringify(decision) +
-        "' not found in linksInTemplate " +
-        routingOptionsInTemplate.toString()
-    );
-    console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
-    foundRoutes = ["DEFAULT"];
-  }
-  //确保DEFAULT始终存在
-  if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
-  let parallel_number = 0;
-  let parallel_id = uuidv4();
-  //统计需要经过的路径的数量, 同时,运行路径上的变量设置
-
-  let foundNexts = [];
-  let ignoredNexts = [];
-  linksInTemplate.each(function (i, el) {
-    let linkObj = Cheerio(el);
-    let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
-    if (foundRoutes.includes(option)) {
-      //将要被执行的路径
-      foundNexts.push({
-        option: option,
-        toid: linkObj.attr("to"),
-      });
-      //相同option的后续节点的个数
-      parallel_number++;
-      //路径上是否定义了设置值
-      let setValue = linkObj.attr("set");
-      if (setValue) {
-        //设置路径上的变量
-        setValue = Parser.base64ToCode(setValue);
-        Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
-      }
-    } else {
-      //需要被忽略的路径
-      ignoredNexts.push({
-        option: option,
-        toid: linkObj.attr("to"),
-      });
-    }
-  });
-
-  for (let i = 0; i < foundNexts.length; i++) {
-    //构建一个zeroMQ 消息 body， 放在nexts数组中
-    let an = {
-      CMD: "yarkNode",
-      tenant: tenant,
-      teamid: teamid,
-      from_nodeid: this_nodeid,
-      from_workid: this_workid,
-      tplid: tplid,
-      wfid: wfid,
-      selector: "#" + foundNexts[i].toid,
-      byroute: foundNexts[i].option,
-      rehearsal: rehearsal,
-      starter: starter,
-      round: round,
-    };
-    //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
-    if (parallel_number > 1) {
-      //需要设置parallel_id
-      an.parallel_id = parallel_id;
-    }
-    nexts.push(an);
-  }
-
-  let isoNow = Tools.toISOString(new Date());
-  let withouts = [this_workid];
-
-  /*
-  (
-    await Work.find({
-      tenant: tenant,
-      wfid: wfid,
-      round: round,
-      workid: this_workid,
-      status: "ST_DONE",
-    })
-  ).map((x) => {
-    withouts.push(x.from_workid);
-    return x.from_workid;
-  });
-  */
-  let backPath = [];
-  let roundDoneWorks = [];
-  let allDoneWorks = [];
-  await Engine.getBackPath(tenant, round, wfid, this_workid, withouts, backPath);
-  await Engine.getRoundWork(tenant, round, wfid, roundDoneWorks);
-  await Engine.getRoundWork(tenant, -1, wfid, allDoneWorks);
-  for (let i = 0; i < foundNexts.length; i++) {
-    await Engine.clearFollowingDoneRoute(tenant, wfid, round, tpRoot, foundNexts[i].toid, 0);
-  }
-  for (let i = 0; i < ignoredNexts.length; i++) {
-    console.log(`Ignored ${JSON.stringify(ignoredNexts)}`);
-    //TODO: round?
-    await Engine.ignoreRoute(
-      tenant,
-      wfid,
-      round,
-      tpRoot,
-      this_nodeid,
-      this_workid,
-      backPath,
-      roundDoneWorks,
-      allDoneWorks,
-      ignoredNexts[i].toid,
-      isoNow,
-      0
-    );
-  }
-};
-
 /**
  *
  * No use at all
@@ -3517,12 +2909,12 @@ Engine.ignoreRoute = async function (
 ) {
   let prevNodeIds = Engine._getFromNodeIds(tpRoot, toNodeId);
   let toNode = tpRoot.find("#" + toNodeId);
-  let toType = Client.getNodeType(toNode);
+  let toType = Parser.getNodeType(toNode);
   if (toType === "END" && prevNodeIds.length <= 1) return;
   let fromNode = tpRoot.find("#" + fromNodeId);
   let fromNodeTitle = fromNode.find("p").text().trim();
   let toNodeTitle = toNode.find("p").text().trim();
-  let fromType = Client.getNodeType(fromNode);
+  let fromType = Parser.getNodeType(fromNode);
   let anIgnoredRoute = new Route({
     tenant: tenant,
     round: round,
@@ -4870,11 +4262,11 @@ Engine.__getWorkFullInfo = async function (
   ret.wf.pwfid = wfRoot.attr("pwfid");
   ret.wf.pworkid = wfRoot.attr("pworkid");
   ret.wf.attachments = await Engine.getAttachmentsByWfId(tenant, wfid);
-  ret.wf.status = Common.getWorkflowStatus(wfRoot);
+  ret.wf.status = Engine.getWorkflowStatus(wfRoot);
   ret.wf.beginat = wfRoot.attr("at");
-  ret.wf.doneat = Common.getWorkflowDoneAt(wfRoot);
+  ret.wf.doneat = Engine.getWorkflowDoneAt(wfRoot);
 
-  let tmpInstruction = Parser.base64ToCode(Common.getInstruct(tpRoot, todo.nodeid));
+  let tmpInstruction = Parser.base64ToCode(Engine.getInstruct(tpRoot, todo.nodeid));
   tmpInstruction = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
   if (tmpInstruction.indexOf("[") >= 0) {
     tmpInstruction = await Parser.replaceStringWithKVar(
@@ -4887,7 +4279,7 @@ Engine.__getWorkFullInfo = async function (
   ret.instruct = Parser.codeToBase64(tmpInstruction);
 
   //the 3rd param, true: removeOnlyDefault:  如果只有一个DEFAULT，返回空数组
-  ret.routingOptions = Common.getRoutingOptions(tpRoot, todo.nodeid, true);
+  ret.routingOptions = Engine.getRoutingOptions(tpRoot, todo.nodeid, true);
   ret.from_actions = Engine._getFromActions(tpRoot, wfRoot, workNode);
   //ret.following_actions = Engine._getFollowingActions(tpRoot, wfRoot, workNode);
   ret.following_actions = await Engine._getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
@@ -5121,7 +4513,7 @@ Engine._getFollowingActions = function (
         let action = {
           nodeid: tmpWork.attr("nodeid"),
           workid: tmpWork.attr("id"),
-          nodeType: Client.getNodeType(tmpWork),
+          nodeType: Parser.getNodeType(tmpWork),
           route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
           byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           status: st,
@@ -5184,7 +4576,7 @@ Engine._getRoutedPassedWorks = async function (
       let action = {
         nodeid: routedWork.attr("nodeid"),
         workid: routedWork.attr("id"),
-        nodeType: Client.getNodeType(routedWork),
+        nodeType: Parser.getNodeType(routedWork),
         route: Tools.emptyThenDefault(routedWork.attr("route"), "DEFAULT"),
         byroute: Tools.emptyThenDefault(routedWork.attr("byroute"), "DEFAULT"),
         status: st,
@@ -5304,7 +4696,7 @@ Engine._getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0) {
           ret.push({
             nodeid: tmpWork.attr("nodeid"),
             workid: tmpWork.attr("id"),
-            nodeType: Client.getNodeType(tmpWork),
+            nodeType: Parser.getNodeType(tmpWork),
             route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
             byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
           });
@@ -5338,7 +4730,7 @@ Engine._getFromActionsWithRoutes = async function (
   let routes = await Route.find(routeFilter);
   for (let i = 0; i < routes.length; i++) {
     let fromWork = wfRoot.find("#" + routes[i].from_workid);
-    let fromNodeType = Client.getNodeType(fromWork);
+    let fromNodeType = Parser.getNodeType(fromWork);
     if (fromNodeType !== "START") {
       ret.push({
         nodeid: routes[i].from_nodeid,
@@ -5366,15 +4758,6 @@ Engine._getFromNodeIds = function (tpRoot, thisNodeId) {
     ret.push(fromid);
   });
   return [...new Set(ret)];
-};
-
-Common.removeSTClasses = function (jq, classesToRemove) {
-  classesToRemove.map((x) => {
-    jq.removeClass(x);
-  });
-};
-Common.clearSTClass = function (jq) {
-  Common.removeSTClasses(jq, supportedSTStatus);
 };
 
 Engine.getStatusFromClass = function (node) {
@@ -5593,75 +4976,6 @@ Engine.getActiveDelayTimers = async function (tenant, wfid) {
 };
 
 /**
- * wfRoot不为空，是为了从wfRoot中找innerTeam
- * 目前只在yarkNode中的INFORM和ACTION中用到
- * @param {...} tenant -
- * @param {...} teamid -
- * @param {...} pds -
- * @param {...} starter -
- * @param {...} wfRoot = null -
- *
- * @return {...}
- */
-Common.getDoer = async function (
-  tenant,
-  teamid,
-  pds,
-  starter,
-  wfid,
-  wfRoot,
-  kvarString,
-  insertDefaultStarter
-) {
-  let ret = [];
-  if (!pds || (pds && pds === "DEFAULT")) {
-    return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
-  }
-  //先吧kvarString变为kvar对象
-  let kvars = {};
-  //如果 PDS中有【】,组成流程kvars
-  if (pds.match(/\[(.+)\]/)) {
-    kvars = await Parser.userGetVars(
-      tenant,
-      Const.VISI_FOR_NOBODY, //不包含所有有visi控制的参数
-      wfid,
-      Const.FOR_WHOLE_PROCESS,
-      [],
-      [],
-      Const.VAR_IS_EFFICIENT //efficient
-    );
-  }
-  // 如果有kvarString，则解析String，替换前面准备好的kvars
-  if (kvarString) {
-    let kvarPairs = Parser.splitStringToArray(kvarString, ";");
-    kvarPairs.map((x) => {
-      let kv = Parser.splitStringToArray(x, "=");
-      if (kv.length > 1) {
-        kvars[kv[0]] = { value: kv[1] };
-      } else {
-        kvars[kv[0]] = { value: kv[0] };
-      }
-      return kv[0];
-    });
-  }
-  ret = await Parser.getDoer(
-    tenant,
-    teamid,
-    pds,
-    starter,
-    wfid,
-    wfRoot,
-    kvars,
-    insertDefaultStarter
-  );
-  //如果返回为空，并且需要插入缺省starter，则返回缺省starter
-  if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
-    ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
-  }
-  return ret;
-};
-
-/**
  * Engine.getTrack = async() Get the track of work execution reversely.
  *
  * @param {...} Engine.getTrack = asynctenant -
@@ -5816,11 +5130,11 @@ Engine.checkVisi = async function (tenant, tplid, email) {
 Engine.init = Engine.once(async function () {
   await Engine.serverInit();
   await Client.clientInit();
-  Common.checkingTimer = false;
-  Common.settingCron = false;
-  await Common.setupCron();
+  Engine.checkingTimer = false;
+  await Crontab.updateMany({}, { $set: { scheduled: false } });
+  await Engine.rescheduleCrons();
   setInterval(() => {
-    Common.checkDelayTimer();
+    Engine.checkDelayTimer();
   }, 1000);
 });
 
@@ -6107,6 +5421,657 @@ Engine.getNodeStatus = async function (wf) {
   });
   return ret;
 };
+/**
+ * Check whether the status of all previous nodes were ST_DONE
+ *
+ * @param {...} tenant - Tenant
+ * @param {...} wfid - workflow id
+ * @param {...} tpRoot - template root node
+ * @param {...} wfRoot - workflow root node
+ * @param {...} nodeid - the nodeid which will be checked whether the status of it's previous nodes are all ST_DONE
+ * @param {...} route -
+ * @param {...} nexts -
+ *
+ * @return {...} true if the status of all previous nodes are ST_DONE, false if the status of any previous node is not ST_DONE
+ */
+Engine.checkAnd = async function (
+  tenant,
+  wfid,
+  round,
+  tpRoot,
+  wfRoot,
+  theANDnodeid, //AND节点的nodeid;
+  theAndNode,
+  from_workid,
+  route,
+  nexts
+) {
+  let ret = true;
+  let counterPartRound = round; //先用当前AND的 Round
+  let counterPart = theAndNode.attr("cp");
+  let counterPartPassedRoutesNumber = 0;
+  //在该版本之前已经运行的流程，可能会有问题。因为没有counterPart. 手工修复可以吗？
+  if (counterPart) {
+    /*
+    let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }).sort(
+      "-round"
+    );
+    counterPartRound = work.round;
+    */
+    let route = await Route.findOne({
+      tenant: tenant,
+      wfid: wfid,
+      from_nodeid: counterPart,
+    }).sort("-round");
+    counterPartRound = route.round;
+    counterPartPassedRoutesNumber = await Route.countDocuments({
+      tenant: tenant,
+      wfid: wfid,
+      from_nodeid: counterPart,
+      round: counterPartRound,
+    });
+  }
+  let fromNodeIds = await Engine._getFromNodeIds(tpRoot, theANDnodeid);
+  let routeFilter = {
+    tenant: tenant,
+    wfid: wfid,
+    //TODO:  to think
+    ////////////////////////////////////////////////////
+    // 在AND节点前有彼此独立的分支
+    // 比如在周报中，前面有一个节点分成两路，每一路中都
+    // 可能有多次退回，导致两路上的round不一致，在最后
+    // AND检查时，会因为两个round不一致，永远查不到在同
+    // 一个round中的与前序节点个数相同的Route。因此AND
+    // 也就总是通过不了. 图示：
+    // https://cdn.jsdelivr.net/gh/cnshsliu/static.xhw.mtc/img/doc/and_decision_after_round.png
+    // 这种情况下，应该不用管round
+    // ///////////////
+    // 但在另一种情况下，当AND之后有返回， 如
+    // https://cdn.jsdelivr.net/gh/cnshsliu/static.xhw.mtc/img/doc/and_decision_before_round.png
+    // 如果不管round，之前已经通过的routes会被算作完成，如在上图中，
+    // 第二轮执行Step2.1->Step2.1.1 之后，因为Step2.2有被执行过，
+    // 就不会等第二轮的Step2.2，直接判为AND通过
+    //TODO: 这个问题怎么解决呢？ OR也一样
+    ////////////////////////////////////////////////////
+    //round, //包含round，可以走通第二种情况，但走不通第一种情况
+    ////////////////////////////////////////////////////
+    // 使用模版CounterPart机制后，只需要检查counterPartRound做对比
+    ////////////////////////////////////////////////////
+    round: { $lte: counterPartRound },
+    from_nodeid: { $in: fromNodeIds },
+    to_nodeid: theANDnodeid,
+    status: "ST_PASS",
+  };
+  console.log("Check AND counterPart and Round", counterPart, counterPartRound);
+  //routeFromNodes 有Route对象的节点，status可能是PASS，也可能是INGORE
+  let routeFromNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
+  //要么，
+  if (
+    (counterPartPassedRoutesNumber === fromNodeIds.length &&
+      fromNodeIds.length === routeFromNodes.length) ||
+    (counterPartPassedRoutesNumber < fromNodeIds.length &&
+      fromNodeIds.length === counterPartPassedRoutesNumber)
+  ) {
+    //if (routeFromNodes.length === fromNodeIds.length) {
+    console.log(
+      `AND done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) === from node numbers (${fromNodeIds.length})`
+    );
+  } else {
+    console.log(
+      `AND not done! round ${counterPartRound} routes numbes (${routeFromNodes.length}) !== from node numbers (${fromNodeIds.length})`
+    );
+  }
+  return routeFromNodes.length === fromNodeIds.length;
+};
 
-Engine.init();
+/**
+ * Check if the status of any previous nodes is ST_DONE
+ *
+ * @param {...} tenant - Tenant
+ * @param {...} wfid - workflow id
+ * @param {...} tpRoot - template root node
+ * @param {...} wfRoot - workflow root node
+ * @param {...} nodeid - the nodeid which will be checked whether the status of any previous node is ST_DONE
+ * @param {...} route -
+ * @param {...} nexts -
+ *
+ * @return {...} true if the status of any previous node is ST_DONE, false if none of the previous nodes has ST_DONE status.
+ */
+Engine.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, route, nexts) {
+  let ret = false;
+  /*
+  let route_param = route;
+  let linkSelector = `.link[to="${nodeid}"]`;
+  tpRoot.find(linkSelector).each(function (i, el) {
+    let linkObj = Cheerio(el);
+    let fromid = linkObj.attr("from");
+    let wfSelector = `.work.ST_DONE[nodeid="${fromid}"]`;
+    if (wfRoot.find(wfSelector).length > 0) {
+      ret = true;
+    }
+  });
+  */
+  let from_work = wfRoot.find("#" + from_workid);
+  let prl_id = from_work.attr("prl_id");
+  let parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, from_work);
+  if (parallel_actions.length > 0) {
+    for (let i = 0; i < parallel_actions.length; i++) {
+      if (parallel_actions[i].status === "ST_DONE") {
+        ret = true;
+        break;
+      }
+    }
+  } else {
+    /*
+     * ParallelAction仅包含相同Route指向的节点，此时，OR之前的节点可能由于Route不同，而导致ParallelAction
+     * 只有一个，导致在ProcNext中不会设置 parallel_id
+     * 然后 _getParallelActions返回数组元素数为0
+     */
+    ret = true;
+  }
+  return ret;
+};
+
+/**
+ * Engine.ignore4Or() 一个节点完成后,忽略那些未完成的兄弟节点
+ *
+ * @param {...} Engine.ignore4tenant -
+ * @param {...} wfid -
+ * @param {...} tpRoot -
+ * @param {...} wfRoot -
+ * @param {...} nodeid - Id of the node whose front-nodes with ST_RUN status will be set ST_IGNORE status
+ * @param {...} route -
+ * @param {...} nexts -
+ *
+ * @return {...}
+ */
+Engine.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) {
+  let ret = false;
+  let route_param = route;
+  //找到指向OR的所有连接
+  let linkSelector = `.link[to="${nodeid}"]`;
+  tpRoot.find(linkSelector).each(async function (i, el) {
+    let linkObj = Cheerio(el);
+    let fromid = linkObj.attr("from");
+    //选择前置节点
+    let wfSelector = `.work[nodeid="${fromid}"]`;
+    let work = wfRoot.find(wfSelector);
+    if (work.hasClass("ST_RUN")) {
+      //如果该前置节点状态为ST_RUN, 则设置其为ST_IGNORE
+      work.removeClass("ST_RUN");
+      work.addClass("ST_IGNORE");
+
+      //同时,到数据库中,把该节点对应的Todo对象状态设为ST_IGNORE
+      let todoFilter = {
+        tenant: tenant,
+        workid: work.attr("id"),
+        status: "ST_RUN",
+      };
+      await Todo.findOneAndUpdate(todoFilter, { $set: { status: "ST_IGNORE" } }, { new: true });
+    }
+  });
+  return ret;
+};
+
+/**
+ * Engine.__getFutureSecond()  Get the milisecond of exact expire time of delay timer
+ *
+ * @param {...} Engine.__wfRoot - the root node of workflow
+ * @param {...} delayString - delay timer configuration string
+ *
+ * @return {...} the exact millisecond of the expiration of a delay timer
+ */
+Engine.__getFutureSecond = function (wfRoot, delayString) {
+  let ret = 0;
+  let g = delayString.match(/^(start)?(\+?)(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+)?/);
+  let t = [];
+  let procType = "START+";
+  if (g !== null) {
+    t = [
+      parseInt(g[3]),
+      parseInt(g[4]),
+      parseInt(g[5]),
+      parseInt(g[6]),
+      parseInt(g[7]),
+      parseInt(g[8]),
+    ];
+    if (g[1] && g[2]) {
+      //如果 start+ 开头
+      //表示该时间为从流程启动开始往后的一个时间点
+      procType = "START+";
+    } else if (g[2]) {
+      //如果 只有 +号 开头
+      //表示该时间为从现在开始往后的一个时间点
+      procType = "NOW+";
+    } else procType = "FIXTIME";
+    //如果前面没有 start+,也没有+号, 则表示该时间为固定设定时间
+  } else {
+    //如果 配置字符串格式有误,则缺省为从现在往后60分钟
+    t = [0, 0, 0, 0, 60, 0];
+    procType = "NOW+";
+  }
+
+  let dt = new Date();
+  switch (procType) {
+    case "START+":
+      //取wfRoot的启动时间戳
+      dt = new Date(wfRoot.attr("at"));
+      dt.setFullYear(dt.getFullYear() + t[0]);
+      dt.setMonth(dt.getMonth() + t[1]);
+      dt.setDate(dt.getDate() + t[2]);
+      dt.setHours(dt.getHours() + t[3]);
+      dt.setMinutes(dt.getMinutes() + t[4]);
+      dt.setSeconds(dt.getSeconds() + t[5]);
+      break;
+    case "NOW+":
+      dt.setFullYear(dt.getFullYear() + t[0]);
+      dt.setMonth(dt.getMonth() + t[1]);
+      dt.setDate(dt.getDate() + t[2]);
+      dt.setHours(dt.getHours() + t[3]);
+      dt.setMinutes(dt.getMinutes() + t[4]);
+      dt.setSeconds(dt.getSeconds() + t[5]);
+      break;
+    case "FIXTIME":
+      try {
+        dt.setFullYear(t[0]);
+        dt.setMonth(t[1]);
+        dt.setDate(t[2]);
+        dt.setHours(t[3]);
+        dt.setMinutes(t[4]);
+        dt.setSeconds(t[5]);
+      } catch (error) {
+        //如因用户指定的FIXTIME格式有误导致出错,则自动设为60分钟后
+        dt.setMinutes(dt.getMinutes() + 60);
+      }
+      break;
+  }
+  ret = dt.getTime();
+
+  return ret;
+};
+
+/**
+ * Engine.checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
+ *
+ * @param {...}
+ *
+ * @return {...}
+ */
+Engine.checkDelayTimer = async function () {
+  //禁止同时多个线程进行检查
+  if (Engine.checkingTimer) return;
+  try {
+    Engine.checkingTimer = true;
+    let now = new Date();
+    //查找状态为ST_RUN,且 时间早于当前时间的DelayTimer;
+    //时间早于当前时间,表明该定时器已超时;
+    //也就是,从数据库中找到所有已超时或到时的DelayTimer
+    let filter = { wfstatus: "ST_RUN", time: { $lt: now.getTime() } };
+    let delayTimers = await DelayTimer.find(filter);
+    let nexts = [];
+    let tobeDeletedDelayTimerWfIds = [];
+    for (let i = 0; i < delayTimers.length; i++) {
+      try {
+        await Engine.runScheduled(
+          {
+            tenant: delayTimers[i].tenant,
+            tplid: delayTimers[i].tplid,
+            teamid: delayTimers[i].teamid,
+            wfid: delayTimers[i].wfid,
+            nodeid: delayTimers[i].nodeid,
+            workid: delayTimers[i].workid,
+          },
+          tobeDeletedDelayTimerWfIds,
+          false
+        );
+      } catch (e) {
+        console.error(e);
+      }
+      await DelayTimer.deleteOne({ _id: delayTimers[i]._id });
+    }
+
+    //////////////////////////////////////////////////
+    //DelayTimer每次都会被删除，因此无须最后再次清理
+    //tobeDeletedDelayTimerWfIds = [...new Set(tobeDeletedDelayTimerWfIds)];
+    //await DelayTimer.deleteMany({ wfid: { $in: tobeDeletedDelayTimerWfIds } });
+    //////////////////////////////////////////////////
+  } catch (err) {
+    console.error(err);
+  } finally {
+    Engine.checkingTimer = false;
+  }
+};
+
+/**
+ * Engine.endAllWorks = async() 结束全部工作项: 将工作流中所有运行中的节点设为ST_END
+ *
+ * @param {...}
+ * @param {...} wfid -
+ * @param {...} tpRoot -
+ * @param {...} wfRoot -
+ *
+ * @return {...}
+ */
+Engine.endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
+  let workSelector = ".work.ST_RUN";
+  wfRoot.find(workSelector).each(async function (i, el) {
+    let work = Cheerio(el);
+    work.removeClass("ST_RUN");
+    work.addClass("ST_END");
+  });
+  await Todo.updateMany(
+    {
+      tenant: tenant,
+      wfid: wfid,
+      status: "ST_RUN",
+    },
+    { $set: { status: "ST_IGNORE" } },
+    { timestamps: false }
+  );
+  await Todo.updateMany(
+    { tenant: tenant, wfid: wfid },
+    { $set: { wfstatus: "ST_DONE" } },
+    { timestamps: false }
+  );
+};
+
+Engine.getEmailRecipientsFromDoers = function (doers) {
+  let ret = "";
+  for (let i = 0; i < doers.length; i++) {
+    if (i === 0) {
+      ret += doers[i].uid;
+    } else {
+      ret += ", " + doers[i].uid;
+    }
+  }
+  return ret;
+};
+
+Engine.getWorkflowStatus = function (wfRoot) {
+  let ret = "ST_UNKNOWN";
+  let tmparr = wfRoot.attr("class").split(" ");
+  for (let i = 0; i < tmparr.length; i++) {
+    if (tmparr[i].startsWith("ST_")) ret = tmparr[i];
+  }
+  return ret;
+};
+Engine.getWorkflowDoneAt = function (wfRoot) {
+  return wfRoot.attr("doneat");
+};
+
+// 获取从某个节点开始往后的Routing Options
+Engine.getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
+  let linkSelector = '.link[from="' + nodeid + '"]';
+  let routings = [];
+  tpRoot.find(linkSelector).each(function (i, el) {
+    let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+    if (routings.indexOf(option) < 0) routings.push(option);
+  });
+  if (routings.length > 1 && routings.includes("DEFAULT")) {
+    routings = routings.filter((x) => x !== "DEFAULT");
+  }
+  //前端会自动判断如果routings数组为空，则自动显示为一个按钮DONE
+  //但前面一个注释掉的语句，不能放开注释
+  //因为当除了DEFAULT以外，还有一个选项时，DEFAULT是需要出现的
+  //这种情况发生在，在建模时，一个节点的后面有多个链接，但有一个或多个链接没有设置routing值
+  if (removeOnlyDefault) {
+    if (routings.length === 1 && routings[0] === "DEFAULT") {
+      routings = [];
+    }
+  }
+  return routings;
+};
+Engine.getInstruct = function (tpRoot, nodeid) {
+  let ret = "";
+  let tpNode = tpRoot.find("#" + nodeid);
+  if (tpNode) {
+    ret = tpNode.find(".instruct").first().text().trim();
+  }
+  return ret;
+};
+
+Engine.formatRoute = function (route) {
+  let ret = route;
+  if (Array.isArray(route)) return route;
+  else if (route === undefined) ret = ["DEFAULT"];
+  else if (route === null) ret = ["DEFAULT"];
+  else if (route === "") ret = ["DEFAULT"];
+  else if (typeof route === "string") {
+    ret = route.split(",");
+  } else ret = [`${route}`];
+
+  return ret;
+};
+Engine.procNext = async function (
+  tenant,
+  teamid,
+  tplid,
+  wfid,
+  tpRoot,
+  wfRoot,
+  this_nodeid,
+  this_workid,
+  decision,
+  nexts,
+  round,
+  rehearsal,
+  starter
+) {
+  let linkSelector = '.link[from="' + this_nodeid + '"]';
+  let routingOptionsInTemplate = [];
+  ////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////
+  //原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
+  //但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
+  //let defiedNodes = [];
+  //await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
+  ////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////
+  let linksInTemplate = tpRoot.find(linkSelector);
+  tpRoot.find(linkSelector).each(function (i, el) {
+    //SEE HERE
+    let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+    if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
+  });
+
+  if (routingOptionsInTemplate.length === 0) {
+    //This node has no following node, it's a to-be-grounded node
+    //只要linkSelector选到了节点，至少有一个option会放到routingOptionsInTemplate数组中
+    //See last SEE HERE comment
+    return;
+  }
+  //routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
+  //也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
+  let routes = Engine.formatRoute(decision);
+  if (Array.isArray(routes) === false) {
+    routes = [decision];
+  }
+
+  //把模版中的后续decision和ProcNext的decision数组进行交集
+  let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
+  if (foundRoutes.length === 0) {
+    console.error(
+      "decision '" +
+        JSON.stringify(decision) +
+        "' not found in linksInTemplate " +
+        routingOptionsInTemplate.toString()
+    );
+    console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
+    foundRoutes = ["DEFAULT"];
+  }
+  //确保DEFAULT始终存在
+  if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
+  let parallel_number = 0;
+  let parallel_id = uuidv4();
+  //统计需要经过的路径的数量, 同时,运行路径上的变量设置
+
+  let foundNexts = [];
+  let ignoredNexts = [];
+  linksInTemplate.each(function (i, el) {
+    let linkObj = Cheerio(el);
+    let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
+    if (foundRoutes.includes(option)) {
+      //将要被执行的路径
+      foundNexts.push({
+        option: option,
+        toid: linkObj.attr("to"),
+      });
+      //相同option的后续节点的个数
+      parallel_number++;
+      //路径上是否定义了设置值
+      let setValue = linkObj.attr("set");
+      if (setValue) {
+        //设置路径上的变量
+        setValue = Parser.base64ToCode(setValue);
+        Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
+      }
+    } else {
+      //需要被忽略的路径
+      ignoredNexts.push({
+        option: option,
+        toid: linkObj.attr("to"),
+      });
+    }
+  });
+
+  for (let i = 0; i < foundNexts.length; i++) {
+    //构建一个zeroMQ 消息 body， 放在nexts数组中
+    let an = {
+      CMD: "yarkNode",
+      tenant: tenant,
+      teamid: teamid,
+      from_nodeid: this_nodeid,
+      from_workid: this_workid,
+      tplid: tplid,
+      wfid: wfid,
+      selector: "#" + foundNexts[i].toid,
+      byroute: foundNexts[i].option,
+      rehearsal: rehearsal,
+      starter: starter,
+      round: round,
+    };
+    //如果相同后续节点的个数大于1个，也就是彼此为兄弟节点
+    if (parallel_number > 1) {
+      //需要设置parallel_id
+      an.parallel_id = parallel_id;
+    }
+    nexts.push(an);
+  }
+
+  let isoNow = Tools.toISOString(new Date());
+  let withouts = [this_workid];
+
+  /*
+  (
+    await Work.find({
+      tenant: tenant,
+      wfid: wfid,
+      round: round,
+      workid: this_workid,
+      status: "ST_DONE",
+    })
+  ).map((x) => {
+    withouts.push(x.from_workid);
+    return x.from_workid;
+  });
+  */
+  let backPath = [];
+  let roundDoneWorks = [];
+  let allDoneWorks = [];
+  await Engine.getBackPath(tenant, round, wfid, this_workid, withouts, backPath);
+  await Engine.getRoundWork(tenant, round, wfid, roundDoneWorks);
+  await Engine.getRoundWork(tenant, -1, wfid, allDoneWorks);
+  for (let i = 0; i < foundNexts.length; i++) {
+    await Engine.clearFollowingDoneRoute(tenant, wfid, round, tpRoot, foundNexts[i].toid, 0);
+  }
+  for (let i = 0; i < ignoredNexts.length; i++) {
+    console.log(`Ignored ${JSON.stringify(ignoredNexts)}`);
+    //TODO: round?
+    await Engine.ignoreRoute(
+      tenant,
+      wfid,
+      round,
+      tpRoot,
+      this_nodeid,
+      this_workid,
+      backPath,
+      roundDoneWorks,
+      allDoneWorks,
+      ignoredNexts[i].toid,
+      isoNow,
+      0
+    );
+  }
+};
+
+/**
+ * wfRoot不为空，是为了从wfRoot中找innerTeam
+ * 目前只在yarkNode中的INFORM和ACTION中用到
+ * @param {...} tenant -
+ * @param {...} teamid -
+ * @param {...} pds -
+ * @param {...} starter -
+ * @param {...} wfRoot = null -
+ *
+ * @return {...}
+ */
+Engine.getDoer = async function (
+  tenant,
+  teamid,
+  pds,
+  starter,
+  wfid,
+  wfRoot,
+  kvarString,
+  insertDefaultStarter
+) {
+  let ret = [];
+  if (!pds || (pds && pds === "DEFAULT")) {
+    return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+  }
+  //先吧kvarString变为kvar对象
+  let kvars = {};
+  //如果 PDS中有【】,组成流程kvars
+  if (pds.match(/\[(.+)\]/)) {
+    kvars = await Parser.userGetVars(
+      tenant,
+      Const.VISI_FOR_NOBODY, //不包含所有有visi控制的参数
+      wfid,
+      Const.FOR_WHOLE_PROCESS,
+      [],
+      [],
+      Const.VAR_IS_EFFICIENT //efficient
+    );
+  }
+  // 如果有kvarString，则解析String，替换前面准备好的kvars
+  if (kvarString) {
+    let kvarPairs = Parser.splitStringToArray(kvarString, ";");
+    kvarPairs.map((x) => {
+      let kv = Parser.splitStringToArray(x, "=");
+      if (kv.length > 1) {
+        kvars[kv[0]] = { value: kv[1] };
+      } else {
+        kvars[kv[0]] = { value: kv[0] };
+      }
+      return kv[0];
+    });
+  }
+  ret = await Parser.getDoer(
+    tenant,
+    teamid,
+    pds,
+    starter,
+    wfid,
+    wfRoot,
+    kvars,
+    insertDefaultStarter
+  );
+  //如果返回为空，并且需要插入缺省starter，则返回缺省starter
+  if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
+    ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+  }
+  return ret;
+};
+
+if (isMainThread) Engine.init();
 module.exports = { Engine, Client };
