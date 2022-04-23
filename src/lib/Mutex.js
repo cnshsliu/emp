@@ -15,9 +15,11 @@ const Mutex = {
   },
   process: async function (mykey, func) {
     let that = this;
+    //如果不存在myKey的lock，就执行
     if (!that.lock[mykey]) {
       that.lock[mykey] = new Date().getTime();
       let objArr = that.mutexes[mykey];
+      //取得对象的序列，拿出第一个进行处理
       let oneObj = objArr.shift();
       if (oneObj) {
         try {
@@ -28,6 +30,7 @@ const Mutex = {
       }
       delete that.lock[mykey];
     } else {
+      //否则，100毫秒后再尝试
       setTimeout(async () => {
         await that.process(mykey, func);
       }, 100);
