@@ -35,10 +35,10 @@ const TimeZone = require("../../lib/timezone");
 const Tools = require("../../tools/tools");
 const suuid = require("short-uuid");
 const Jimp = require("jimp");
-const { ZMQ } = require("../../lib/ZMQ");
 const internals = {};
 const SystemPermController = require("../../lib/SystemPermController");
 const { EmpError } = require("../../lib/EmpError");
+const { Engine, Client } = require("../../lib/Engine");
 const Cache = require("../../lib/Cache");
 
 /**
@@ -128,15 +128,14 @@ internals.RegisterUser = async function (req, h) {
       verifyToken +
       "'>Verify Email</a></p>";
 
-    await ZMQ.server.QueSend(
-      "EmpBiz",
-      JSON.stringify({
-        CMD: "SendSystemMail",
+    await Engine.sendNexts([
+      {
+        CMD: "CMD_sendSystemMail",
         recipients: process.env.TEST_RECIPIENTS || user.email,
         subject: "[EMP] Please verify your email",
         html: Parser.codeToBase64(mailbody),
-      })
-    );
+      },
+    ]);
 
     let token = JwtAuth.createToken({ id: user._id });
     return {
@@ -1221,8 +1220,20 @@ internals.SendInvitation = async function (req, h) {
       throw new EmpError("wrong_password", "You are using a wrong password");
     }
     await Parser.isAdmin(me);
+    let frontendUrl = Tools.getFrontEndUrl();
     for (let i = 0; i < emails.length; i++) {
-      await Tools.sendInvitationEmail(ZMQ, emails[i]);
+      var mailbody = `<p>Welcome to HyperFlow. </p> <br/> Your have been invited to join Org, <br/>
+       Please register if you have no HyperFLow account at this momnent with your email <br/>
+          ${emails[i]} <br/><br/>
+      <a href='${frontendUrl}/register'>${frontendUrl}/register</a>`;
+      await Engine.sendNexts([
+        {
+          CMD: "CMD_sendSystemMail",
+          recipients: process.env.TEST_RECIPIENTS || email,
+          subject: "[EMP] Please register Metatocome",
+          html: Tools.codeToBase64(mailbody),
+        },
+      ]);
     }
     return h.response({ ret: "done" });
   } catch (err) {
@@ -1322,5 +1333,3 @@ internals.SignatureViewer = async function (req, h) {
 };
 
 module.exports = internals;
-
-ZMQ.init();

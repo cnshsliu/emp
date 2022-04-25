@@ -1,3 +1,4 @@
+const { isMainThread } = require("worker_threads");
 /*jshint node: true */
 /**
  * # mongodb.js
@@ -7,7 +8,7 @@
  * This class sets up the connection depending on the environment
  *
  */
-"use strict";
+("use strict");
 
 /**
  * ## Imports
@@ -40,6 +41,22 @@ if (process.env.OPENSHIFT_MONGODB_DB_HOST) {
     process.env.OPENSHIFT_APP_NAME;
 }
 
-Mongoose.connect(connection_string, { useUnifiedTopology: true, useNewUrlParser: true });
+Mongoose.connection
+  .on(
+    "open",
+    console.info.bind(console, (isMainThread ? "MainThread" : "ChildThread") + "  Database open")
+  )
+  .on(
+    "close",
+    console.info.bind(console, (isMainThread ? "MainThread" : "ChildThread") + " Database close")
+  );
+
+Mongoose.connect(connection_string, {
+  useUnifiedTopology: true,
+  useNewUrlParser: true,
+  maxPoolSize: isMainThread ? 100 : 1,
+});
 //Mongoose.set("useCreateIndex", true);
 //Mongoose.set("useFindAndModify", false);
+//
+module.exports = { Mongoose };

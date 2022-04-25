@@ -258,22 +258,6 @@ const Tools = {
       })
     );
   },
-  sendInvitationEmail: async function (ZMQ, email) {
-    let frontendUrl = Tools.getFrontEndUrl();
-    var mailbody = `<p>Welcome to HyperFlow. </p> <br/> Your have been invited to join Org, <br/>
-       Please register if you have no HyperFLow account at this momnent with your email <br/>
-          ${email} <br/><br/>
-      <a href='${frontendUrl}/register'>${frontendUrl}/register</a>`;
-    await ZMQ.server.QueSend(
-      "EmpBiz",
-      JSON.stringify({
-        CMD: "SendSystemMail",
-        recipients: process.env.TEST_RECIPIENTS || email,
-        subject: "[EMP] Please register Metatocome",
-        html: Tools.codeToBase64(mailbody),
-      })
-    );
-  },
 
   getFrontEndUrl: function () {
     var url = "";

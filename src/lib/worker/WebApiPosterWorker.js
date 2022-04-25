@@ -50,6 +50,10 @@ const WreckPost = async (url, content) => {
   });
 };
 
-WreckPost(msg.endpoint, msg.data).then((res) => {
-  parentPort.postMessage("WebAPI POSTer Worker Done.");
-});
+if (msg.url && msg.data) {
+  WreckPost(msg.url, msg.data).then((res) => {
+    parentPort.postMessage("WebAPI POSTer Worker Done.");
+  });
+} else {
+  throw new Error("Msg passed to WebApiPosterWorker must have url and data");
+}

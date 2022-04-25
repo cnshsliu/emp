@@ -17,6 +17,7 @@ const Mutex = {
     let that = this;
     //如果不存在myKey的lock，就执行
     if (!that.lock[mykey]) {
+      //每次处理，都将lock设定为当前时间
       that.lock[mykey] = new Date().getTime();
       let objArr = that.mutexes[mykey];
       //取得对象的序列，拿出第一个进行处理
@@ -28,6 +29,7 @@ const Mutex = {
           console.error(err);
         }
       }
+      //每个处理完成，就删除lock
       delete that.lock[mykey];
     } else {
       //否则，100毫秒后再尝试
@@ -42,7 +44,7 @@ const Mutex = {
     that.cleanup = setTimeout(async () => {
       for (const [myKey, lockTime] in Object.entries(that.lock)) {
         if (lockTime < new Date().getTime() - 600000) {
-          // 10 minutes
+          // 10 minutes， 每个对象的处理，不能超过10分钟
           delete that.lock[myKey];
         }
       }

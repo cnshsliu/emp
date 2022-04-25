@@ -1,4 +1,4 @@
-const { Worker, isMainThread, SHARE_ENV } = require("worker_threads");
+const { Worker, parentPort, isMainThread, SHARE_ENV } = require("worker_threads");
 const cronEngine = require("node-cron");
 const Wreck = require("@hapi/wreck");
 const Https = require("https");
@@ -35,19 +35,13 @@ const fs = require("fs");
 const path = require("path");
 const util = require("util");
 const Exec = util.promisify(require("child_process").exec);
-//const https = require('https');
-// const zmq = require("zeromq");
-// const { ZMQ } = require("./ZMQ");
-let zmq;
-let ZMQ;
-if (isMainThread) {
-  zmq = require("zeromq");
-  ZMQ = require("./ZMQ");
-}
+const Podium = require("@hapi/podium");
 const { EmpError } = require("./EmpError");
 const Const = require("./Const");
 
-const Engine = {};
+const Engine = {
+  podium: null,
+};
 const Client = {};
 
 const CF = {
@@ -70,18 +64,73 @@ const CFNameMap = {
 
 const crontabsMap = {};
 
-const callYarkNodeWorker = async function (msg) {
+Engine.callYarkNodeWorker = function (msg) {
+  msg = JSON.parse(JSON.stringify(msg));
   return new Promise((resolve, reject) => {
-    const worker = new Worker(path.dirname(__filename) + "/YarkNodeWorker.js", {
+    const worker = new Worker(path.dirname(__filename) + "/worker/YarkNodeWorker.js", {
+      env: SHARE_ENV,
+      workerData: msg,
+    });
+    worker.on("message", async (message) => {
+      if (message.cmd && message.cmd === "worker_log") console.log("\tWorker Log:", message.msg);
+      else if (message.cmd && message.cmd === "worker_sendNexts") {
+        await Engine.sendNexts(message.msg);
+        console.log("\tNexts from YarkNodeWorker was sent");
+      } else if (message.cmd && message.cmd === "worker_sendTenantMail") {
+        let smtp = await Cache.getOrgSmtp(message.msg.tenant);
+        message.msg.smtp = smtp;
+        await Engine.callSendMailWorker(message.msg);
+      } else {
+        console.log("\t" + message);
+        console.log("====>Now Resolve YarkNodeWorker ");
+        resolve;
+      }
+    });
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) reject(new Error(`YarkNodeWorker stopped with exit code ${code}`));
+    });
+  });
+};
+//
+// msg: {endpoint: URL,data: JSON}
+Engine.callWebApiPosterWorker = async function (msg) {
+  msg = JSON.parse(JSON.stringify(msg));
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.dirname(__filename) + "/worker/WebApiPosterWorker.js", {
       env: SHARE_ENV,
       workerData: msg,
     });
     worker.on("message", resolve);
     worker.on("error", reject);
     worker.on("exit", (code) => {
-      if (code !== 0) reject(new Error(`YarkNodeWorker stopped with exit code ${code}`));
+      if (code !== 0) reject(new Error(`WebApiPosterWorker Worker stopped with exit code ${code}`));
     });
   });
+};
+
+Engine.callSendMailWorker = async function (msg) {
+  try {
+    msg = JSON.parse(JSON.stringify(msg));
+    return new Promise((resolve, reject) => {
+      try {
+        const worker = new Worker(path.dirname(__filename) + "/worker/SendMailWorker.js", {
+          env: SHARE_ENV,
+          workerData: msg,
+        });
+        worker.on("message", resolve);
+        worker.on("error", reject);
+        worker.on("exit", (code) => {
+          if (code !== 0) reject(new Error(`SendMailWorker Worker stopped with exit code ${code}`));
+        });
+      } catch (error) {
+        console.error(error);
+        console.log(JSON.stringify(msg));
+      }
+    });
+  } catch (err) {
+    console.error(err);
+  }
 };
 
 /**
@@ -103,46 +152,102 @@ Engine.once = function (fn, context) {
 };
 
 Engine.serverInit = async function () {
-  Engine.PUB = zmq.socket("pub");
-  await Engine.PUB.bindSync("tcp://127.0.0.1:5000");
-  console.log("Engine sideA Publisher bound to port 5000");
+  if (!isMainThread) {
+    console.error("Engine.serverInit() should happen only in main thread");
+    return;
+  }
+  Engine.podium = new Podium();
+  Engine.podium.registerEvent([
+    {
+      name: "CMD_yarkNode",
+      channels: ["CMD_yarkNode-1"],
+    },
+    {
+      name: "CMD_startWorkflow",
+      channels: ["CMD_startWorkflow-1"],
+    },
+    {
+      name: "CMD_sendTenantMail",
+      channels: ["CMD_sendTenantMail-1"],
+    },
+    {
+      name: "CMD_sendSystemMail",
+      channels: ["CMD_sendSystemMail-1"],
+    },
+  ]);
+};
+
+Engine.sendNexts = async function (nexts) {
+  if (isMainThread) {
+    for (let i = 0; i < nexts.length; i++) {
+      if (nexts[i].tenant && typeof nexts[i].tenant !== "string") {
+        nexts[i].tenant = nexts[i].tenant.toString();
+      }
+      if (nexts[i].tenant && typeof nexts[i].tenant !== "string") {
+        console.log("Warning", nexts[i].tenant, " is not string");
+      }
+      let podium_name = nexts[i].CMD;
+      let podium_channel = podium_name + "-1";
+      console.log("==========", podium_name, "===", podium_channel, "===============");
+      Engine.podium.emit({ name: podium_name, channel: podium_channel }, nexts[i]);
+    }
+  } else {
+    if (nexts.length > 0) {
+      parentPort.postMessage({ cmd: "worker_sendNexts", msg: nexts });
+    }
+  }
 };
 
 Client.clientInit = async function () {
-  Client.SUB = zmq.socket("sub");
-  Client.SUB.connect("tcp://127.0.0.1:5000");
-  Client.SUB.subscribe("EMP");
-  console.log("Engine sideB Subscriber connected to port 5000");
-  Client.SUB.on("message", async function (topic, msg) {
-    try {
-      let topicString = topic.toString("utf-8");
-      if (msg && topicString === "EMP") {
-        let msgObject = JSON.parse(msg.toString("utf-8"));
-        try {
-          switch (msgObject.CMD) {
-            case "yarkNode":
-              Mutex.putObject(msgObject.wfid, msgObject);
-              await Mutex.process(msgObject.wfid, Client.yarkNode);
-              break;
-            case "CMD_startWorkflow":
-              Mutex.putObject(msgObject.tplid, msgObject);
-              await Mutex.process(msgObject.tplid, Client.startWorkflow);
-              break;
-            case "CMD_sendMail":
-              Mutex.putObject("mutex_mailer", msgObject);
-              await Mutex.process("mutex_mailer", Client.sendTenantMail);
-              break;
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      } else {
-        console.warn("ZMQ received msg: [", msg, "]");
-      }
-    } catch (error) {
-      console.warn("ZMQ Client.SUB", error.message);
+  if (!isMainThread) {
+    console.error("Client.clientInit() should happen only in main thread");
+    return;
+  }
+  Engine.podium.on(
+    {
+      name: "CMD_yarkNode",
+      channels: ["CMD_yarkNode-1"],
+    },
+    async (msgObject) => {
+      //同一个wfid，通过Mutex实现顺序处理
+      Mutex.putObject(msgObject.wfid, msgObject);
+      await Mutex.process(msgObject.wfid, Client.onYarkNode);
     }
-  });
+  );
+
+  Engine.podium.on(
+    {
+      name: "CMD_startWorkflow",
+      channels: ["CMD_startWorkflow-1"],
+    },
+    async (msgObject) => {
+      //同一个tplid，通过Mutex，实现顺序处理
+      Mutex.putObject(msgObject.tplid, msgObject);
+      await Mutex.process(msgObject.tplid, Client.onStartWorkflow);
+    }
+  );
+  Engine.podium.on(
+    {
+      name: "CMD_sendSystemMail",
+      channels: ["CMD_sendSystemMail-1"],
+    },
+    async (msgObject) => {
+      //通过Mutex，实现顺序处理
+      Mutex.putObject("mutex_system_mailer", msgObject);
+      await Mutex.process("mutex_system_mailer", Client.onSendSystemMail);
+    }
+  );
+  Engine.podium.on(
+    {
+      name: "CMD_sendTenantMail",
+      channels: ["CMD_sendTenantMail-1"],
+    },
+    async (msgObject) => {
+      //通过Mutex，实现顺序处理
+      Mutex.putObject("mutex_tenant_mailer", msgObject);
+      await Mutex.process("mutex_tenant_mailer", Client.onSendTenantMail);
+    }
+  );
 };
 
 Engine.cleanupFaultCrons = async function () {
@@ -234,7 +339,7 @@ Engine.__batchStartWorkflow = async (tenant, tplid, emails, sender) => {
       sender: sender,
     };
 
-    await Engine.sendNext(msgToSend);
+    await Engine.sendNexts([msgToSend]);
   }
 };
 
@@ -318,13 +423,8 @@ Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
   wf.doc = wfIO.html();
   await wf.save();
   //将Nexts数组中的消息BODY依次发送出去
-  //消息BODY中的属性CMD: "yarkNode",
-  if (nexts.length > 0) {
-    for (let i = 0; i < nexts.length; i++) {
-      //推入处理队列
-      await Engine.sendNext(nexts[i]);
-    }
-  }
+  //推入处理队列
+  await Engine.sendNexts(nexts);
 };
 
 Engine.__hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
@@ -703,74 +803,9 @@ Engine.__doneTodo = async function (
     );
     //////////////////////////////////////////////////
     // 发送WeComBotMessage
-    try {
-      // 当前节点是否发送weCom BOT message
-      if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
-        logMsg = `This node ${theWork.title} need to send wecom`;
-        Engine.log(tenant, todo.wfid, logMsg);
-        let template = await Template.findOne(
-          { tenat: tenant, tplid: wf.tplid },
-          { _id: 0, author: 1 }
-        );
-        //找名字固定为 wecombots_tpl的且内容包含当前tplid的列表
-        let wecomBot = await List.findOne({
-          tenant: tenant,
-          author: template.author,
-          name: "wecombots_tpl",
-          entries: { $elemMatch: { key: wf.tplid } },
-        }).select({
-          // 从列表中过滤当前tplid
-          entries: {
-            $elemMatch: { key: wf.tplid },
-          },
-        });
-        logMsg = `Query List, ${wecomBot ? "successfully" : "not found"}`;
-        Engine.log(tenant, todo.wfid, logMsg);
-        if (wecomBot) {
-          //如果当前tplid在 wecombots_tpl中
-          let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
-            tenant,
-            doer,
-            todo,
-            theWork,
-            workDecision,
-            comment
-          );
-          logMsg = `Query List got bot keys ${wecomBot.entries[0].items}`;
-          Engine.log(tenant, todo.wfid, logMsg);
-          try {
-            //到当前tplid的所有bots keys
-            let botKeys = wecomBot.entries[0].items.split(";");
-            if (botKeys.length > 0) {
-              let botsNumber = botKeys.length;
-              //随机选择一个bot key
-              let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
-              let botKey = botKeys[botIndex];
-              let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-              Engine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
-                .then((res) => {
-                  logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
-                  Engine.log(tenant, todo.wfid, logMsg);
-                })
-                .catch((err) => {
-                  console.error("Error from Engine.callWebApiPosterWorker" + err.message);
-                });
-            }
-          } catch (e) {
-            console.error(e);
-          }
-        } else {
-          logMsg = `!!!!! Query List return null, something must wrong, please check  list defination\n
-        list name = wecombots_tpl key = ${wf.tplid}`;
-          Engine.log(tenant, todo.wfid, logMsg);
-        }
-      } else {
-        logMsg = `This node ${todo.title} does not send wecom`;
-        Engine.log(tenant, todo.wfid, logMsg);
-      }
-    } catch (wecomError) {
-      console.error(wecomError.message);
-    }
+    //
+
+    await Engine.procWeComBot(tenant, wf, todo, doer, tpNode, theWork, workDecision, comment);
 
     //////////////////////////////////////////////////
     // START -- 处理这个非ADHOC 节点
@@ -846,7 +881,7 @@ Engine.__doneTodo = async function (
   todo.status = "ST_DONE";
   if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
   todo.doneat = isoNow;
-  await todo.save();
+  todo = await todo.save();
   //如果是任一完成即完成多人Todo
   //则将一个人完成后，其他人的设置为ST_IGNORE
   //忽略同一个节点上，其他人的todo
@@ -872,9 +907,7 @@ Engine.__doneTodo = async function (
   ////////////////////////////////////////////////////
   //送出next
   ////////////////////////////////////////////////////
-  for (let i = 0; i < nexts.length; i++) {
-    await Engine.sendNext(nexts[i]);
-  }
+  await Engine.sendNexts(nexts);
 
   ////////////////////////////////////////////////////
   // 调用endpoint
@@ -924,7 +957,7 @@ Engine.__doneTodo = async function (
     };
     console.log("//////////////////////////////////////////////////");
     console.log(`[CALL ENDPOINT] ${endpoint}`);
-    Engine.callWebApiPosterWorker({ endpoint, data })
+    Engine.callWebApiPosterWorker({ url: endpoint, data: data })
       .then((res) => {
         console.log(res);
       })
@@ -935,22 +968,89 @@ Engine.__doneTodo = async function (
     console.log("//////////////////////////////////////////////////");
   }
 
-  return { workid: todo.workid, todoid: todo.todoid };
+  return { workid: todo.workid, todoid: todo.todoid, status: todo.status, doneat: todo.doneat };
 };
 
-// msg: {endpoint: URL,data: JSON}
-Engine.callWebApiPosterWorker = async function (msg) {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(path.dirname(__filename) + "/WebApiPoster.js", {
-      env: SHARE_ENV,
-      workerData: msg,
-    });
-    worker.on("message", resolve);
-    worker.on("error", reject);
-    worker.on("exit", (code) => {
-      if (code !== 0) reject(new Error(`WebApiPoster Worker stopped with exit code ${code}`));
-    });
-  });
+Engine.procWeComBot = async function (
+  tenant,
+  wf,
+  todo,
+  doer,
+  tpNode,
+  theWork,
+  workDecision,
+  comment
+) {
+  try {
+    // 当前节点是否发送weCom BOT message
+    if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
+      logMsg = `This node ${theWork.title} need to send wecom`;
+      Engine.log(tenant, todo.wfid, logMsg);
+      let template = await Template.findOne(
+        { tenat: tenant, tplid: wf.tplid },
+        { _id: 0, author: 1 }
+      );
+      //找名字固定为 wecombots_tpl的且内容包含当前tplid的列表
+      let wecomBot = await List.findOne({
+        tenant: tenant,
+        author: template.author,
+        name: "wecombots_tpl",
+        entries: { $elemMatch: { key: wf.tplid } },
+      }).select({
+        // 从列表中过滤当前tplid
+        entries: {
+          $elemMatch: { key: wf.tplid },
+        },
+      });
+      logMsg = `Query List, ${wecomBot ? "successfully" : "not found"}`;
+      Engine.log(tenant, todo.wfid, logMsg);
+      if (wecomBot) {
+        //如果当前tplid在 wecombots_tpl中
+        let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
+          tenant,
+          doer,
+          todo,
+          theWork,
+          workDecision,
+          comment
+        );
+        logMsg = `Query List got bot keys ${wecomBot.entries[0].items}`;
+        Engine.log(tenant, todo.wfid, logMsg);
+        try {
+          //到当前tplid的所有bots keys
+          let botKeys = wecomBot.entries[0].items.split(";");
+          if (botKeys.length > 0) {
+            let botsNumber = botKeys.length;
+            //随机选择一个bot key
+            let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
+            let botKey = botKeys[botIndex];
+            let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
+            Engine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
+              .then((res) => {
+                logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex + 1}/${botsNumber}`;
+                Engine.log(tenant, todo.wfid, logMsg);
+              })
+              .catch((err) => {
+                logMsg = "Error from WebApiPosterWorker: " + err.message;
+                console.error(logMsg);
+                Engine.log(tenant, todo.wfid, logMsg);
+              });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        logMsg = `!!!!! Query List return null, something must wrong, please check  list defination\n
+        list name = wecombots_tpl key = ${wf.tplid}`;
+        Engine.log(tenant, todo.wfid, logMsg);
+      }
+    } else {
+      logMsg = `This node ${todo.title} does not send wecom`;
+      Engine.log(tenant, todo.wfid, logMsg);
+    }
+  } catch (wecomError) {
+    console.error(wecomError.message);
+  }
 };
 
 Engine.buildWorkDoneMarkdownMessage = async function (
@@ -1226,9 +1326,7 @@ Engine.doCallback = async function (cbp, payload) {
   );
 
   await cbp.delete();
-  for (let i = 0; i < nexts.length; i++) {
-    await Engine.sendNext(nexts[i]);
-  }
+  await Engine.sendNexts(nexts);
   return cbp.workid;
 };
 
@@ -1349,7 +1447,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
 
   let nexts = [];
   let msgToSend = {
-    CMD: "yarkNode",
+    CMD: "CMD_yarkNode",
     tenant: tenant,
     teamid: wf.teamid,
     from_nodeid: clone_workNode.attr("from_nodeid"),
@@ -1384,9 +1482,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
       await Engine.postCommentForTodo(tenant, email, old_todo, comment);
   } catch (err) {}
 
-  for (let i = 0; i < nexts.length; i++) {
-    await Engine.sendNext(nexts[i]);
-  }
+  await Engine.sendNexts(nexts);
 
   Engine.log(tenant, wfid, `[Revoke] [${old_todo.title}] [${old_todo.tplid}] [${email}]`);
 
@@ -1570,7 +1666,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     let from_workNode = wfRoot.find(`#${prevWorkid}`);
     if (fromWorks[i].nodeType === "ACTION") {
       let msgToSend = {
-        CMD: "yarkNode",
+        CMD: "CMD_yarkNode",
         tenant: tenant,
         teamid: wf.teamid,
         from_nodeid: from_workNode.attr("from_nodeid"),
@@ -1661,9 +1757,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
     if (comment.trim().length > 0) await Engine.postCommentForTodo(tenant, doer, todo, comment);
   } catch (err) {}
 
-  for (let i = 0; i < nexts.length; i++) {
-    await Engine.sendNext(nexts[i]);
-  }
+  await Engine.sendNexts(nexts);
   Engine.log(tenant, wfid, `[Sendback] [${todo.title}] [${todo.tplid}] [${email}]`);
   return todoid;
 };
@@ -1697,49 +1791,76 @@ Engine.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInter
   return ret;
 };
 
-Client.sendTenantMail = async function (msg) {
-  Engine.sendTenantMail(
-    msg.tenant, //not rehearsal
-    msg.recipient,
-    msg.subject, //tplid
-    msg.mail_body
-  ).then((wf) => {
-    console.log("Mailer send email to ", msg.recipient, "subject:", msg.subject);
-  });
+Client.onSendTenantMail = async function (msg) {
+  try {
+    let smtp = await Cache.getOrgSmtp(msg.tenant);
+    Engine.callSendMailWorker({
+      smtp: smtp,
+      recipients: msg.recipients,
+      cc: msg.cc,
+      bcc: msg.bcc,
+      subject: msg.subject,
+      html: msg.html,
+    });
+  } catch (error) {
+    console.error(error);
+  }
+};
+
+Client.onSendSystemMail = async function (msg) {
+  try {
+    Engine.callSendMailWorker({
+      smtp: "System",
+      recipients: msg.recipients,
+      subject: msg.subject,
+      html: msg.html,
+    });
+  } catch (error) {
+    console.error(error);
+  }
 };
 
 //////////////////////////////////////////////////
-// ZeroMQ Client startWorkflow on receiving message
 //////////////////////////////////////////////////
-Client.startWorkflow = async function (msg) {
-  Engine.startWorkflow(
-    msg.rehearsal, //not rehearsal
-    msg.tenant,
-    msg.tplid, //tplid
-    msg.starter,
-    msg.pbo, //pbo
-    msg.teamid,
-    msg.wfid,
-    msg.wftitle,
-    msg.pwfid, //parent wfid
-    msg.pwftitle, //parent wf name
-    msg.pkvars, //parent kvars
-    msg.runmode, //runmode
-    msg.files
-  ).then((wf) => {
-    console.log(msg.sender, "started workflow for ", msg.starter, "id:", msg.wfid);
-  });
+Client.onStartWorkflow = async function (msg) {
+  try {
+    Engine.startWorkflow(
+      msg.rehearsal, //not rehearsal
+      msg.tenant,
+      msg.tplid, //tplid
+      msg.starter,
+      msg.pbo, //pbo
+      msg.teamid,
+      msg.wfid,
+      msg.wftitle,
+      msg.pwfid, //parent wfid
+      msg.pwftitle, //parent wf name
+      msg.pkvars, //parent kvars
+      msg.runmode, //runmode
+      msg.files
+    ).then((wf) => {
+      console.log(msg.sender, "started workflow for ", msg.starter, "id:", msg.wfid);
+    });
+  } catch (error) {
+    console.error(error);
+  }
 };
 
-Client.yarkNode = async function (obj) {
-  await Engine.yarkNode_internal(obj);
+Client.onYarkNode = async function (obj) {
+  try {
+    //await Engine.yarkNode_internal(obj);
 
-  // callYarkNodeWorker(obj).then((res) => {
-  //   console.log(res);
-  // });
+    console.log("--->Before call YarkNodeWorker");
+    Engine.callYarkNodeWorker(obj).then((res) => {
+      console.log("--->End call YarkNodeWorker");
+      console.log(res);
+    });
+  } catch (error) {
+    console.error(error);
+  }
 };
 
-//Client是指ZMQ接受 yarkNode消息的client
+//Client是指接受 yarkNode消息的client
 Engine.yarkNode_internal = async function (obj) {
   let nexts = [];
   let parent_nexts = [];
@@ -1767,7 +1888,7 @@ Engine.yarkNode_internal = async function (obj) {
   if (tpNode.length < 1) {
     console.error(obj.selector, " not found, direct to #end");
     let an = {
-      CMD: "yarkNode",
+      CMD: "CMD_yarkNode",
       tenant: obj.tenant,
       teamid: obj.teamid,
       from_nodeid: obj.from_nodeid,
@@ -1780,7 +1901,7 @@ Engine.yarkNode_internal = async function (obj) {
       starter: obj.starter,
       round: obj.round,
     };
-    await Engine.sendNext(an);
+    await Engine.sendNexts([an]);
     return;
   }
   let nodeid = tpNode.attr("id");
@@ -2669,12 +2790,8 @@ Engine.yarkNode_internal = async function (obj) {
     { upsert: false, new: true }
   );
 
-  for (let i = 0; i < nexts.length; i++) {
-    await Engine.sendNext(nexts[i]);
-  }
-  for (let i = 0; i < parent_nexts.length; i++) {
-    await Engine.sendNext(parent_nexts[i]);
-  }
+  await Engine.sendNexts(nexts);
+  await Engine.sendNexts(parent_nexts);
 
   //////////////////////////////////////////////////
   //  START send to workflow endpoint
@@ -2699,7 +2816,7 @@ Engine.rerunNode = async function (tenant, wfid, nodeid) {
   }
   //TODO : delete old SCRIPT with ST_DONE status
   let an = {
-    CMD: "yarkNode",
+    CMD: "CMD_yarkNode",
     tenant: tenant,
     teamid: wf.teamid,
     from_nodeid: workNode.attr("from_nodeid"),
@@ -2712,8 +2829,7 @@ Engine.rerunNode = async function (tenant, wfid, nodeid) {
     starter: wf.starter,
     round: workNode.attr("round"),
   };
-  console.log(an);
-  await Engine.sendNext(an);
+  await Engine.sendNexts([an]);
 };
 
 //TODO:
@@ -2754,6 +2870,7 @@ Engine.getPdsOfAllNodesForScript = async function (data) {
 };
 
 Engine.createTodo = async function (obj) {
+  console.log("Create todo in ", isMainThread ? "Main Thread" : "Child Thread");
   if (lodash.isArray(obj.doer) === false) {
     obj.doer = [obj.doer];
   }
@@ -2776,7 +2893,7 @@ Engine.createTodo = async function (obj) {
       if (obj.cells && obj.cells.length > 0) {
         cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
       }
-      await Client.newTodo(
+      await Engine.newTodo(
         obj.tenant,
         obj.round,
         doerEmail,
@@ -3032,11 +3149,12 @@ Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
 
   let fromCN = await Cache.getUserName(tenant, myEmail);
   let newCN = await Cache.getUserName(tenant, newDoer);
-  await Client.informUserOnNewTodo({
+  await Engine.informUserOnNewTodo({
     tenant: tenant,
     doer: newDoer,
     todoid: todoid,
     tplid: todo.tplid,
+    wfid: todo.wfid,
     wftitle: todo.wftitle,
     title: todo.title,
     wfstarter: todo.wfstarter,
@@ -3048,31 +3166,31 @@ Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
 };
 
 Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) {
+  console.log("==>sendTenantMail in ", isMainThread ? "Main Thread" : "Child Thread");
   try {
-    let smtp = await Cache.getOrgSmtp(tenant);
-    let mailSetting = {
-      smtp: smtp,
-      sender: smtp.from.trim(),
+    let msg = {
+      CMD: "CMD_sendTenantMail",
+      tenant: tenant,
+      recipients: recipients,
+      cc: "",
+      bcc: "",
+      subject: subject,
+      html: Parser.codeToBase64(mail_body),
     };
-    await ZMQ.server.QueSend(
-      "EmpBiz",
-      JSON.stringify({
-        CMD: "SendTenantMail",
-        smtp: mailSetting.smtp,
-        from: mailSetting.sender,
-        recipients: recipients,
-        cc: "",
-        bcc: "",
-        subject: subject,
-        html: Parser.codeToBase64(mail_body),
-      })
-    );
+    if (isMainThread) {
+      let smtp = await Cache.getOrgSmtp(msg.tenant);
+      msg.smtp = smtp;
+      await Engine.callSendMailWorker(message.msg);
+    } else {
+      parentPort.postMessage({ cmd: "worker_sendTenantMail", msg: msg });
+    }
   } catch (error) {
     console.error(error);
   }
 };
 
-Client.informUserOnNewTodo = async function (inform) {
+Engine.informUserOnNewTodo = async function (inform) {
+  console.log("==>informUserOnNewTodo in ", isMainThread ? "Main Thread" : "Child Thread");
   try {
     let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
     let ew = await Cache.getUserEw(sendEmailTo);
@@ -3113,7 +3231,9 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
     }
     mail_body += extra_body;
 
-    if (withEmail) await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body);
+    if (withEmail) {
+      await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body);
+    }
 
     let markdownMsg = {
       msgtype: "markdown",
@@ -3150,12 +3270,19 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
     ).lean();
     let botKeys = bots.map((bot) => bot.key);
     botKeys = [...new Set(botKeys)];
-    for (let i = 0; i < botKeys.length; i++) {
+    let botsNumber = botKeys.length;
+    for (let botIndex = 0; botIndex < botsNumber; botIndex++) {
       try {
-        let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKeys[i]}`;
-        await Engine.WreckPost(wecomAPI, markdownMsg).then((res) => {
-          console.log("Wreck WeCom Bot TODO", botKeys[i]);
-        });
+        let botKey = botKeys[botIndex];
+        let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
+        Engine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
+          .then((res) => {
+            logMsg = `Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`;
+            Engine.log(tenant, inform.wfid, logMsg);
+          })
+          .catch((err) => {
+            console.error("Error from Engine.callWebApiPosterWorker" + err.message);
+          });
       } catch (e) {
         console.error(e);
       }
@@ -3179,7 +3306,7 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
  *
  * @return {...}
  */
-Client.newTodo = async function (
+Engine.newTodo = async function (
   tenant,
   round,
   doer,
@@ -3228,11 +3355,12 @@ Client.newTodo = async function (
     });
     await todo.save();
 
-    await Client.informUserOnNewTodo({
+    await Engine.informUserOnNewTodo({
       tenant: tenant,
       doer: doer,
       todoid: todoid,
       tplid: tplid,
+      wfid: wfid,
       wftitle: wftitle,
       title: title,
       wfstarter: wfstarter,
@@ -3337,6 +3465,7 @@ Engine.log = function (tenant, wfid, txt, json, withConsole = false) {
     fs.writeFileSync(logfilename, `${JSON.stringify(json, null, 2)}\n`, { flag: "a+" });
   }
 };
+
 Engine.getWfLogFilename = function (tenant, wfid) {
   let emp_node_modules = process.env.EMP_NODE_MODULES;
   let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
@@ -3639,14 +3768,15 @@ Engine.startWorkflow = async function (
   let isoNow = Tools.toISOString(new Date());
   wfid = Tools.isEmpty(wfid) ? uuidv4() : wfid;
 
-  let varedTplid = tplid;
-  varedTplid = await Parser.replaceStringWithKVar(
+  let varedTitle = wftitle;
+  if (Tools.isEmpty(varedTitle)) varedTitle = tplid;
+  varedTitle = await Parser.replaceStringWithKVar(
     tenant,
-    tplid,
+    varedTitle,
     parent_vars,
     Const.INJECT_INTERNAL_VARS
   );
-  wftitle = Tools.isEmpty(wftitle) ? varedTplid : wftitle;
+  wftitle = varedTitle;
   teamid = Tools.isEmpty(teamid) ? "" : teamid;
   let startDoc =
     `<div class="process">` +
@@ -3696,7 +3826,7 @@ Engine.startWorkflow = async function (
     Const.VAR_IS_EFFICIENT
   );
   let an = {
-    CMD: "yarkNode",
+    CMD: "CMD_yarkNode",
     tenant: tenant,
     teamid: teamid,
     from_nodeid: "NULL",
@@ -3711,7 +3841,7 @@ Engine.startWorkflow = async function (
   };
 
   Engine.clearOlderRehearsal(tenant, starter, 5, "m");
-  await Engine.sendNext(an);
+  await Engine.sendNexts([an]);
 
   return wf;
 };
@@ -3835,7 +3965,7 @@ Engine.restartWorkflow = async function (
     0
   );
   let an = {
-    CMD: "yarkNode",
+    CMD: "CMD_yarkNode",
     tenant: tenant,
     teamid: teamid,
     from_nodeid: "NULL",
@@ -3848,7 +3978,7 @@ Engine.restartWorkflow = async function (
     rehearsal: old_wf.rehearsal,
     round: 0,
   };
-  await Engine.sendNext(an);
+  await Engine.sendNexts([an]);
   return wf;
 };
 
@@ -5128,6 +5258,19 @@ Engine.checkVisi = async function (tenant, tplid, email) {
 };
 
 Engine.init = Engine.once(async function () {
+  if (!isMainThread) {
+    console.error("Engine.init should in main thread");
+  }
+  console.log(
+    `Check environment:\n`,
+    "EMP_FRONTEND_URL:",
+    process.env.EMP_FRONTEND_URL,
+    "\n",
+    "EMP_RUNTIME_FOLDER:",
+    process.env.EMP_RUNTIME_FOLDER,
+    "\n"
+  );
+
   await Engine.serverInit();
   await Client.clientInit();
   Engine.checkingTimer = false;
@@ -5395,10 +5538,6 @@ Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) 
     console.error(err.message);
     return "NULL";
   }
-};
-
-Engine.sendNext = async function (an) {
-  await Engine.PUB.send(["EMP", JSON.stringify(an)]);
 };
 
 Engine.getNodeStatus = async function (wf) {
@@ -5937,7 +6076,7 @@ Engine.procNext = async function (
   for (let i = 0; i < foundNexts.length; i++) {
     //构建一个zeroMQ 消息 body， 放在nexts数组中
     let an = {
-      CMD: "yarkNode",
+      CMD: "CMD_yarkNode",
       tenant: tenant,
       teamid: teamid,
       from_nodeid: this_nodeid,

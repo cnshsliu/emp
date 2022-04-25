@@ -947,14 +947,4 @@ Parser.clearSTClass = function (jq) {
   Parser.removeSTClasses(jq, Const.supportedSTStatus);
 };
 
-console.log(
-  `Check environment:\n`,
-  "EMP_FRONTEND_URL:",
-  process.env.EMP_FRONTEND_URL,
-  "\n",
-  "EMP_RUNTIME_FOLDER:",
-  process.env.EMP_RUNTIME_FOLDER,
-  "\n"
-);
-
 module.exports = { Cheerio, Parser };

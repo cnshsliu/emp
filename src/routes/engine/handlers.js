@@ -3,7 +3,6 @@ const { Cheerio, Parser } = require("../../lib/Parser");
 const moment = require("moment");
 const Tenant = require("../../database/models/Tenant");
 const fs = require("fs");
-const { ZMQ } = require("../../lib/ZMQ");
 const Excel = require("exceljs");
 const Joi = require("joi");
 const { v4: uuidv4 } = require("uuid");
@@ -336,7 +335,7 @@ const TemplatePut = async function (req, h) {
           $set: {
             doc: req.payload.doc,
             lastUpdateBy: myEmail,
-            lastUpdateBwid: bwid,
+            lastUpdateBwid: bwid, //Browser Window ID
           },
         },
         options = { upsert: false, new: true };
@@ -2631,7 +2630,13 @@ const TeamRename = async function (req, h) {
   }
 };
 
-const AutoRegisterOrgChartUser = async function (administrator, staffs, myDomain, defaultPassword) {
+const AutoRegisterOrgChartUser = async function (
+  tenant,
+  administrator,
+  staffs,
+  myDomain,
+  defaultPassword
+) {
   //TODO:  email去重, orgchart不用去重，但register user时需要去重
   for (let i = 0; i < staffs.length; i++) {
     let staff_email = staffs[i].uid;
@@ -2644,12 +2649,18 @@ const AutoRegisterOrgChartUser = async function (administrator, staffs, myDomain
       existing_staff_user.tenant.toString() !== administrator.tenant._id.toString()
     ) {
       //如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
-      await Tools.sendInvitationEmail_for_joinOrgChart(
-        ZMQ,
-        administrator.username,
-        administrator.email,
-        staff_email
-      );
+      let frontendUrl = Tools.getFrontEndUrl();
+      var mailbody = `<p>${administrator.username} (email: ${administrator.email}) </p> <br/> invite you to join his organization, <br/>
+       Please login to Metatocome to accept <br/>
+      <a href='${frontendUrl}'>${frontendUrl}</a>`;
+      Engine.sendNexts([
+        {
+          CMD: "CMD_sendSystemMail",
+          recipients: process.env.TEST_RECIPIENTS || email,
+          subject: `[EMP] Invitation from ${admin_username}`,
+          html: Tools.codeToBase64(mailbody),
+        },
+      ]);
     } else if (!existing_staff_user) {
       //If this email is not registered, auto register and auto enter org
       //1. Create personal tenant.
@@ -2999,7 +3010,13 @@ const importOrgLines = async function (tenant, myDomain, admin, default_user_pas
     uniqued_emails.push(orgChartArr[i].uid);
     uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
   }
-  await AutoRegisterOrgChartUser(admin, uniqued_orgchart_staffs, myDomain, default_user_password);
+  await AutoRegisterOrgChartUser(
+    tenant,
+    admin,
+    uniqued_orgchart_staffs,
+    myDomain,
+    default_user_password
+  );
   for (let i = 0; i < tobeDeletedArr.length; i++) {
     let emailValiidationResult = EmailSchema.validate(tobeDeletedArr[i]);
     //Delete OU
@@ -3914,6 +3931,11 @@ const DemoPostContext = async function (req, h) {
   Mailman.SimpleSend(receiver, "", "", "Demo Post Context", JSON.stringify(req.payload.mtcdata));
   return "Received";
 };
+
+//////////////////////////////////////////////////
+// FilePond的后台接收代码，
+// 文件上传大小在endpoints.js中进行设置
+//////////////////////////////////////////////////
 const FilePondProcess = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
