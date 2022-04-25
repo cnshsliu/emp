@@ -44,11 +44,17 @@ if (process.env.OPENSHIFT_MONGODB_DB_HOST) {
 Mongoose.connection
   .on(
     "open",
-    console.info.bind(console, (isMainThread ? "MainThread" : "ChildThread") + "  Database open")
+    console.info.bind(
+      console,
+      "\t" + ((isMainThread ? "MainThread" : "ChildThread") + "  Database open")
+    )
   )
   .on(
     "close",
-    console.info.bind(console, (isMainThread ? "MainThread" : "ChildThread") + " Database close")
+    console.info.bind(
+      console,
+      "\t" + ((isMainThread ? "MainThread" : "ChildThread") + " Database close")
+    )
   );
 
 Mongoose.connect(connection_string, {

@@ -82,7 +82,7 @@ Engine.callYarkNodeWorker = function (msg) {
         await Engine.callSendMailWorker(message.msg);
       } else {
         console.log("\t" + message);
-        console.log("====>Now Resolve YarkNodeWorker ");
+        console.log("\t====>Now Resolve YarkNodeWorker ");
         resolve;
       }
     });
@@ -188,7 +188,7 @@ Engine.sendNexts = async function (nexts) {
       }
       let podium_name = nexts[i].CMD;
       let podium_channel = podium_name + "-1";
-      console.log("==========", podium_name, "===", podium_channel, "===============");
+      console.log("\t========", podium_name, "---", podium_channel);
       Engine.podium.emit({ name: podium_name, channel: podium_channel }, nexts[i]);
     }
   } else {
@@ -1850,9 +1850,7 @@ Client.onYarkNode = async function (obj) {
   try {
     //await Engine.yarkNode_internal(obj);
 
-    console.log("--->Before call YarkNodeWorker");
     Engine.callYarkNodeWorker(obj).then((res) => {
-      console.log("--->End call YarkNodeWorker");
       console.log(res);
     });
   } catch (error) {
@@ -1865,6 +1863,8 @@ Engine.yarkNode_internal = async function (obj) {
   let nexts = [];
   let parent_nexts = [];
   if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
+
+  console.log("Begin yarkNode -----> " + obj.selector + " <--------");
 
   let tenant = obj.tenant;
   let filter = { tenant: obj.tenant, wfid: obj.wfid };
@@ -2144,6 +2144,7 @@ Engine.yarkNode_internal = async function (obj) {
       });
     }
   } else if (tpNode.hasClass("SCRIPT")) {
+    console.log(`\tSCRIPT ${tpNode.attr("id")} starting...`);
     let code = tpNode.find("code").first().text().trim();
     let parsed_code = Parser.base64ToCode(code);
     //取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
@@ -2286,6 +2287,7 @@ Engine.yarkNode_internal = async function (obj) {
         Const.VAR_IS_EFFICIENT
       );
     }
+    console.log(`\tSCRIPT ${tpNode.attr("id")} end...`);
   } else if (tpNode.hasClass("AND")) {
     let andDone = await Engine.checkAnd(
       obj.tenant,
@@ -2800,6 +2802,7 @@ Engine.yarkNode_internal = async function (obj) {
   //////////////////////////////////////////////////
   //  END send to workflow endpoint
   //////////////////////////////////////////////////
+  console.log("END yarkNode -----> " + obj.selector + " <--------");
 };
 
 //Only SCRIPT is supported at this moment.
@@ -2870,7 +2873,6 @@ Engine.getPdsOfAllNodesForScript = async function (data) {
 };
 
 Engine.createTodo = async function (obj) {
-  console.log("Create todo in ", isMainThread ? "Main Thread" : "Child Thread");
   if (lodash.isArray(obj.doer) === false) {
     obj.doer = [obj.doer];
   }
@@ -3166,7 +3168,12 @@ Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
 };
 
 Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) {
-  console.log("==>sendTenantMail in ", isMainThread ? "Main Thread" : "Child Thread");
+  console.log(
+    "\t==>sendTenantMail to",
+    recipients,
+    "in ",
+    isMainThread ? "Main Thread" : "Child Thread"
+  );
   try {
     let msg = {
       CMD: "CMD_sendTenantMail",
@@ -3190,7 +3197,7 @@ Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) 
 };
 
 Engine.informUserOnNewTodo = async function (inform) {
-  console.log("==>informUserOnNewTodo in ", isMainThread ? "Main Thread" : "Child Thread");
+  console.log("\t==>informUserOnNewTodo in ", isMainThread ? "Main Thread" : "Child Thread");
   try {
     let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
     let ew = await Cache.getUserEw(sendEmailTo);
@@ -3532,6 +3539,8 @@ function unsetInnerTeam(teamName){
 function setRoles(teamConf){setInnerTeam(teamConf);}
 function unsetRoles(teamName){unsetInnerTeam(teamName);}
 const kvalue = function(key){
+  key = key.trim();
+  key = key.replace(/ /g, "_");
     if(retkvars[key]!==undefined){
       return retkvars[key].value;
     }else{
@@ -3546,6 +3555,8 @@ const MtcGet = function(key){
   return kvalue(key);
 };
 const kvar = function(key, value, label){
+  key = key.trim();
+  key = key.replace(/ /g, "_");
   if(retkvars[key] !== undefined){
     retkvars[key].value = value;
     if(label)
@@ -5323,7 +5334,7 @@ module.paths.push('${emp_tenant_folder}/emplib');
 
 async function runExpr() {
   try{
-  let ret = ${expr};
+    let ret = ${expr};
 
     return ret;
   }catch(err){
@@ -5364,6 +5375,7 @@ runExpr().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     //console.log(exprFilename + "\tkept");
     console.log(`${expr} return ${ret}`);
   }
+  if (ret == NaN || ret == "NaN") ret = 0;
   return ret;
 };
 

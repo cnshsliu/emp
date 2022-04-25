@@ -1,3 +1,4 @@
+const { Worker, parentPort, isMainThread, SHARE_ENV } = require("worker_threads");
 const User = require("../database/models/User");
 const Tenant = require("../database/models/Tenant");
 const OrgChart = require("../database/models/OrgChart");
@@ -49,7 +50,11 @@ internals.getUserName = async function (tenant, email) {
       await internals.setUserName(email, user.username, 60);
       return user.username;
     } else {
-      console.warn("Cache.getUserName, Email:", email, " not found");
+      console.warn(
+        isMainThread ? "MainThread:" : "\tChildThread:" + "Cache.getUserName, Email:",
+        email,
+        " not found"
+      );
       return "USER_NOT_FOUND";
     }
   }
