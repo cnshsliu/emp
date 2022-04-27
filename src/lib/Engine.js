@@ -1130,8 +1130,12 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
     doer: doer,
     doerCN: doerCN,
     subject: (todo.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
-    mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/>
-
+    mail_body: `Hello [receiverCN],<br/><br/>Comment for you: 
+    <br/>
+    <br/>
+    ${content}
+    <br/>
+    <br/>
         From: ${doerCN}<br/>
         Click to see it on task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
         Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
@@ -1228,7 +1232,7 @@ Engine.__postComment = async function (
             let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
             let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
             //ANCHOR, use to scroll to attached comment by comment id.
-            body = emailMsg.mail_body.replace("ANCHOR", "tcmt_" + comment._id.toString());
+            body = body.replace("ANCHOR", "tcmt_" + comment._id.toString());
 
             Engine.sendTenantMail(
               tenant, //not rehearsal
@@ -1248,7 +1252,11 @@ Engine.__postComment = async function (
           console.log("Don't send comment email, since HAS been deleted");
         }
       }, (Const.DEL_NEW_COMMENT_TIMEOUT + 5) * 1000);
+      //}, 1000);
     }
+    comment = JSON.parse(JSON.stringify(comment));
+    comment.whoCN = await Cache.getUserName(tenant, comment.who);
+    comment.splitted = splitComment(comment.content);
     return comment;
   } catch (err) {
     console.warn(err);
@@ -3187,7 +3195,7 @@ Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) 
     if (isMainThread) {
       let smtp = await Cache.getOrgSmtp(msg.tenant);
       msg.smtp = smtp;
-      await Engine.callSendMailWorker(message.msg);
+      await Engine.callSendMailWorker(msg);
     } else {
       parentPort.postMessage({ cmd: "worker_sendTenantMail", msg: msg });
     }
@@ -4269,17 +4277,66 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
     for (let i = 0; i < cmts.length; i++) {
       cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
       cmts[i].splitted = splitComment(cmts[i].content);
+      cmts[i].showChilden = true;
       //每个 comment 自身还会有被评价
       let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id, depth);
       if (children.count > 0) {
         cmts[i]["children"] = children;
+        cmts[i].showChilden = true;
       }
     }
 
-    return { count: cmtCount, cmts: cmts };
+    return { count: cmtCount, cmts: cmts, showChilden: true };
   } else {
     return { count: 0, cmts: [] };
   }
+};
+
+Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
+  //对objtype+objid的comment可能是多个
+  let works = await Work.find({ tenant, wfid }, { workid: 1, createdAt: 1 }, { sort: "-_id" });
+  let cmts = [];
+  for (let i = 0; i < works.length; i++) {
+    let workComments = await Comment.find(
+      {
+        tenant: tenant,
+        "context.workid": works[i].workid,
+        objtype: "TODO",
+      },
+      {
+        __v: 0,
+      },
+      { sort: "-createdAt" }
+    ).lean();
+    for (let i = 0; i < workComments.length; i++) {
+      let todo = await Todo.findOne(
+        {
+          tenant,
+          wfid: workComments[i].context.wfid,
+          todoid: workComments[i].context.todoid,
+        },
+        { _id: 0, title: 1, doer: 1 }
+      );
+      if (todo) {
+        workComments[i].todoTitle = todo.title;
+        workComments[i].todoDoer = todo.doer;
+        workComments[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+      }
+    }
+
+    cmts = lodash.concat(cmts, workComments);
+  }
+
+  for (let i = 0; i < cmts.length; i++) {
+    cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
+    cmts[i].splitted = splitComment(cmts[i].content);
+    //每个 comment 自身还会有被评价
+    let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id);
+    if (children.count > 0) {
+      cmts[i]["children"] = children;
+    }
+  }
+  return { count: cmts.length, cmts: cmts };
 };
 
 //添加from_actions, following_ctions, parallel_actions, returnable and revocable
@@ -4379,7 +4436,7 @@ Engine.__getWorkFullInfo = async function (
   ret.role = workNode.attr("role");
   ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
   ret.doer_string = workNode.attr("doer");
-  ret.comments = await Engine.getComments(tenant, "TODO", todo.todoid, Const.COMMENT_LOAD_NUMBER);
+  //ret.comments = await Engine.getComments(tenant, "TODO", todo.todoid, Const.COMMENT_LOAD_NUMBER);
   ret.comment =
     Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
       ? []
@@ -4520,7 +4577,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
     todoEntry.doer = todos[i].doer;
     todoEntry.doneby = todos[i].doneby;
     todoEntry.doneat = todos[i].doneat;
-    todoEntry.comments = await Engine.getComments(tenant, "TODO", todos[i].todoid, 3);
+    //todoEntry.comments = await Engine.getComments(tenant, "TODO", todos[i].todoid, 3);
     /*
     todoEntry.comment =
       Tools.isEmpty(todos[i].comment) || Tools.isEmpty(todos[i].comment.trim())

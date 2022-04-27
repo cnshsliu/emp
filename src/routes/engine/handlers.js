@@ -3393,6 +3393,22 @@ const CommentList = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
+
+const CommentWorkflowLoad = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let wfid = req.payload.wfid;
+    let todoid = req.payload.todoid;
+
+    let comments = await Engine.loadWorkflowComments(tenant, wfid, todoid);
+    return h.response(comments);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const CommentDelete = async function (req, h) {
   try {
     let deleteFollowing = async (tenant, objid) => {
@@ -3417,15 +3433,7 @@ const CommentDelete = async function (req, h) {
     //Delete this one
     await Comment.deleteOne(filter);
 
-    //Revisit parents
-    let parent_comments = await Engine.getComments(
-      tenant,
-      objtype,
-      objid,
-      Const.COMMENT_LOAD_NUMBER
-    );
-
-    return h.response({ comments: parent_comments, thisComment: cmt });
+    return h.response({ thisComment: cmt });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4317,6 +4325,7 @@ module.exports = {
   OrgChartDelPosition,
   OrgChartAuthorizedAdmin,
   CommentList,
+  CommentWorkflowLoad,
   CommentDelete,
   CommentDeleteBeforeDays,
   CommentAddForComment,

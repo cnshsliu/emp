@@ -2142,6 +2142,26 @@ internals.endpoints = [
   },
   {
     method: "POST",
+    path: "/comment/workflow/load",
+    handler: Handlers.CommentWorkflowLoad,
+    config: {
+      description: "Load all comments",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          wfid: Joi.string().required(),
+          todoid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
     path: "/comment/list",
     handler: Handlers.CommentList,
     config: {

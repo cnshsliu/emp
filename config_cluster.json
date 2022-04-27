@@ -1,0 +1,9 @@
+{
+  "name": "emp_server",
+  "script": "server.js",
+  "node_args": ["--inspect"],
+  "watch": true,
+  "ignore_watch": ["test"],
+  "instances": "max",
+  "exec-mode": "cluster"
+}
