@@ -3925,7 +3925,9 @@ Engine.startWorkflow = async function (
   };
 
   await Engine.sendNexts([an]);
-  Engine.clearOlderRehearsal(tenant, starter, 5, "m").then((ret) => {});
+  Engine.clearOlderRehearsal(tenant, starter, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
+    (ret) => {}
+  );
   Engine.clearOlderScripts(tenant).then((ret) => {
     console.log("Old script clearing finished");
   });
@@ -3979,7 +3981,7 @@ Engine.clearOlderScripts = async function (tenant) {
         //取得每个文件的  毫秒龄
         let ageMs = nowMs - new Date(statObj.birthtime).getTime();
         //半小时以上的要删除
-        if (ageMs > 30 * 60 * 1000) {
+        if (ageMs > Const.GARBAGE_SCRIPT_CLEANUP_MINUTES * 60 * 1000) {
           console.log("Garbage rm file:", path.join("RUNTIME", directories[i], files[f]));
           fs.rmSync(fileFullPath, {
             recursive: true,
