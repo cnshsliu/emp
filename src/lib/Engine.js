@@ -4324,6 +4324,7 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
 
 Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
   //对objtype+objid的comment可能是多个
+  /*
   let works = await Work.find({ tenant, wfid }, { workid: 1, createdAt: 1 }, { sort: "-_id" });
   let cmts = [];
   for (let i = 0; i < works.length; i++) {
@@ -4356,6 +4357,37 @@ Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
 
     cmts = lodash.concat(cmts, workComments);
   }
+  */
+
+  let cmts = [];
+  let workComments = await Comment.find(
+    {
+      tenant: tenant,
+      "context.wfid": wfid,
+      objtype: "TODO",
+    },
+    {
+      __v: 0,
+    },
+    { sort: "-createdAt" }
+  ).lean();
+  for (let i = 0; i < workComments.length; i++) {
+    let todo = await Todo.findOne(
+      {
+        tenant,
+        wfid: workComments[i].context.wfid,
+        todoid: workComments[i].context.todoid,
+      },
+      { _id: 0, title: 1, doer: 1 }
+    );
+    if (todo) {
+      workComments[i].todoTitle = todo.title;
+      workComments[i].todoDoer = todo.doer;
+      workComments[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+    }
+  }
+
+  cmts = workComments;
 
   for (let i = 0; i < cmts.length; i++) {
     cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
@@ -4660,7 +4692,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       if (tmpRet[i].comment && tmpRet[i].comment.length > 0)
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
       /*
-      if (tmpRet[i].comments.length > 0) {
+      if (tmpRet[i].comments && tmpRet[i].comments.length > 0) {
         ret[existing_index].comments = [...ret[existing_index].comments, ...tmpRet[i].comments];
       }
       */
