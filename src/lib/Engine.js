@@ -4657,7 +4657,7 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       ret.push(tmpRet[i]);
       tmp.push(tmpRet[i].workid);
     } else {
-      if (tmpRet[i].comment.length > 0)
+      if (tmpRet[i].comment && tmpRet[i].comment.length > 0)
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
       /*
       if (tmpRet[i].comments.length > 0) {
