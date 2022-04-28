@@ -1142,7 +1142,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
   };
   let context = { wfid: todo.wfid, workid: todo.workid, todoid: todo.todoid };
-  return await Engine.__postComment(
+  let ret = await Engine.__postComment(
     tenant,
     doer,
     "TODO",
@@ -1154,6 +1154,10 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
     todo.rehearsal,
     msg
   );
+  ret.todoTitle = todo.title;
+  ret.todoDoer = todo.doer;
+  ret.todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+  return ret;
 };
 Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
   let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
@@ -1238,7 +1242,8 @@ Engine.__postComment = async function (
               tenant, //not rehearsal
               rehearsal ? doer : emails[i],
               subject,
-              body
+              body,
+              "COMMENT_MAIL"
             ).then((res) => {
               console.log(
                 "Mailer send email to ",
@@ -1257,6 +1262,7 @@ Engine.__postComment = async function (
     comment = JSON.parse(JSON.stringify(comment));
     comment.whoCN = await Cache.getUserName(tenant, comment.who);
     comment.splitted = splitComment(comment.content);
+    comment.transition = true;
     return comment;
   } catch (err) {
     console.warn(err);
@@ -2070,12 +2076,19 @@ Engine.yarkNode_internal = async function (obj) {
                 subject: mail_subject,
                 body: mail_body,
               });
-              await Engine.sendTenantMail(tenant, recipient, mail_subject, mail_body);
+              await Engine.sendTenantMail(
+                tenant,
+                recipient,
+                mail_subject,
+                mail_body,
+                "INFORM_MAIL_CSV"
+              );
             } catch (error) {
               console.error(error);
             }
           }
         }
+        //根据CSV取用户完成
       } else {
         //根据doer取用户
         try {
@@ -2117,7 +2130,13 @@ Engine.yarkNode_internal = async function (obj) {
                 subject: mail_subject,
                 body: mail_body,
               });
-              await Engine.sendTenantMail(tenant, recipient, mail_subject, mail_body);
+              await Engine.sendTenantMail(
+                tenant,
+                recipient,
+                mail_subject,
+                mail_body,
+                "INFORM_MAIL"
+              );
             } catch (emailError) {
               console.error(emailError);
             }
@@ -3175,9 +3194,15 @@ Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
   return whomUser;
 };
 
-Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) {
+Engine.sendTenantMail = async function (
+  tenant,
+  recipients,
+  subject,
+  mail_body,
+  reason = "DEFAULT"
+) {
   console.log(
-    "\t==>sendTenantMail to",
+    `\t==>sendTenantMail ${reason} to`,
     recipients,
     "in ",
     isMainThread ? "Main Thread" : "Child Thread"
@@ -3191,6 +3216,7 @@ Engine.sendTenantMail = async function (tenant, recipients, subject, mail_body) 
       bcc: "",
       subject: subject,
       html: Parser.codeToBase64(mail_body),
+      reason: reason,
     };
     if (isMainThread) {
       let smtp = await Cache.getOrgSmtp(msg.tenant);
@@ -3247,7 +3273,7 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
     mail_body += extra_body;
 
     if (withEmail) {
-      await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body);
+      await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body, "NEWTODO_MAIL");
     }
 
     let markdownMsg = {
@@ -4254,7 +4280,7 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
   //对objtype+objid的comment可能是多个
   let cmtCount = await Comment.countDocuments({ tenant, objtype, objid });
   if (cmtCount === 0) {
-    return { count: 0, cmts: [] };
+    return [];
   }
   let cmts;
   if (skip >= 0 && depth >= 0) {
@@ -4277,18 +4303,22 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
     for (let i = 0; i < cmts.length; i++) {
       cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
       cmts[i].splitted = splitComment(cmts[i].content);
-      cmts[i].showChilden = true;
+      cmts[i].showChildren = true;
       //每个 comment 自身还会有被评价
       let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id, depth);
-      if (children.count > 0) {
+      if (children.length > 0) {
         cmts[i]["children"] = children;
-        cmts[i].showChilden = true;
+        cmts[i].showChildren = true;
+      } else {
+        cmts[i]["children"] = [];
+        cmts[i].showChildren = false;
       }
+      cmts[i].transition = false;
     }
 
-    return { count: cmtCount, cmts: cmts, showChilden: true };
+    return cmts;
   } else {
-    return { count: 0, cmts: [] };
+    return [];
   }
 };
 
@@ -4332,11 +4362,11 @@ Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
     cmts[i].splitted = splitComment(cmts[i].content);
     //每个 comment 自身还会有被评价
     let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id);
-    if (children.count > 0) {
-      cmts[i]["children"] = children;
-    }
+    cmts[i]["children"] = children;
+    cmts[i].showChildren = true;
+    cmts[i].transition = i === 0;
   }
-  return { count: cmts.length, cmts: cmts };
+  return cmts;
 };
 
 //添加from_actions, following_ctions, parallel_actions, returnable and revocable

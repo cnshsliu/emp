@@ -12,7 +12,7 @@ const workerLog = (msg) => {
 const obj = workerData;
 
 const sendMail = async (msg) => {
-  console.log("Send mail to", msg.recipients);
+  console.log(`Send ${msg.reason} mail to`, msg.recipients);
   try {
     if (msg.smtp && msg.smtp.host) {
       await Mailman.mail(
