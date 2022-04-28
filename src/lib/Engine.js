@@ -2632,6 +2632,41 @@ Engine.yarkNode_internal = async function (obj) {
       await parent_wf.save();
     }
     Engine.log(tenant, obj.wfid, "End");
+    let sendEmailTo = obj.starter;
+    let ew = await Cache.getUserEw(sendEmailTo);
+    let withEmail = ew && ew.email;
+    if (withEmail) {
+      let cn = await Cache.getUserName(tenant, sendEmailTo);
+      let frontendUrl = Tools.getFrontEndUrl();
+      let mail_body = `Hello, ${cn}, <br/>
+          <br/>
+          The workflow you started as <br/>
+          <a href="${frontendUrl}/workflow/@${wf.wfid}"> ${wf.wftitle}</a> <br/>
+          completed already<br/>
+          <br/>
+          <br/>
+          If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/workflow/@${wf.wfid}<br/>
+          <br/>
+
+          <br/><br/>
+
+          Metatocome`;
+
+      let subject = `[Workflow Complete] ${wf.wftitle}`;
+      let extra_body = "";
+      if (wf.rehearsal) {
+        subject = "Rehearsal: " + subject;
+      }
+      mail_body += extra_body;
+
+      await Engine.sendTenantMail(
+        tenant,
+        sendEmailTo,
+        subject,
+        mail_body,
+        "WORKFLOW_COMPLETE_MAIL"
+      );
+    }
     //END of END node
   } else {
     //ACTION
