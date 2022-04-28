@@ -1263,6 +1263,7 @@ Engine.__postComment = async function (
     comment.whoCN = await Cache.getUserName(tenant, comment.who);
     comment.splitted = splitComment(comment.content);
     comment.transition = true;
+    comment.children = [];
     return comment;
   } catch (err) {
     console.warn(err);
@@ -3667,9 +3668,9 @@ async function runcode() {
 runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.stringify(x)); else console.log(x);
 });`;
   let wfidfolder = `${emp_tenant_folder}/${wfid}`;
-  if (!fs.existsSync(wfidfolder)) fs.mkdirSync(wfidfolder, { mode: 0o700, recursive: true });
+  if (!fs.existsSync(wfidfolder)) fs.mkdirSync(wfidfolder, { mode: 0o777, recursive: true });
   let scriptFilename = `${wfidfolder}/${lodash.uniqueId("mtc_")}.js`;
-  fs.writeFileSync(scriptFilename, all_code);
+  fs.writeFileSync(scriptFilename, all_code, { mode: 0o777 });
   let cmdName = "node " + scriptFilename;
   console.log("Run ", cmdName);
 
@@ -3745,9 +3746,12 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
     }
   } finally {
     //在最后,将临时文件删除,异步删除即可
-    /* fs.unlink(scriptFilename, () => {
-      console.log(scriptFilename + "\tdeleted");
-    }); */
+    /*
+    fs.rmSync(wfidfolder, {
+      recursive: true,
+      force: true,
+    });
+    */
     console.log(scriptFilename + "\tkept");
   }
   return ret;
@@ -3901,14 +3905,14 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
     rehearsal: true,
     updatedAt: { $lt: new Date(moment().subtract(howmany, unit)) },
   };
-  let res = await Workflow.find(wfFilter, { wfid: 1, _id: 0 });
-  res = res.map((x) => x.wfid);
-  if (res.length > 0) {
-    await Todo.deleteMany({ tenant: tenant, wfid: { $in: res } });
-    await DelayTimer.deleteMany({ tenant: tenant, wfid: { $in: res } });
-    await CbPoint.deleteMany({ tenant: tenant, wfid: { $in: res } });
-    await KVar.deleteMany({ tenant: tenant, wfid: { $in: res } });
-    await Workflow.deleteMany(wfFilter);
+  let wfids = await Workflow.find(wfFilter, { wfid: 1, _id: 0 }).lean();
+  wfids = wfids.map((x) => x.wfid);
+  if (wfids.length > 0) {
+    for (let i = 0; i < wfids.length; i++) {
+      Engine.__destroyWorkflow(tenant, wfids[i]).then((ret) => {
+        console.log(`${wfids[i]} rehearsal destroyed`);
+      });
+    }
   }
 };
 
@@ -3939,8 +3943,8 @@ Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
   }
   if (Object.keys(wfUpdate).length > 0) {
     wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
-    await Engine.stopWorks(tenant, wfid);
-    await Engine.stopDelayTimers(tenant, wfid);
+    Engine.stopWorks(tenant, wfid);
+    Engine.stopDelayTimers(tenant, wfid);
     return "ST_STOP";
   } else {
     return Engine.getStatusFromClass(wfRoot);
@@ -4036,80 +4040,87 @@ Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
   //starter可以destroy rehearsal
   //starter可以destroy 尚在第一个活动上的流程
   if (myGroup === "ADMIN" || (wf.starter === myEmail && (wf.rehearsal || wf.pnodeid === "start"))) {
-    console.log("Destroy workflow:", wfid);
-    try {
-      process.stdout.write("\tDestroy Todo\r");
-      await Todo.deleteMany({ tenant: tenant, wfid: wfid });
-    } catch (err) {
-      console.log("\tDestroy Todo: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy DelayTimer\r");
-      await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
-    } catch (err) {
-      console.log("\tDestroy DelayTimer: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy CbPoint\r");
-      await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
-    } catch (err) {
-      console.log("\tDestroy CbPoint: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy KVar\r");
-      await KVar.deleteMany({ tenant: tenant, wfid: wfid });
-    } catch (err) {
-      console.log("\tDestroy KVar: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy Work\r");
-      await Work.deleteMany({ tenant: tenant, wfid: wfid });
-    } catch (err) {
-      console.log("\tDestroy Work: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy Route\r");
-      await Route.deleteMany({ tenant: tenant, wfid: wfid });
-    } catch (err) {
-      console.log("\tDestroy Route: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy Comment\r");
-      await Comment.deleteMany({ tenant: tenant, "context.wfid": wfid });
-    } catch (err) {
-      console.log("\tDestroy Comment: ", err.message);
-    }
-    try {
-      process.stdout.write("\tDestroy code folder\r");
-      let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
-      let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
-      let wfidfolder = `${emp_tenant_folder}/${wfid}`;
-      fs.unlinkSync(wfidfolder);
-    } catch (err) {
-      console.log("\tDestroy code: ", err.message);
-    }
-    let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { attachments: 1 });
-    if (wf) {
-      process.stdout.write("\tDestroy attached files\r");
-      for (let i = 0; i < wf.attachments.length; i++) {
-        let serverId = wf.attachments[i].serverId;
-        let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
-        try {
-          fs.unlinkSync(pondServerFile.fullPath);
-        } catch (err) {
-          console.log("\tDestroy attached: ", err.message);
-        }
-      }
-      let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
-      console.log("Destroy workflow:", wfid, ", Done");
-      return ret;
-    } else {
-      return null;
-    }
+    Engine.__destroyWorkflow(tenant, wfid).then((ret) => {});
   } else {
     throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
   }
 };
+
+Engine.__destroyWorkflow = async function (tenant, wfid) {
+  console.log("Destroy workflow:", wfid);
+  try {
+    process.stdout.write("\tDestroy Todo\r");
+    await Todo.deleteMany({ tenant: tenant, wfid: wfid });
+  } catch (err) {
+    console.log("\tDestroy Todo: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy DelayTimer\r");
+    await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
+  } catch (err) {
+    console.log("\tDestroy DelayTimer: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy CbPoint\r");
+    await CbPoint.deleteMany({ tenant: tenant, wfid: wfid });
+  } catch (err) {
+    console.log("\tDestroy CbPoint: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy KVar\r");
+    await KVar.deleteMany({ tenant: tenant, wfid: wfid });
+  } catch (err) {
+    console.log("\tDestroy KVar: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy Work\r");
+    await Work.deleteMany({ tenant: tenant, wfid: wfid });
+  } catch (err) {
+    console.log("\tDestroy Work: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy Route\r");
+    await Route.deleteMany({ tenant: tenant, wfid: wfid });
+  } catch (err) {
+    console.log("\tDestroy Route: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy Comment\r");
+    await Comment.deleteMany({ tenant: tenant, "context.wfid": wfid });
+  } catch (err) {
+    console.log("\tDestroy Comment: ", err.message);
+  }
+  try {
+    process.stdout.write("\tDestroy code folder\r");
+    fs.rmSync(`${process.env.EMP_RUNTIME_FOLDER}/${tenant}/${wfid}`, {
+      recursive: true,
+      force: true,
+    });
+  } catch (err) {
+    //NO ENTRY 错误无须提示
+    if (err.code !== "ENOENT") console.log("\t\t", err);
+  }
+  let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { attachments: 1 });
+  if (wf) {
+    process.stdout.write("\tDestroy attached files\r");
+    for (let i = 0; i < wf.attachments.length; i++) {
+      let serverId = wf.attachments[i].serverId;
+      let author = wf.attachments[i].author;
+      let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
+      try {
+        fs.unlinkSync(pondServerFile.fullPath);
+      } catch (err) {
+        console.log("\tDestroy attached: ", err.message);
+      }
+    }
+    let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
+    console.log("Destroy workflow:", wfid, ", Done");
+    return ret;
+  } else {
+    return null;
+  }
+};
+
 Engine.setPboByWfId = async function (email, tenant, wfid, pbos) {
   let filter = { tenant: tenant, wfid: wfid };
   let wf = await Workflow.findOne(filter);
@@ -4135,7 +4146,7 @@ Engine.getPboByWfId = async function (tenant, wfid) {
 };
 Engine.getAttachmentsByWfId = async function (tenant, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
-  let wf = await Workflow.findOne(filter);
+  let wf = await Workflow.findOne(filter, { attachments: 1 }).lean();
   return wf.attachments;
 };
 
@@ -5151,6 +5162,7 @@ Engine.stopWorks = async function (tenant, wfid) {
   await Todo.updateMany(filter, {
     $set: { status: "ST_STOP", wfstatus: "ST_STOP" },
   });
+  console.log("works stoped");
 };
 
 /**
@@ -5164,6 +5176,7 @@ Engine.stopWorks = async function (tenant, wfid) {
 Engine.stopDelayTimers = async function (tenant, wfid) {
   let filter = { tenant: tenant, wfid: wfid };
   await DelayTimer.deleteMany(filter);
+  console.log("delaytimer stopped");
 };
 /**
  * 暂停wfid的Todo
