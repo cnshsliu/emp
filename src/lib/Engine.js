@@ -3889,8 +3889,11 @@ Engine.startWorkflow = async function (
     round: 0,
   };
 
-  Engine.clearOlderRehearsal(tenant, starter, 5, "m");
   await Engine.sendNexts([an]);
+  Engine.clearOlderRehearsal(tenant, starter, 5, "m").then((ret) => {});
+  Engine.clearOlderScripts(tenant).then((ret) => {
+    console.log("Old script clearing finished");
+  });
 
   return wf;
 };
@@ -3910,10 +3913,61 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
   if (wfids.length > 0) {
     for (let i = 0; i < wfids.length; i++) {
       Engine.__destroyWorkflow(tenant, wfids[i]).then((ret) => {
-        console.log(`${wfids[i]} rehearsal destroyed`);
+        console.log(`Garbage rm rehearsal: ${wfids[i]} `);
       });
     }
   }
+};
+
+//清楚超过半小时的脚本文件，
+//在半小时内，运维可以拷贝出去做测试
+Engine.clearOlderScripts = async function (tenant) {
+  let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
+  let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+  //定义两个函数
+  const getDirectories = (srcPath) =>
+    fs.readdirSync(srcPath).filter((file) => fs.statSync(path.join(srcPath, file)).isDirectory());
+  const getFiles = (srcPath) =>
+    fs.readdirSync(srcPath).filter((file) => fs.statSync(path.join(srcPath, file)).isFile());
+
+  try {
+    //取得runtime/tenant/下的所有wfid目录
+    let directories = getDirectories(emp_tenant_folder);
+    let nowMs = new Date().getTime();
+    for (let i = 0; i < directories.length; i++) {
+      let dirFullPath = `${emp_tenant_folder}/${directories[i]}`;
+      //取得wfid目录下的所有文件
+      let files = getFiles(dirFullPath);
+      for (let f = 0; f < files.length; f++) {
+        let fileFullPath = path.join(emp_tenant_folder, directories[i], files[f]);
+        let statObj = fs.statSync(fileFullPath);
+        //取得每个文件的  毫秒龄
+        let ageMs = nowMs - new Date(statObj.birthtime).getTime();
+        //半小时以上的要删除
+        if (ageMs > 30 * 60 * 1000) {
+          console.log("Garbage rm file:", path.join("RUNTIME", directories[i], files[f]));
+          fs.rmSync(fileFullPath, {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+      //再次取dirFullPath下的所有文件
+      files = getFiles(dirFullPath);
+      // 如没有文件，则删除这个目录
+      if (files.length === 0) {
+        console.log("Garbage rm dir:", path.join("RUNTIME", directories[i]));
+        fs.rmSync(dirFullPath, {
+          recursive: true,
+          force: true,
+        });
+      }
+    }
+  } catch (error) {
+    console.error(error);
+  }
+
+  return "Done";
 };
 
 Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
