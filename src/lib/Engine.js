@@ -4657,13 +4657,13 @@ Engine.__getWorkflowWorksHistory = async function (email, tenant, tpRoot, wfRoot
       ret.push(tmpRet[i]);
       tmp.push(tmpRet[i].workid);
     } else {
-      /*
       if (tmpRet[i].comment.length > 0)
         ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
-      */
+      /*
       if (tmpRet[i].comments.length > 0) {
         ret[existing_index].comments = [...ret[existing_index].comments, ...tmpRet[i].comments];
       }
+      */
       ret[existing_index].doers.push({
         uid: tmpRet[i].doer,
         cn: await Cache.getUserName(tenant, tmpRet[i].doer),
