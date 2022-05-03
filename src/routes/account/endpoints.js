@@ -123,8 +123,8 @@ internals.endpoints = [
   },
   {
     method: "POST",
-    path: "/account/avatar",
-    handler: AccountHandlers.PostAvatar,
+    path: "/account/upload/avatar",
+    handler: AccountHandlers.UploadAvatar,
     config: {
       auth: "token",
       description: "Send the avatar image",
@@ -141,14 +141,16 @@ internals.endpoints = [
 
   {
     method: "GET",
-    path: "/account/avatar/{uid}",
+    path: "/account/avatar/{tenant}/{email}",
     handler: AccountHandlers.Avatar,
     config: {
+      auth: "token",
       description: "Get the avatar image",
       tags: ["api"],
       validate: {
         params: {
-          uid: Joi.string().required(),
+          tenant: Joi.string().required(),
+          email: Joi.string().required(),
         },
         validator: Joi,
       },

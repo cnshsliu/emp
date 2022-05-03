@@ -3,6 +3,7 @@ const { Cheerio, Parser } = require("../../lib/Parser");
 const moment = require("moment");
 const Tenant = require("../../database/models/Tenant");
 const fs = require("fs");
+const path = require("path");
 const Excel = require("exceljs");
 const Joi = require("joi");
 const { v4: uuidv4 } = require("uuid");
@@ -20,6 +21,7 @@ const Route = require("../../database/models/Route");
 const List = require("../../database/models/List");
 const Cell = require("../../database/models/Cell");
 const Comment = require("../../database/models/Comment");
+const Thumb = require("../../database/models/Thumb");
 const Mailman = require("../../lib/Mailman");
 const CbPoint = require("../../database/models/CbPoint");
 const Team = require("../../database/models/Team");
@@ -30,7 +32,6 @@ const Tools = require("../../tools/tools.js");
 const { Engine, Client } = require("../../lib/Engine");
 const SystemPermController = require("../../lib/SystemPermController");
 const { EmpError } = require("../../lib/EmpError");
-const EmpConfig = require("../../config/emp");
 const lodash = require("lodash");
 const Fs = require("fs");
 const Cache = require("../../lib/Cache");
@@ -327,6 +328,7 @@ const TemplatePut = async function (req, h) {
     let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
     if (obj) {
       if (obj.updatedAt.toISOString() !== lastUpdatedAt) {
+        debugger;
         throw new EmpError("CHECK_LASTUPDATEDAT_FAILED", "Editted by other or in other window");
       }
       //let bdoc = await Tools.zipit(req.payload.doc, {});
@@ -503,9 +505,18 @@ const TemplateRename = async function (req, h) {
     if (Tools.isEmpty(tpl.authorName)) {
       tpl.authorName = await Cache.getUserName(tenant, tpl.author);
     }
+    let oldTplId = req.payload.fromid;
+    let newTplId = req.payload.tplid;
     try {
       tpl = await tpl.save();
-      return h.response(tpl.tplid);
+      //Move cover image
+      try {
+        fs.renameSync(
+          path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
+          path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png")
+        );
+      } catch (err) {}
+      return h.response(tpl);
     } catch (err) {
       if (err.message.indexOf("duplicate key"))
         throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
@@ -521,12 +532,20 @@ const TemplateRenameWithIid = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, _id: req.payload._id };
     let tpl = await Template.findOne(filter);
+    let oldTplId = tpl.tplid;
+    let newTplId = req.payload.tplid;
     if (
       !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "update"))
     )
       throw new EmpError("NO_PERM", "You don't have permission to rename this template");
-    tpl.tplid = req.payload.tplid;
+    tpl.tplid = newTplId;
     tpl = await tpl.save();
+    try {
+      fs.renameSync(
+        path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
+        path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png")
+      );
+    } catch (err) {}
 
     return h.response(tpl);
   } catch (err) {
@@ -543,6 +562,7 @@ const TemplateMakeCopyOf = async function (req, h) {
     let me = await User.findOne({ _id: req.auth.credentials._id });
     let filter = { tenant: tenant, _id: req.payload._id };
     let oldTpl = await Template.findOne(filter);
+    let oldTplId = oldTpl.tplid;
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
       throw new EmpError("NO_PERM", "You don't have permission to create template");
     let newObj = new Template({
@@ -552,8 +572,17 @@ const TemplateMakeCopyOf = async function (req, h) {
       authorName: me.username,
       doc: oldTpl.doc,
       tags: [{ owner: myEmail, text: "mine", group: myGroup }],
+      hasCover: oldTpl.hasCover,
     });
     newObj = await newObj.save();
+    let newTplId = newObj.tplid;
+
+    try {
+      fs.copyFileSync(
+        path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
+        path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png")
+      );
+    } catch (err) {}
 
     return h.response(newObj);
   } catch (err) {
@@ -571,20 +600,33 @@ const TemplateCopyto = async function (req, h) {
     let myEmail = req.auth.credentials.email;
     let myUid = myEmail.substring(0, myEmail.indexOf("@"));
     let filter = { tenant: tenant, tplid: req.payload.fromid };
-    let new_tplid = req.payload.tplid;
+
+    let oldTplId = req.payload.fromid;
+    let newTplId = req.payload.tplid;
+
     let oldTpl = await Template.findOne(filter);
     let newObj = new Template({
       tenant: oldTpl.tenant,
-      tplid: new_tplid,
+      tplid: newTplId,
       author: me.email,
       authorName: me.username,
       doc: oldTpl.doc,
       ins: oldTpl.ins,
       tags: oldTpl.tags,
       visi: "@" + myUid,
+      hasCover: oldTpl.hasCover,
     });
-    newObj = await newObj.save();
-
+    try {
+      newObj = await newObj.save();
+      fs.copyFileSync(
+        path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
+        path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png")
+      );
+    } catch (err) {
+      if (err.message.indexOf("duplicate key"))
+        throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
+      else throw new EmpError("DB_ERROR", err.message);
+    }
     return h.response(newObj);
   } catch (err) {
     console.error(err);
@@ -596,12 +638,16 @@ const TemplateDelete = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, _id: req.payload._id };
-    let ret = await Template.findOne(filter);
+    let ret = await Template.findOne(filter, { doc: 0 });
+    let oldTplId = ret.tplid;
     if (
       !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", ret, "delete"))
     )
       throw new EmpError("NO_PERM", "You don't have permission to delete this template");
     ret = await Template.deleteOne(filter);
+    try {
+      fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
+    } catch (err) {}
     return h.response(ret);
   } catch (err) {
     console.error(err);
@@ -613,12 +659,17 @@ const TemplateDeleteByName = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let filter = { tenant: tenant, tplid: req.payload.tplid };
-    let ret = await Template.findOne(filter);
+
+    let oldTplId = req.payload.tplid;
+    let ret = await Template.findOne(filter, { doc: 0 });
     if (
       !(await SystemPermController.hasPerm(req.auth.credentials.email, "template", ret, "delete"))
     )
       throw new EmpError("NO_PERM", "You don't have permission to delete this template");
     ret = await Template.deleteOne(filter);
+    try {
+      fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
+    } catch (err) {}
     return h.response(ret);
   } catch (err) {
     console.error(err);
@@ -628,22 +679,19 @@ const TemplateDeleteByName = async function (req, h) {
 
 const WorkflowRead = async function (req, h) {
   try {
+    let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    let filter = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+    let filter = { tenant, wfid: req.payload.wfid };
     let withDoc = req.payload.withdoc;
     let wf = await Workflow.findOne(filter).lean();
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
       throw new EmpError("NO_PERM", "You don't have permission to read this template");
     if (wf) {
       wf.beginat = wf.createdAt;
-      wf.history = await Engine.getWfHistory(
-        myEmail,
-        req.auth.credentials.tenant._id,
-        req.payload.wfid,
-        wf
-      );
+      wf.history = await Engine.getWfHistory(myEmail, tenant, req.payload.wfid, wf);
       if (withDoc === false) delete wf.doc;
       if (wf.status === "ST_DONE") wf.doneat = wf.updatedAt;
+      wf.starterCN = await Cache.getUserName(tenant, wf.starter);
     } else {
       wf = { wftitle: "Not Found" };
     }
@@ -1343,8 +1391,12 @@ const WorkflowSearch = async function (req, h) {
 
     for (let i = 0; i < retObjs.length; i++) {
       retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter);
+      retObjs[i].commentCount = await Comment.countDocuments({
+        tenant,
+        "context.wfid": retObjs[i].wfid,
+      });
     }
-    return { total, objs: retObjs };
+    return { total, objs: retObjs }; //Workflow Search Results
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1369,7 +1421,7 @@ const WorkflowGetLatest = async function (req, h) {
  * 要么myEmail用户是ADMIN，并且doerEmail在同一个Org中
  * 要么myEmail用户被doerEmail用户委托
  */
-const WorkList = async function (req, h) {
+const WorkSearch = async function (req, h) {
   let tenant = req.auth.credentials.tenant._id;
   //如果有wfid，则找只属于这个wfid工作流的workitems
   let myEmail = req.auth.credentials.email;
@@ -1487,7 +1539,14 @@ const WorkList = async function (req, h) {
       { $skip: skip },
       { $limit: limit },
     ]);
-    return { total, objs: ret };
+    for (let i = 0; i < ret.length; i++) {
+      //使用workid，而不是todoid进行搜索comment， 同一work下，不同的todo，也需要
+      ret[i].commentCount = await Comment.countDocuments({
+        tenant,
+        "context.workid": ret[i].workid,
+      });
+    }
+    return { total, objs: ret }; //Work (Todo) Search Results
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1914,7 +1973,7 @@ const TemplateSearch = async function (req, h) {
       x.tags = x.tags.filter((t) => t.owner === myEmail);
       return x;
     });
-    return { total, objs: ret };
+    return { total, objs: ret }; //Template Search Result
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3401,7 +3460,7 @@ const CommentWorkflowLoad = async function (req, h) {
     let wfid = req.payload.wfid;
     let todoid = req.payload.todoid;
 
-    let comments = await Engine.loadWorkflowComments(tenant, wfid, todoid);
+    let comments = await Engine.loadWorkflowComments(tenant, wfid);
     return h.response(comments);
   } catch (err) {
     console.error(err);
@@ -3546,6 +3605,25 @@ const CommentLoadMorePeers = async function (req, h) {
 
       return h.response(comments);
     }
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const CommentThumb = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let upOrDown = req.payload.thumb;
+    let cmtid = req.payload.cmtid;
+    //找到当前comment
+    await Thumb.deleteMany({ tennant: tenant, cmtid: cmtid, who: myEmail });
+    let tmp = new Thumb({ tenant: tenant, cmtid: cmtid, who: myEmail, upordown: upOrDown });
+    tmp = await tmp.save();
+    let upnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "UP" });
+    let downnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "DOWN" });
+    return h.response({ upnum, downnum });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3948,7 +4026,6 @@ const FilePondProcess = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
-    console.log("FilePond Processs");
     let filepond = req.payload.filepond;
     let ids = "";
     for (let i = 0; i < filepond.length; i++) {
@@ -3962,7 +4039,7 @@ const FilePondProcess = async function (req, h) {
         if (fs.existsSync(pondServerFile.folder) === false)
           fs.mkdirSync(pondServerFile.folder, { recursive: true });
         fs.renameSync(filepond[i].path, pondServerFile.fullPath);
-
+        console.log("Upload", filepond[i].filename, "to", pondServerFile.fullPath);
         ids = serverId;
       }
     }
@@ -4080,6 +4157,46 @@ const WecomBotForTodoSet = async function (req, h) {
       { upsert: true, new: true }
     );
     return h.response(wecomBot ? wecomBot.setting : "");
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplateSetCover = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let author = req.auth.credentials.email;
+    let blobInfo = req.payload.blob;
+    let tplid = req.payload.tplid;
+    let ext = ".png";
+    switch (blobInfo["content-type"]) {
+      case "image/png":
+        ext = ".png";
+        break;
+      case "image/jpeg":
+        ext = ".jpeg";
+        break;
+    }
+    let coverFilePath = path.join(Tools.getTenantFolders(tenant).cover, tplid + ext);
+    fs.renameSync(blobInfo.path, coverFilePath);
+    await Template.findOneAndUpdate({ tenant: tenant, tplid: tplid }, { $set: { hasCover: true } });
+    return { result: tplid + " cover set" };
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+const TemplateGetCover = async function (req, h) {
+  try {
+    let tenant = req.params.tenant;
+    let tplid = req.params.tplid;
+    let tmp = null;
+
+    let theCoverImagePath = Tools.getTemplateCoverPath(tenant, tplid);
+    if (fs.existsSync(theCoverImagePath)) {
+      return h.response(fs.createReadStream(theCoverImagePath)).header("Content-Type", "image/png");
+    } else {
+    }
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4255,6 +4372,8 @@ module.exports = {
   TemplateGetCrons,
   TemplateSetWecomBot,
   TemplateGetWecomBot,
+  TemplateSetCover,
+  TemplateGetCover,
   WorkflowRead,
   WorkflowCheckStatus,
   WorkflowRoutes,
@@ -4282,7 +4401,7 @@ module.exports = {
   WorkflowSetPboAt,
   WorkflowGetFirstTodoid,
   WorkflowReadlog,
-  WorkList,
+  WorkSearch,
   WorkInfo,
   WorkGetHtml,
   WorkDo,
@@ -4332,6 +4451,7 @@ module.exports = {
   CommentAddForBiz,
   CommentDelNewTimeout,
   CommentLoadMorePeers,
+  CommentThumb,
   TagAdd,
   TagDel,
   TagList,

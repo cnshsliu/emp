@@ -141,6 +141,11 @@ internals.starter = async function () {
   await internals.server.start();
   console.debug("Server is running: " + internals.server.info.uri);
   internals.server.events.on("response", function (request) {
+    switch (request.method.toUpperCase()) {
+      case "POST":
+        break;
+      case "GET":
+    }
     let user = "Unkown";
     if (request.payload && request.payload.token) {
       let decoded = JasonWebToken.verify(request.payload.token, EmpConfig.crypto.privateKey);

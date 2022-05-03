@@ -12,7 +12,7 @@ var CommentSchema = new Schema(
       default: "TENANT",
     },
     objid: { type: String },
-    people: [String],
+    people: { type: [String], default: [] },
     content: { type: String, default: "" },
     context: {
       wfid: String,

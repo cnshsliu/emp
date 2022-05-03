@@ -1283,7 +1283,7 @@ internals.endpoints = [
   {
     method: "POST",
     path: "/work/list",
-    handler: Handlers.WorkList,
+    handler: Handlers.WorkSearch,
     config: {
       description: "Get worklist of doer",
       tags: ["api"],
@@ -2154,7 +2154,6 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           wfid: Joi.string().required(),
-          todoid: Joi.string().required(),
         },
         validator: Joi,
       },
@@ -2270,6 +2269,26 @@ internals.endpoints = [
         payload: {
           cmtid: Joi.string().required(),
           currentlength: Joi.number().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/comment/thumb",
+    handler: Handlers.CommentThumb,
+    config: {
+      description: "Thumb up or Thumb down for Comment",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          cmtid: Joi.string().required(),
+          thumb: Joi.string().uppercase().valid("UP", "DOWN"),
         },
         validator: Joi,
       },
@@ -2749,6 +2768,51 @@ internals.endpoints = [
         }).unknown(),
         payload: {
           key: Joi.string(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/template/set/cover",
+    handler: Handlers.TemplateSetCover,
+    config: {
+      description: "Upload cover img to template",
+      tags: ["api"],
+      auth: "token",
+      payload: {
+        maxBytes: 1024 * 1024 * 100,
+        parse: true,
+        output: "file",
+        multipart: true,
+        allow: "multipart/form-data",
+        timeout: false,
+      },
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          tplid: Joi.string().required(),
+          blob: Joi.any().meta({ swaggerType: "file" }),
+        },
+        validator: Joi,
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/template/cover/{tenant}/{tplid}",
+    handler: Handlers.TemplateGetCover,
+    config: {
+      auth: "token",
+      description: "Get the template cover image",
+      tags: ["api"],
+      validate: {
+        params: {
+          tenant: Joi.string().required(),
+          tplid: Joi.string().required(),
         },
         validator: Joi,
       },

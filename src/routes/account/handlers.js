@@ -7,6 +7,7 @@
 const Mongoose = require("mongoose");
 const Boom = require("boom");
 const fs = require("fs");
+const path = require("path");
 // our configuration
 const EmpConfig = require("../../config/emp");
 // our encrpyt and decrypt
@@ -338,6 +339,7 @@ internals.LoginUser = async function (req, h) {
               ew: user.ew,
               ps: user.ps ? user.ps : 20,
               tenant: {
+                _id: user.tenant._id,
                 css: user.tenant.css,
                 name: user.tenant.name,
                 orgmode: user.tenant.orgmode,
@@ -1154,34 +1156,14 @@ internals.GetOrgMembers = async function (req, h) {
 };
 
 internals.Avatar = async function (req, h) {
-  let uid = req.params.uid;
+  let tenant = req.params.tenant;
+  let user_email = req.params.email;
   let tmp = null;
-  try {
-    if (uid.match(/^[^@]+@[^@]+$/))
-      tmp = await User.findOne({ email: uid }, { avatarinfo: 1 }).lean();
-    else tmp = await User.findOne({ _id: uid }, { avatarinfo: 1 }).lean();
-  } catch (e) {
-    console.error(e.message);
-  }
-  if (Tools.hasValue(tmp)) {
-    if (Tools.hasValue(tmp.avatarinfo) && Tools.hasValue(tmp.avatarinfo.path)) {
-      if (fs.existsSync(tmp.avatarinfo.path)) {
-        return h
-          .response(fs.createReadStream(tmp.avatarinfo.path))
-          .header("Content-Type", tmp.avatarinfo.media);
-      } else {
-        return h
-          .response(fs.createReadStream(EmpConfig.avatar.folder + "/default.png"))
-          .header("Content-Type", "image/png");
-      }
-    }
-  }
-  return h
-    .response(fs.createReadStream(EmpConfig.avatar.folder + "/default.png"))
-    .header("Content-Type", "image/png");
+  let avatarInfo = await Cache.getUserAvatarInfo(tenant, user_email);
+  return h.response(fs.createReadStream(avatarInfo.path)).header("Content-Type", avatarInfo.media);
 };
 
-internals.PostAvatar = async function (req, h) {
+internals.UploadAvatar = async function (req, h) {
   try {
     const payload = req.payload;
     payload.tenant = req.auth.credentials.tenant._id;
@@ -1190,14 +1172,10 @@ internals.PostAvatar = async function (req, h) {
 
     await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
     let media = payload.avatar.headers["content-type"];
-    const filename = `avatar_${payload.user_id}`;
-    let path = `${EmpConfig.avatar.folder}/${filename}`;
-    if (EmpConfig.avatar.folder.match(/.*\/$/)) {
-      path = `${EmpConfig.avatar.folder}${filename}`;
-    }
-    fs.renameSync(payload.avatar.path, path);
+    let avatarFilePath = path.join(Tools.getTenantFolders(payload.tenant).avatar, payload.email);
+    fs.renameSync(payload.avatar.path, avatarFilePath);
     let avatarinfo = {
-      path: path,
+      path: avatarFilePath,
       media: media,
     };
     await User.findOneAndUpdate(
@@ -1205,7 +1183,8 @@ internals.PostAvatar = async function (req, h) {
       { $set: { avatarinfo: avatarinfo } },
       { new: true }
     );
-    return { result: "Set Avatar OK" };
+    await Cache.removeKey("avatar_" + payload.email);
+    return { result: "Upload Avatar OK" };
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);

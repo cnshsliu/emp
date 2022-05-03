@@ -39,11 +39,13 @@ internals.privateKey = EmpConfig.crypto.privateKey;
  *
  */
 internals.validate = async function (decoded, request, h) {
-  let credentials = {};
-
-  //credentials have 'Bearer dfadfsdf'
-  var headers = request.headers.authorization.split(" ");
+  var headers = request.headers;
+  //POST方式，在headers中放了 authorization
   let authorization = request.headers.authorization;
+  if (!authorization) {
+    //GET方式，在访问URL后面要加 ?token=${session.user.sessionToken}
+    authorization = request.query["token"];
+  }
 
   //console.log(headers);
   //console.log(authorization);
@@ -61,11 +63,10 @@ internals.validate = async function (decoded, request, h) {
   // ok - valid token, do we have a user?
   // note we're only using 'id' - that's because
   // the user can change their email and username
+  let result = { isValid: false };
   let user = await User.findById(decoded.id).populate("tenant", { _id: 1, name: 1, owner: 1 });
   if (user) {
-    credentials = user;
-
-    return {
+    result = {
       isValid: true,
       credentials: {
         _id: user._id,
@@ -73,13 +74,13 @@ internals.validate = async function (decoded, request, h) {
         email: user.email,
         tenant: user.tenant,
       },
-      //emailVerified: req.auth.credentials.emailVerified,
     };
   } else {
-    return {
+    result = {
       isValid: false,
     };
   }
+  return result;
 };
 
 // create token

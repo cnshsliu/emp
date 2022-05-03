@@ -2,8 +2,9 @@ const Jimp = require("jimp");
 const zlib = require("zlib");
 const Moment = require("moment");
 const lodash = require("lodash");
+const fs = require("fs");
+const path = require("path");
 const sprintf = require("sprintf-js").sprintf;
-const EmpConfig = require("../config/emp");
 const replaceReg = / |　/gi;
 const Tools = {
   NID: "000000000000000000000000",
@@ -261,9 +262,7 @@ const Tools = {
 
   getFrontEndUrl: function () {
     var url = "";
-    if (EmpConfig.frontendUrl) {
-      url = EmpConfig.frontendUrl;
-    } else if (process.env.EMP_FRONTEND_URL) {
+    if (process.env.EMP_FRONTEND_URL) {
       url = process.env.EMP_FRONTEND_URL;
     } else {
       throw new Error("EMP_FRONTEND_URL not set");
@@ -283,21 +282,14 @@ const Tools = {
     );
   },
 
-  getPondServerFile: function (tenant, uid, fileName) {
-    let relativeFolder = `${tenant}/${uid}/`;
-    let relativeFilePath = `${tenant}/${uid}/${fileName}`;
-    let storedFolder = `${EmpConfig.attachment.folder}/${relativeFolder}`;
-    let storedFileName = `${EmpConfig.attachment.folder}/${relativeFilePath}`;
-    if (EmpConfig.attachment.folder.match(/.*\/$/)) {
-      storedFolder = `${EmpConfig.attachment.folder}${relativeFolder}`;
-      storedFileName = `${EmpConfig.attachment.folder}${relativeFilePath}`;
-    }
+  getPondServerFile: function (tenant, uid, serverId) {
+    let attachment_folder = Tools.getTenantFolders(tenant).attachment;
     return {
-      folder: storedFolder,
-      fileName: fileName,
       tenant: tenant,
       uid: uid,
-      fullPath: storedFileName,
+      fileName: serverId,
+      folder: path.join(attachment_folder, uid),
+      fullPath: path.join(attachment_folder, uid, serverId),
     };
   },
   getRandomInt: function (min, max) {
@@ -321,6 +313,25 @@ const Tools = {
       }
     }
     return people;
+  },
+  getDefaultAvatarPath: function () {
+    return path.join(process.env.EMP_STATIC_FOLDER, "default_avatar.png");
+  },
+  getUserAvatarPath: function (tenant, email) {
+    return path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar", "avatar_" + email);
+  },
+  getTemplateCoverPath: function (tenant, tplid) {
+    return path.join(this.getTenantFolders(tenant).cover, `${tplid}.png`);
+  },
+  getTenantFolders: function (tenant) {
+    tenant = tenant.toString();
+    let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
+    return {
+      runtime: path.join(process.env.EMP_RUNTIME_FOLDER, tenant),
+      avatar: path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar"),
+      cover: path.join(process.env.EMP_STATIC_FOLDER, tenant, "cover"),
+      attachment: path.join(process.env.EMP_ATTACHMENT_FOLDER, tenant),
+    };
   },
 };
 module.exports = Tools;

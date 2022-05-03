@@ -3,6 +3,7 @@ const cronEngine = require("node-cron");
 const Wreck = require("@hapi/wreck");
 const Https = require("https");
 const Http = require("http");
+const Marked = require("marked").marked;
 const { Cheerio, Parser } = require("./Parser");
 const { Mutex } = require("./Mutex");
 const moment = require("moment");
@@ -19,6 +20,7 @@ const Work = require("../database/models/Work");
 const Route = require("../database/models/Route");
 const CbPoint = require("../database/models/CbPoint");
 const Comment = require("../database/models/Comment");
+const Thumb = require("../database/models/Thumb");
 const Team = require("../database/models/Team");
 const Delegation = require("../database/models/Delegation");
 const KVar = require("../database/models/KVar");
@@ -1101,10 +1103,16 @@ ${kvarsMD}
   return markdownMsg;
 };
 
-Engine.setPeopleFromContent = async function (tenant, doer, content, people, emails) {
+Engine.setPeopleFromContent = async function (
+  tenant,
+  emailDomainReferenceUser,
+  content,
+  people,
+  emails
+) {
   let tmp = Tools.getUidsFromText(content);
   for (let i = 0; i < tmp.length; i++) {
-    let toWhomEmail = Tools.makeEmailSameDomain(tmp[i], doer);
+    let toWhomEmail = Tools.makeEmailSameDomain(tmp[i], emailDomainReferenceUser);
     let receiverCN = await Cache.getUserName(tenant, toWhomEmail);
     if (receiverCN !== "USER_NOT_FOUND") {
       people.push(tmp[i]);
@@ -1203,7 +1211,7 @@ Engine.__postComment = async function (
   objid,
   content,
   context,
-  people,
+  thePeople,
   emails,
   rehearsal,
   emailMsg = null
@@ -1216,7 +1224,7 @@ Engine.__postComment = async function (
       who: doer,
       objtype: objtype,
       objid: objid,
-      people: people,
+      people: thePeople,
       content: content,
       context: context,
     });
@@ -1262,11 +1270,24 @@ Engine.__postComment = async function (
     comment = JSON.parse(JSON.stringify(comment));
     comment.whoCN = await Cache.getUserName(tenant, comment.who);
     comment.splitted = splitComment(comment.content);
+    let tmpret = await splitMarked(tenant, comment);
+    comment.mdcontent = tmpret.mdcontent;
+    comment.mdcontent2 = tmpret.mdcontent2;
+    let people = [];
+    let emails = [];
+    [people, emails] = await Engine.setPeopleFromContent(
+      tenant,
+      comment.who, //Email domain reference user
+      comment.content,
+      people,
+      emails
+    );
+    comment.people = people;
     comment.transition = true;
     comment.children = [];
     return comment;
   } catch (err) {
-    console.warn(err);
+    console.error(err);
   }
 };
 
@@ -3546,10 +3567,10 @@ Engine.log = function (tenant, wfid, txt, json, withConsole = false) {
 Engine.getWfLogFilename = function (tenant, wfid) {
   let emp_node_modules = process.env.EMP_NODE_MODULES;
   let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
-  let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
-  if (!fs.existsSync(emp_tenant_folder))
-    fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
-  let wfidfolder = `${emp_tenant_folder}/${wfid}`;
+  let emp_log_folder = emp_runtime_folder + "/" + tenant + "/log";
+  if (!fs.existsSync(emp_log_folder))
+    fs.mkdirSync(emp_log_folder, { mode: 0o700, recursive: true });
+  let wfidfolder = `${emp_log_folder}/${wfid}`;
   if (!fs.existsSync(wfidfolder)) fs.mkdirSync(wfidfolder, { mode: 0o700, recursive: true });
   let logfile = `${wfidfolder}/process.log`;
   return logfile;
@@ -4191,6 +4212,16 @@ Engine.__destroyWorkflow = async function (tenant, wfid) {
     //NO ENTRY 错误无须提示
     if (err.code !== "ENOENT") console.log("\t\t", err);
   }
+  try {
+    process.stdout.write("\tDestroy log file\r");
+    fs.rmSync(Engine.getWfLogFilename(tenant, wfid), {
+      recursive: true,
+      force: true,
+    });
+  } catch (err) {
+    //NO ENTRY 错误无须提示
+    if (err.code !== "ENOENT") console.log("\t\t", err);
+  }
   let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { attachments: 1 });
   if (wf) {
     process.stdout.write("\tDestroy attached files\r");
@@ -4352,6 +4383,32 @@ const splitComment = function (str) {
   if (Array.isArray(tmp)) return tmp;
   else return [];
 };
+//为MD中的@uid添加<span>
+const splitMarked = async function (tenant, cmt) {
+  let mdcontent = Marked(cmt.content, {});
+  let splittedMd = splitComment(mdcontent);
+  let people = [];
+  let emails = [];
+  [people, emails] = await Engine.setPeopleFromContent(
+    tenant,
+    cmt.who, //Email domain reference user
+    cmt.content,
+    people,
+    emails
+  );
+  for (let c = 0; c < splittedMd.length; c++) {
+    if (splittedMd[c].startsWith("@")) {
+      if (people.includes(splittedMd[c].substring(1))) {
+        splittedMd[c] = `<span class="comment_uid">${await Cache.getUserName(
+          tenant,
+          splittedMd[c].substring(1)
+        )}(${splittedMd[c]})</span>`;
+      }
+    }
+  }
+  let mdcontent2 = splittedMd.join(" ");
+  return { mdcontent, mdcontent2 };
+};
 
 /**
  * 取单一todo的变量值，可以是空，没有输入的
@@ -4405,7 +4462,20 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
     for (let i = 0; i < cmts.length; i++) {
       cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
       cmts[i].splitted = splitComment(cmts[i].content);
+      let tmpret = await splitMarked(tenant, cmts[i]);
+      cmts[i].mdcontent = tmpret.mdcontent;
+      cmts[i].mdcontent2 = tmpret.mdcontent2;
       cmts[i].showChildren = true;
+      cmts[i].upnum = await Thumb.countDocuments({
+        tenant,
+        cmtid: cmts[i]._id,
+        upordown: "UP",
+      });
+      cmts[i].downnum = await Thumb.countDocuments({
+        tenant,
+        cmtid: cmts[i]._id,
+        upordown: "DOWN",
+      });
       //每个 comment 自身还会有被评价
       let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id, depth);
       if (children.length > 0) {
@@ -4424,43 +4494,7 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
   }
 };
 
-Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
-  //对objtype+objid的comment可能是多个
-  /*
-  let works = await Work.find({ tenant, wfid }, { workid: 1, createdAt: 1 }, { sort: "-_id" });
-  let cmts = [];
-  for (let i = 0; i < works.length; i++) {
-    let workComments = await Comment.find(
-      {
-        tenant: tenant,
-        "context.workid": works[i].workid,
-        objtype: "TODO",
-      },
-      {
-        __v: 0,
-      },
-      { sort: "-createdAt" }
-    ).lean();
-    for (let i = 0; i < workComments.length; i++) {
-      let todo = await Todo.findOne(
-        {
-          tenant,
-          wfid: workComments[i].context.wfid,
-          todoid: workComments[i].context.todoid,
-        },
-        { _id: 0, title: 1, doer: 1 }
-      );
-      if (todo) {
-        workComments[i].todoTitle = todo.title;
-        workComments[i].todoDoer = todo.doer;
-        workComments[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
-      }
-    }
-
-    cmts = lodash.concat(cmts, workComments);
-  }
-  */
-
+Engine.loadWorkflowComments = async function (tenant, wfid) {
   let cmts = [];
   let workComments = await Comment.find(
     {
@@ -4487,6 +4521,16 @@ Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
       workComments[i].todoDoer = todo.doer;
       workComments[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
     }
+    workComments[i].upnum = await Thumb.countDocuments({
+      tenant,
+      cmtid: workComments[i]._id,
+      upordown: "UP",
+    });
+    workComments[i].downnum = await Thumb.countDocuments({
+      tenant,
+      cmtid: workComments[i]._id,
+      upordown: "DOWN",
+    });
   }
 
   cmts = workComments;
@@ -4494,6 +4538,19 @@ Engine.loadWorkflowComments = async function (tenant, wfid, todoid) {
   for (let i = 0; i < cmts.length; i++) {
     cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
     cmts[i].splitted = splitComment(cmts[i].content);
+    let tmpret = await splitMarked(tenant, cmts[i]);
+    cmts[i].mdcontent = tmpret.mdcontent;
+    cmts[i].mdcontent2 = tmpret.mdcontent2;
+    let people = [];
+    let emails = [];
+    [people, emails] = await Engine.setPeopleFromContent(
+      tenant,
+      cmts[i].who, //Email domain reference user
+      cmts[i].content,
+      people,
+      emails
+    );
+    cmts[i].people = people;
     //每个 comment 自身还会有被评价
     let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id);
     cmts[i]["children"] = children;
@@ -5502,8 +5559,33 @@ Engine.init = Engine.once(async function () {
     "\n",
     "EMP_RUNTIME_FOLDER:",
     process.env.EMP_RUNTIME_FOLDER,
+    "\n",
+    "EMP_STATIC_FOLDER:",
+    process.env.EMP_STATIC_FOLDER,
+    "\n",
+    "EMP_ATTACHMENT_FOLDER:",
+    process.env.EMP_ATTACHMENT_FOLDER,
+    "\n",
+    "Default Avatar:",
+    Tools.getDefaultAvatarPath(),
+    fs.existsSync(Tools.getDefaultAvatarPath()) ? "OK" : "NOT EXIST",
     "\n"
   );
+
+  let regexp = new RegExp("avatar/avatar_");
+  let users = await User.find({ "avatarinfo.path": regexp });
+  for (let i = 0; i < users.length; i++) {
+    let tenant = users[i].tenant.toString();
+    let oldPath = users[i].avatarinfo.path;
+    let newPath = path.join(Tools.getTenantFolders(tenant).avatar, users[i].email);
+    try {
+      fs.renameSync(oldPath, newPath);
+    } catch (error) {
+    } finally {
+    }
+    console.log(tenant, newPath);
+    await User.updateOne({ _id: users[i]._id }, { $set: { "avatarinfo.path": newPath } });
+  }
 
   await Engine.serverInit();
   await Client.clientInit();

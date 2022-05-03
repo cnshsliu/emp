@@ -1,5 +1,7 @@
 const { Worker, parentPort, isMainThread, SHARE_ENV } = require("worker_threads");
 const User = require("../database/models/User");
+const fs = require("fs");
+const Tools = require("../tools/tools");
 const Tenant = require("../database/models/Tenant");
 const OrgChart = require("../database/models/OrgChart");
 const Site = require("../database/models/Site");
@@ -79,22 +81,28 @@ internals.getUserSignature = async function (tenant, email) {
   }
 };
 
-internals.getUserAvatar = async function (tenant, email) {
-  let avatar = await asyncRedisClient.get("avatar_" + email);
-  if (avatar) {
-    return avatar;
+internals.getUserAvatarInfo = async function (tenant, email) {
+  let avatarInfo = await asyncRedisClient.get("avatar_" + email);
+  if (avatarInfo) {
+    console.log("===>Avatar USECACHE:", email, avatarInfo);
+    return JSON.parse(avatarInfo);
   } else {
-    let user = await User.findOne({ tenant: tenant, email: email }, { avatar: 1 });
-    if (user) {
-      let setTo = "";
-      if (user.avatar) setTo = user.avatar;
-
-      await asyncRedisClient.set("avatar_" + email, setTo);
-      await asyncRedisClient.expire("avatar_" + email, 60);
-      return setTo;
+    let user = await User.findOne({ tenant: tenant, email: email }, { avatarinfo: 1 });
+    if (user && user.avatarinfo && user.avatarinfo.path) {
+      if (fs.existsSync(user.avatarinfo.path)) {
+        console.log("===>Avatar EXIST:", user.avatarinfo.path, "exists");
+        avatarInfo = user.avatarinfo;
+      } else {
+        console.log("===>Avatar NOENT:", user.avatarinfo.path);
+        avatarInfo = { path: Tools.getDefaultAvatarPath(), media: "image/png" };
+        console.log("===>Avatar USEDEFAULT:", user.avatarinfo.path);
+      }
     } else {
-      return "";
+      avatarInfo = { path: Tools.getDefaultAvatarPath(), media: "image/png" };
     }
+    await asyncRedisClient.set("avatar_" + email, JSON.stringify(avatarInfo));
+    await asyncRedisClient.expire("avatar_" + email, 60);
+    return avatarInfo;
   }
 };
 
