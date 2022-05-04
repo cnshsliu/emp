@@ -40,6 +40,12 @@ const Exec = util.promisify(require("child_process").exec);
 const Podium = require("@hapi/podium");
 const { EmpError } = require("./EmpError");
 const Const = require("./Const");
+const { redisClient, asyncRedisClient } = require("../database/redis");
+const asyncFilter = async (arr, predicate) => {
+  const results = await Promise.all(arr.map(predicate));
+
+  return arr.filter((_v, index) => results[index]);
+};
 
 const Engine = {
   podium: null,
@@ -1153,6 +1159,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
   let ret = await Engine.__postComment(
     tenant,
     doer,
+    todo.doer,
     "TODO",
     todo.todoid,
     content,
@@ -1194,6 +1201,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
   return await Engine.__postComment(
     tenant,
     doer,
+    cmt.who,
     "COMMENT",
     cmtid,
     content,
@@ -1207,6 +1215,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
 Engine.__postComment = async function (
   tenant,
   doer,
+  toWhom,
   objtype,
   objid,
   content,
@@ -1222,6 +1231,7 @@ Engine.__postComment = async function (
       tenant: tenant,
       rehearsal: rehearsal,
       who: doer,
+      towhom: toWhom,
       objtype: objtype,
       objid: objid,
       people: thePeople,
@@ -1269,8 +1279,9 @@ Engine.__postComment = async function (
     }
     comment = JSON.parse(JSON.stringify(comment));
     comment.whoCN = await Cache.getUserName(tenant, comment.who);
+    comment.towhomCN = await Cache.getUserName(tenant, toWhom);
     comment.splitted = splitComment(comment.content);
-    let tmpret = await splitMarked(tenant, comment);
+    let tmpret = await Engine.splitMarked(tenant, comment);
     comment.mdcontent = tmpret.mdcontent;
     comment.mdcontent2 = tmpret.mdcontent2;
     let people = [];
@@ -1285,6 +1296,8 @@ Engine.__postComment = async function (
     comment.people = people;
     comment.transition = true;
     comment.children = [];
+    comment.upnum = 0;
+    comment.downnum = 0;
     return comment;
   } catch (err) {
     console.error(err);
@@ -1568,6 +1581,7 @@ Engine.addAdhoc = async function (payload) {
     byroute: "DEFAULT",
     teamid: wf.teamid,
     rehearsal: payload.rehearsal,
+    allowdiscuss: wf.allowdiscuss,
   };
   //create adhoc todo
   todoObj = await Engine.createTodo(todoObj);
@@ -2855,6 +2869,7 @@ Engine.yarkNode_internal = async function (obj) {
         teamid: teamid,
         rehearsal: wf.rehearsal,
         cells: cells,
+        allowdiscuss: wf.allowdiscuss,
       });
     }
   } //End of ACTION
@@ -2971,7 +2986,7 @@ Engine.createTodo = async function (obj) {
     else doerName = await Cache.getUserName(obj.tenant, doerEmail);
 
     if (Tools.isEmpty(doerName)) {
-      console.warn(`createTodo: doer: ${doerEmail} does not exist.`);
+      console.warn(`increateTodo: doer: ${doerEmail} does not exist.`);
     } else {
       //在新建单人TODO时替换doerCN
       let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
@@ -2996,6 +3011,7 @@ Engine.createTodo = async function (obj) {
         obj.teamid,
         obj.byroute,
         obj.rehearsal,
+        obj.allowdiscuss,
         cellInfo
       );
     } // if exist
@@ -3421,6 +3437,7 @@ Engine.newTodo = async function (
   teamid,
   byroute,
   rehearsal,
+  allowdiscuss,
   cellInfo
 ) {
   let todoid = uuidv4();
@@ -3450,6 +3467,7 @@ Engine.newTodo = async function (
       byroute: byroute,
       rehearsal: rehearsal,
       cellInfo: cellInfo,
+      allowdiscuss: allowdiscuss,
     });
     await todo.save();
 
@@ -3541,6 +3559,7 @@ Client.cloneTodo = function (from_todo, newValues) {
     "byroute",
     "option",
     "rehearsal",
+    "allowdiscuss",
   ];
   let clone_obj = {};
   for (let i = 0; i < keys.length; i++) {
@@ -3869,7 +3888,7 @@ Engine.startWorkflow = async function (
   }
 
   let filter = { tenant: tenant, tplid: tplid };
-  let tpl = await Template.findOne(filter);
+  let theTemplate = await Template.findOne(filter);
   let isoNow = Tools.toISOString(new Date());
   wfid = Tools.isEmpty(wfid) ? uuidv4() : wfid;
 
@@ -3885,18 +3904,18 @@ Engine.startWorkflow = async function (
   teamid = Tools.isEmpty(teamid) ? "" : teamid;
   let startDoc =
     `<div class="process">` +
-    tpl.doc +
+    theTemplate.doc +
     `<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
     "</div>";
   //KVAR above
-  let pboat = tpl.pboat;
+  let pboat = theTemplate.pboat;
   if (!pboat) pboat = "ANY_RUNNING";
   let wf = new Workflow({
     tenant: tenant,
     wfid: wfid,
     pboat: pboat,
-    endpoint: tpl.endpoint,
-    endpointmode: tpl.endpointmode,
+    endpoint: theTemplate.endpoint,
+    endpointmode: theTemplate.endpointmode,
     wftitle: wftitle,
     teamid: teamid,
     tplid: tplid,
@@ -3906,6 +3925,7 @@ Engine.startWorkflow = async function (
     rehearsal: rehearsal,
     version: 3,
     runmode: runmode,
+    allowdiscuss: theTemplate.allowdiscuss,
   });
   let attachments = [...textPbo, ...uploadedFiles];
   attachments = attachments.map((x) => {
@@ -4112,6 +4132,7 @@ Engine.restartWorkflow = async function (
     rehearsal: old_wf.rehearsal,
     version: 3, //new workflow new version 2
     runmode: old_wf.runmode ? old_wf.runmode : "standalone",
+    allowdiscuss: old_wf.allowdiscuss,
   });
   wf.attachments = await Engine.getPbo(old_wf);
   wf = await wf.save();
@@ -4384,7 +4405,7 @@ const splitComment = function (str) {
   else return [];
 };
 //为MD中的@uid添加<span>
-const splitMarked = async function (tenant, cmt) {
+Engine.splitMarked = async function (tenant, cmt) {
   let mdcontent = Marked(cmt.content, {});
   let splittedMd = splitComment(mdcontent);
   let people = [];
@@ -4461,8 +4482,9 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
   if (cmts) {
     for (let i = 0; i < cmts.length; i++) {
       cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
+      cmts[i].towhomCN = await Cache.getUserName(tenant, cmts[i].towhom);
       cmts[i].splitted = splitComment(cmts[i].content);
-      let tmpret = await splitMarked(tenant, cmts[i]);
+      let tmpret = await Engine.splitMarked(tenant, cmts[i]);
       cmts[i].mdcontent = tmpret.mdcontent;
       cmts[i].mdcontent2 = tmpret.mdcontent2;
       cmts[i].showChildren = true;
@@ -4538,7 +4560,7 @@ Engine.loadWorkflowComments = async function (tenant, wfid) {
   for (let i = 0; i < cmts.length; i++) {
     cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
     cmts[i].splitted = splitComment(cmts[i].content);
-    let tmpret = await splitMarked(tenant, cmts[i]);
+    let tmpret = await Engine.splitMarked(tenant, cmts[i]);
     cmts[i].mdcontent = tmpret.mdcontent;
     cmts[i].mdcontent2 = tmpret.mdcontent2;
     let people = [];
@@ -4627,6 +4649,7 @@ Engine.__getWorkFullInfo = async function (
   ret.workid = todo.workid;
   ret.title = todo.title;
   ret.cellInfo = todo.cellInfo;
+  ret.allowdiscuss = todo.allowdiscuss;
   if (TodoOwner !== peopleInBrowser) {
     ret.cellInfo = "";
   }
@@ -4684,6 +4707,7 @@ Engine.__getWorkFullInfo = async function (
   ret.wf.status = Engine.getWorkflowStatus(wfRoot);
   ret.wf.beginat = wfRoot.attr("at");
   ret.wf.doneat = Engine.getWorkflowDoneAt(wfRoot);
+  ret.wf.allowdiscuss = theWf.allowdiscuss;
 
   let tmpInstruction = Parser.base64ToCode(Engine.getInstruct(tpRoot, todo.nodeid));
   tmpInstruction = Engine.compileContent(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
@@ -5513,12 +5537,14 @@ Engine.undelegate = async function (tenant, delegator_email, ids) {
   await Delegation.deleteMany(filter);
 };
 
-Engine.checkVisi = async function (tenant, tplid, email) {
+Engine.checkVisi = async function (tenant, tplid, email, withTpl = null) {
   let ret = false;
-  let tpl = await Template.findOne(
-    { tenant: tenant, tplid: tplid },
-    { author: 1, visi: 1, _id: 0 }
-  );
+  let tpl = null;
+  if (withTpl === null) {
+    tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { author: 1, visi: 1, _id: 0 });
+  } else {
+    tpl = withTpl;
+  }
   // 如果找不到template,则设置为 visiPeople 为空数组
   let visiPeople = [];
   if (!tpl) {
@@ -5546,6 +5572,72 @@ Engine.checkVisi = async function (tenant, tplid, email) {
   }
   ret = visiPeople.includes(email) || visiPeople.includes("all");
   return ret;
+};
+
+/**
+ *  删除tenant里面所有用户的 uvt cache
+ */
+Engine.clearUserVisiedTemplate = async function (tenant) {
+  let uvtKeyPrefix = "uvt_" + tenant + "_";
+  let tmp = await User.find({ tenant: tenant }, { _id: 0, email: 1 }).lean();
+  tmp = tmp.map((x) => x.email);
+  for (let i = 0; i < tmp.length; i++) {
+    let uvtKey = uvtKeyPrefix + tmp[i];
+    await asyncRedisClient.del(uvtKey);
+  }
+};
+
+Engine.getUserVisiedTemplate = async function (tenant, myEmail) {
+  let uvtKeyPrefix = "uvt_" + tenant + "_";
+  let uvtKey = uvtKeyPrefix + myEmail;
+  let cached = await asyncRedisClient.get(uvtKey);
+  let visiedTemplatesIds = [];
+  if (!cached) {
+    console.log("___>Rebuild cache");
+    let allTemplates = await Template.find({ tenant }, { doc: 0 });
+    allTemplates = await asyncFilter(allTemplates, async (x) => {
+      return await Engine.checkVisi(tenant, x.tplid, myEmail, x);
+    });
+    visiedTemplatesIds = allTemplates.map((x) => x.tplid);
+    await asyncRedisClient.set(uvtKey, JSON.stringify(visiedTemplatesIds));
+    await asyncRedisClient.expire(uvtKey, 24 * 60 * 60);
+  } else {
+    console.log("___>Found, use cached", uvtKey);
+    visiedTemplatesIds = JSON.parse(cached);
+    await asyncRedisClient.expire(uvtKey, 24 * 60 * 60);
+  }
+
+  /*
+  var cursor = "0";
+  function scan(pattern, callback) {
+    console.log("==>Scan ", pattern);
+    redisClient.scan(cursor, "MATCH", pattern, "COUNT", "1000", function (err, reply) {
+      if (err) {
+        throw err;
+      }
+      cursor = reply[0];
+      console.log(cursor);
+      if (cursor === "0") {
+        return callback();
+      } else {
+        var keys = reply[1];
+        keys.forEach(function (key, i) {
+          console.log("delete ", key);
+           //redisClient.del(key, function (deleteErr, deleteSuccess) {
+            //console.log(key);
+          //}); 
+        });
+
+        return scan(pattern, callback);
+      }
+    });
+  }
+
+  scan(uvtKeyPrefix + "*", function () {
+    console.log("Scan Complete");
+  });
+*/
+  return visiedTemplatesIds;
 };
 
 Engine.init = Engine.once(async function () {

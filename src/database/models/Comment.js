@@ -6,6 +6,7 @@ var CommentSchema = new Schema(
     tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
     rehearsal: { type: Boolean, default: false },
     who: { type: String, required: true },
+    towhom: { type: String, required: true },
     objtype: {
       type: String,
       enum: ["SITE", "TENANT", "TEMPLATE", "WORKFLOW", "WORK", "TODO", "COMMENT"],

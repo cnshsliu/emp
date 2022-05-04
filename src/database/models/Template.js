@@ -32,6 +32,7 @@ var TemplateSchema = new Schema(
     ],
     worklog: { type: String, default: "full" },
     hasCover: { type: Boolean, default: false },
+    allowdiscuss: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

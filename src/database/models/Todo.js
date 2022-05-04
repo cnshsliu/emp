@@ -42,6 +42,7 @@ var TodoSchema = new Schema(
     rehearsal: { type: Boolean, required: true, default: false, index: true },
     teamid: { type: String, required: false, default: "" },
     cellInfo: { type: String, required: false, default: "" },
+    allowdiscuss: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

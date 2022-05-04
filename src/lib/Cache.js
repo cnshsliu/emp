@@ -9,6 +9,12 @@ const { asyncRedisClient } = require("../database/redis");
 const internals = {};
 const PERM_EXPIRE_SECONDS = 60;
 
+const asyncFilter = async (arr, predicate) => {
+  const results = await Promise.all(arr.map(predicate));
+
+  return arr.filter((_v, index) => results[index]);
+};
+
 internals.setUserName = async function (email, username = null, expire = 60) {
   email = email.toLowerCase().trim();
   if (!username) {

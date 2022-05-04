@@ -45,6 +45,7 @@ var WorkflowSchema = new Schema(
     pnodeid: { type: String, required: false, default: "" },
     pworkid: { type: String, required: false, default: "" },
     cselector: { type: [String], default: [] },
+    allowdiscuss: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

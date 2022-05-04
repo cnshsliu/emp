@@ -1373,21 +1373,22 @@ const WorkflowSearch = async function (req, h) {
       }
     }
 
+    let myVisiedTemplatesIds = await Engine.getUserVisiedTemplate(tenant, myEmail);
+    if (filter.tplid) {
+      filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $in: myVisiedTemplatesIds } }];
+      delete filter.tplid;
+    } else {
+      filter.tplid = { $in: myVisiedTemplatesIds };
+    }
+
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
     console.log(
       `[Workflow Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
     );
 
-    let allObjs = await Workflow.find(filter, { doc: 0 });
-    allObjs = await asyncFilter(allObjs, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEmail);
-    });
-    let total = allObjs.length;
+    let total = await Workflow.countDocuments(filter, { doc: 0 });
     let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
-    retObjs = await asyncFilter(retObjs, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEmail);
-    });
 
     for (let i = 0; i < retObjs.length; i++) {
       retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter);
@@ -1891,7 +1892,8 @@ const TemplateIdList = async function (req, h) {
   }
 };
 
-const TemplateSearch = async function (req, h) {
+/*
+const TemplateSearch_backup = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
@@ -1956,13 +1958,106 @@ const TemplateSearch = async function (req, h) {
     //模版的搜索结果, 需要调用Engine.checkVisi检查模版是否对当前用户可见
     let allObjs = await Template.find(filter, { doc: 0 });
     allObjs = await asyncFilter(allObjs, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEmail);
+      return await Engine.checkVisi(tenant, x.tplid, myEmail, x);
     });
     let total = allObjs.length;
     let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
     ret = await asyncFilter(ret, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEmail);
+      return await Engine.checkVisi(tenant, x.tplid, myEmail, x);
     });
+    for (let i = 0; i < ret.length; i++) {
+      ret[i].cron = (
+        await Crontab.find({ tenant: tenant, tplid: ret[i].tplid }, { _id: 1 })
+      ).length;
+    }
+
+    ret = ret.map((x) => {
+      x.tags = x.tags.filter((t) => t.owner === myEmail);
+      return x;
+    });
+    return { total, objs: ret }; //Template Search Result
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+*/
+
+const TemplateSearch = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+      throw new EmpError("NO_PERM", "no permission to read template");
+
+    let myVisiedTemplatesIds = await Engine.getUserVisiedTemplate(tenant, myEmail);
+
+    let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
+    let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+    let filter = { tenant: tenant, ins: false };
+    let skip = 0;
+    if (req.payload.skip) skip = req.payload.skip;
+    let limit = 10000;
+    if (req.payload.limit) limit = req.payload.limit;
+    if (req.payload.pattern) {
+      //filter["tplid"] = { $regex: `.*${req.payload.pattern}.*` };
+      filter["$and"] = [
+        { tplid: { $regex: `.*${req.payload.pattern}.*` } },
+        { tplid: { $in: myVisiedTemplatesIds } },
+      ];
+    } else if (req.payload.tplid) {
+      //如果制定了tplid，则使用指定tplid搜索
+      //filter["tplid"] = req.payload.tplid;
+      filter["$and"] = [
+        { tplid: { $eq: req.payload.tplid } },
+        { tplid: { $in: myVisiedTemplatesIds } },
+      ];
+      limit = 1;
+    } else {
+      filter["tplid"] = { $in: myVisiedTemplatesIds };
+    }
+    if (
+      req.payload.tagsForFilter &&
+      Array.isArray(req.payload.tagsForFilter) &&
+      req.payload.tagsForFilter.length > 0 &&
+      req.payload.tagsForFilter[0].length > 0
+    ) {
+      //filter["tags.text"] = { $all: req.payload.tagsForFilter };
+      //filter["tags.owner"] = myEmail;
+      //filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
+      let tagsMatchArr = [];
+      for (let i = 0; i < req.payload.tagsForFilter.length; i++) {
+        tagsMatchArr.push({
+          $elemMatch: {
+            $or: [{ owner: myEmail }, { group: "ADMIN" }],
+            text: req.payload.tagsForFilter[i],
+          },
+        });
+      }
+      filter["tags"] = {
+        $all: tagsMatchArr,
+      };
+    }
+
+    if (Tools.hasValue(req.payload.author)) {
+      filter["author"] = req.payload.author;
+    }
+
+    //let tspan = req.payload.tspan;
+    let tspan = "any";
+    if (tspan !== "any") {
+      let tmp11 = __GetTSpanMomentOperators(tspan);
+      filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1])) };
+    }
+
+    console.log(
+      `[Template Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
+    );
+    let fields = { doc: 0 };
+    if (req.payload.fields) fields = req.payload.fields;
+
+    let total = await Template.countDocuments(filter, { doc: 0 });
+    let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
     for (let i = 0; i < ret.length; i++) {
       ret[i].cron = (
         await Crontab.find({ tenant: tenant, tplid: ret[i].tplid }, { _id: 1 })
@@ -2048,32 +2143,6 @@ const TemplateImport = async function (req, h) {
       console.log("Unlinked temp file:", fileInfo.path);
     });
     return h.response(obj);
-  } catch (err) {
-    console.error(err);
-    return h.response(replyHelper.constructErrorResponse(err)).code(500);
-  }
-};
-
-const TemplateSetVisi = async function (req, h) {
-  try {
-    let tenant = req.auth.credentials.tenant._id;
-    let myEmail = req.auth.credentials.email;
-    let author = myEmail;
-
-    let tplid = req.payload.tplid;
-    await Cache.removeVisi(tplid);
-    let tpl = await Template.findOneAndUpdate(
-      { tenant: tenant, author: author, tplid: tplid },
-      { $set: { visi: req.payload.visi } },
-      { upsert: false, new: true }
-    );
-    if (!tpl) {
-      console.log({ tenant: tenant, author: author, tplid: tplid });
-      throw new EmpError("NO_TPL", "No owned template found");
-    }
-    tpl = await Template.findOne({ tenant: tenant, author: author, tplid: tplid }, { doc: 0 });
-
-    return h.response(tpl);
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -2176,6 +2245,34 @@ const WorkflowSetPboAt = async function (req, h) {
   }
 };
 
+const TemplateSetVisi = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let author = myEmail;
+
+    let tplid = req.payload.tplid;
+    await Cache.removeVisi(tplid);
+    let tpl = await Template.findOneAndUpdate(
+      { tenant: tenant, author: author, tplid: tplid },
+      { $set: { visi: req.payload.visi } },
+      { upsert: false, new: true }
+    );
+    if (!tpl) {
+      console.log({ tenant: tenant, author: author, tplid: tplid });
+      throw new EmpError("NO_TPL", "No owned template found");
+    }
+    tpl = await Template.findOne({ tenant: tenant, author: author, tplid: tplid }, { doc: 0 });
+
+    await Engine.clearUserVisiedTemplate(tenant);
+
+    return h.response(tpl);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 /**
  * Clear a template visibility setting from template
  *
@@ -2197,6 +2294,8 @@ const TemplateClearVisi = async function (req, h) {
       { $set: { visi: "" } },
       { upsert: false, new: true }
     );
+
+    await Engine.clearUserVisiedTemplate(tenant);
 
     return h.response("Done");
   } catch (err) {
@@ -3630,6 +3729,276 @@ const CommentThumb = async function (req, h) {
   }
 };
 
+const CommentSearch = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let page = req.payload.page;
+    let pageSize = req.payload.pageSize;
+    let category = req.payload.category;
+
+    let wfIds = [];
+    let wfIamVisied = [];
+    let wfIStarted = [];
+    let wfIamIn = [];
+    let wfIamQed = [];
+
+    let myUid = Tools.getEmailPrefix(myEmail);
+    let iamAdmin = (await Cache.getMyGroup(myEmail)) === "ADMIN";
+
+    let cmts = [];
+    let total = 0;
+
+    let filter = { tenant: tenant };
+
+    //I_AM_IN 包含 I_STARTED
+    if (category.includes("I_AM_IN")) {
+      category.push("I_STARTED");
+      category = [...new Set(category)];
+    }
+    //I_AM_QED 包含 I_STARTED和I_AM_IN
+    if (category.includes("I_AM_QED")) {
+      category.push("I_STARTED");
+      category.push("I_AM_IN");
+      category = [...new Set(category)];
+    }
+    if (category.includes("ALL_VISIED")) {
+      if (!iamAdmin) {
+        let myVisiedTemplatesIds = await Engine.getUserVisiedTemplate(tenant, myEmail);
+        wfIamVisied = await Workflow.find(
+          { tenant: tenant, tplid: { $in: myVisiedTemplatesIds } },
+          { _id: 0, wfid: 1 }
+        ).lean();
+        wfIamVisied = wfIamVisied.map((x) => x.wfid);
+      }
+    }
+    if (category.includes("I_STARTED")) {
+      wfIStarted = await Workflow.find(
+        { tenant: tenant, starter: myEmail },
+        { _id: 0, wfid: 1 }
+      ).lean();
+
+      wfIStarted = wfIStarted.map((x) => x.wfid);
+    }
+    if (category.includes("I_AM_IN")) {
+      let todoGroup = await Todo.aggregate([
+        { $match: { doer: myEmail } },
+        { $group: { _id: "$wfid", count: { $sum: 1 } } },
+      ]);
+      wfIamIn = todoGroup.map((x) => x._id);
+    }
+    if (category.includes("I_AM_QED")) {
+      let commentGroup = await Comment.aggregate([
+        {
+          $match: { people: myUid },
+        },
+        { $group: { _id: "$context.wfid", count: { $sum: 1 } } },
+      ]);
+      wfIamQed = commentGroup.map((x) => x._id);
+      // 在查找 comment时，  I_AM_QED 缺省需要包含 I_STARTED
+    }
+
+    if (iamAdmin && category.length === 1 && category[0] === "ALL_VISIED") {
+      total = await Comment.countDocuments({
+        tenant: tenant,
+        objtype: "TODO",
+      });
+      cmts = await Comment.find({
+        tenant: tenant,
+        objtype: "TODO",
+      })
+        .sort("-updatedAt")
+        .skip(page * 20)
+        .limit(pageSize)
+        .lean();
+    } else {
+      wfIds = [...wfIamVisied, ...wfIStarted, ...wfIamIn, ...wfIamQed];
+      wfIds = [...new Set(wfIds)];
+      total = await Comment.countDocuments({
+        tenant: tenant,
+        objtype: "TODO",
+        "context.wfid": { $in: wfIds },
+      });
+      cmts = await Comment.find({
+        tenant: tenant,
+        objtype: "TODO",
+        "context.wfid": { $in: wfIds },
+      })
+        .sort("-updatedAt")
+        .skip(page * 20)
+        .limit(pageSize)
+        .lean();
+    }
+
+    for (let i = 0; i < cmts.length; i++) {
+      cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
+      if (cmts[i].context) {
+        let todo = await Todo.findOne(
+          {
+            tenant,
+            wfid: cmts[i].context.wfid,
+            todoid: cmts[i].context.todoid,
+          },
+          { _id: 0, title: 1, doer: 1 }
+        );
+        if (todo) {
+          cmts[i].todoTitle = todo.title;
+          cmts[i].todoDoer = todo.doer;
+          cmts[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+        }
+      }
+      cmts[i].upnum = await Thumb.countDocuments({
+        tenant,
+        cmtid: cmts[i]._id,
+        upordown: "UP",
+      });
+      cmts[i].downnum = await Thumb.countDocuments({
+        tenant,
+        cmtid: cmts[i]._id,
+        upordown: "DOWN",
+      });
+      let tmpret = await Engine.splitMarked(tenant, cmts[i]);
+      cmts[i].mdcontent = tmpret.mdcontent;
+      cmts[i].mdcontent2 = tmpret.mdcontent2;
+
+      if (cmts[i].context) {
+        cmts[i].latestReply = await Comment.find({
+          tenant: tenant,
+          objtype: "COMMENT",
+          "context.todoid": cmts[i].objid,
+        })
+          .sort("-updatedAt")
+          .limit(1)
+          .lean();
+        for (let r = 0; r < cmts[i].latestReply.length; r++) {
+          cmts[i].latestReply[r].whoCN = await Cache.getUserName(
+            tenant,
+            cmts[i].latestReply[r].who
+          );
+          cmts[i].latestReply[r].mdcontent2 = (
+            await Engine.splitMarked(tenant, cmts[i].latestReply[r])
+          )["mdcontent2"];
+        }
+      } else {
+        cmts[i].latestReply = [];
+      }
+    }
+
+    ////清空 被评价的 TODO和comment已不存在的comment
+    let tmp = await Comment.find({ tenant: tenant });
+    for (let i = 0; i < tmp.length; i++) {
+      if (tmp[i].objtype === "TODO") {
+        let theTodo = await Todo.findOne({ tenant: tenant, todoid: tmp[i].objid });
+        if (!theTodo) {
+          console.log("TODO", tmp[i].objid, "not found");
+          await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+        }
+      } else {
+        let theComment = await Comment.findOne({ _id: tmp[i].objid });
+        if (!theComment) {
+          await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+          console.log("CMNT", tmp[i].objid, "not found");
+        }
+      }
+    }
+    //修补towhom
+    tmp = await Comment.find({ tenant: tenant, towhom: { $exists: false } });
+    for (let i = 0; i < tmp.length; i++) {
+      if (tmp[i].towhom) continue;
+      if (tmp[i].objtype === "TODO") {
+        let theTodo = await Todo.findOne({ tenant: tenant, todoid: tmp[i].objid });
+        if (!theTodo) {
+          console.log("TODO", tmp[i].objid, "not found");
+          await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+        } else {
+          console.log("set towhom to", theTodo.doer);
+          await Comment.findOneAndUpdate({ _id: tmp[i]._id }, { $set: { towhom: theTodo.doer } });
+        }
+      } else {
+        let theComment = await Comment.findOne({ _id: tmp[i].objid });
+        if (!theComment) {
+          await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+          console.log("CMNT", tmp[i].objid, "not found");
+        } else {
+          console.log("set towhom to", theComment.who);
+          await Comment.findOneAndUpdate({ _id: tmp[i]._id }, { $set: { towhom: theComment.who } });
+        }
+      }
+    }
+    await Template.updateMany(
+      { tenant: tenant, allowdiscuss: { $exists: false } },
+      { $set: { allowdiscuss: true } }
+    );
+    await Workflow.updateMany(
+      { tenant: tenant, allowdiscuss: { $exists: false } },
+      { $set: { allowdiscuss: true } }
+    );
+    ////////////////////////////
+    return h.response({ total, cmts });
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const CommentToggle = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let objtype = req.payload.objtype;
+    let objid = req.payload.objid;
+    let ret = null;
+    switch (objtype) {
+      case "template":
+        let tpl = await Template.findOneAndUpdate(
+          {
+            tenant: tenant,
+            tplid: objid,
+          },
+          [{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
+          { upsert: false, new: true }
+        );
+        ret = tpl.allowdiscuss;
+        break;
+      case "workflow":
+        let aWf = await Workflow.findOneAndUpdate(
+          {
+            tenant: tenant,
+            wfid: objid,
+          },
+          [{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
+          { upsert: false, new: true }
+        );
+        ret = aWf.allowdiscuss;
+        break;
+      case "todo":
+        let aTodo = await Todo.findOneAndUpdate(
+          {
+            tenant: tenant,
+            todoid: objid,
+          },
+          [{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
+          { upsert: false, new: true }
+        );
+        ret = aTodo.allowdiscuss;
+        break;
+      default:
+        throw new EmpError("UNSUPPORTED", "Objtype is not supported");
+    }
+    if (ret === null) {
+      throw new EmpError(
+        "PROC_FAILED",
+        "Return value of discuss togglling should be either true or false"
+      );
+    }
+
+    return h.response(ret);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
 const TagDel = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -4452,6 +4821,8 @@ module.exports = {
   CommentDelNewTimeout,
   CommentLoadMorePeers,
   CommentThumb,
+  CommentSearch,
+  CommentToggle,
   TagAdd,
   TagDel,
   TagList,

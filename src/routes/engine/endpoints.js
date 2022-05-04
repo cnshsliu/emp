@@ -2294,6 +2294,50 @@ internals.endpoints = [
       },
     },
   },
+
+  {
+    method: "POST",
+    path: "/comment/search",
+    handler: Handlers.CommentSearch,
+    config: {
+      description: "Search Comment",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          category: Joi.array().items(Joi.string()).required(),
+          page: Joi.number().default(0),
+          pageSize: Joi.number().default(20),
+        },
+        validator: Joi,
+      },
+    },
+  },
+
+  {
+    method: "POST",
+    path: "/comment/toggle",
+    handler: Handlers.CommentToggle,
+    config: {
+      description: "Toggle Comment Allowance for BizObj",
+      tags: ["api"],
+      auth: "token",
+      validate: {
+        headers: Joi.object({
+          Authorization: Joi.string(),
+        }).unknown(),
+        payload: {
+          objtype: Joi.string().required().valid("template", "workflow", "todo"),
+          objid: Joi.string().required(),
+        },
+        validator: Joi,
+      },
+    },
+  },
+
   {
     method: "POST",
     path: "/comment/delnewtimeout",
