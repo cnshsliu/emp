@@ -1158,7 +1158,19 @@ internals.GetOrgMembers = async function (req, h) {
 internals.Avatar = async function (req, h) {
   let tenant = req.params.tenant;
   let user_email = req.params.email;
-  let tmp = null;
+  if (tenant === undefined || tenant === "undefined") {
+    tenant = req.auth.credentials.tenant._id;
+  }
+
+  if (!tenant) {
+    let emailDomain = Tools.getEmailDomain(user_email);
+    let regexp = new RegExp(".+" + emailDomain + "$");
+
+    let sameDomainTenant = await Tenant.findOne({ orgmode: true, owner: regexp });
+    if (sameDomainTenant) {
+      tenant = sameDomainTenant._id;
+    }
+  }
   let avatarInfo = await Cache.getUserAvatarInfo(tenant, user_email);
   return h.response(fs.createReadStream(avatarInfo.path)).header("Content-Type", avatarInfo.media);
 };
