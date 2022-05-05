@@ -1559,7 +1559,9 @@ const WorkSearch = async function (req, h) {
     }
     return { total, objs: ret }; //Work (Todo) Search Results
   } catch (err) {
-    console.error(err);
+    if (err.error === "KICKOUT") {
+      console.log(myEmail, "is kick out");
+    } else console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   } finally {
     Engine.clearOlderRehearsal(tenant, myEmail, 24);
