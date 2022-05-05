@@ -1152,6 +1152,7 @@ const WorkflowOP = async function (req, h) {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     let wfid = req.payload.wfid;
+    console.log(`[Workflow OP] ${myEmail} [${req.payload.op}] ${wfid}`);
     let ret = {};
     switch (req.payload.op) {
       case "pause":
@@ -1384,11 +1385,6 @@ const WorkflowSearch = async function (req, h) {
 
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
-    console.log(
-      `[Workflow Search] ${myEmail} filter: ${JSON.stringify(
-        filter
-      )} sortBy: ${sortBy} limit: ${limit}`
-    );
 
     let total = await Workflow.countDocuments(filter, { doc: 0 });
     let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
@@ -1400,7 +1396,12 @@ const WorkflowSearch = async function (req, h) {
         "context.wfid": retObjs[i].wfid,
       });
     }
-    return { total, objs: retObjs }; //Workflow Search Results
+    console.log(
+      `[Workflow Search] ${myEmail} [${total}] filter: ${JSON.stringify(
+        filter
+      )} sortBy: ${sortBy} limit: ${limit}`
+    );
+    return { total, objs: retObjs };
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1429,6 +1430,7 @@ const WorkSearch = async function (req, h) {
   let tenant = req.auth.credentials.tenant._id;
   let myEmail = req.auth.credentials.email;
   let doer = req.payload.doer ? req.payload.doer : myEmail;
+  let reason = req.payload.reason ? req.payload.reason : "unknown";
   try {
     //如果有wfid，则找只属于这个wfid工作流的workitems
     let myGroup = await Cache.getMyGroup(myEmail);
@@ -1519,11 +1521,6 @@ const WorkSearch = async function (req, h) {
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
 
-    console.log(
-      `[Work List] ${myEmail} filter: ${JSON.stringify(
-        filter
-      )} sortBy: ${sortByJson} limit: ${limit}`
-    );
     let total = await Todo.find(filter).countDocuments();
     let ret = await Todo.aggregate([
       { $match: filter },
@@ -1557,6 +1554,11 @@ const WorkSearch = async function (req, h) {
         "context.workid": ret[i].workid,
       });
     }
+    console.log(
+      `[Work Search] ${myEmail} Reason[${reason}] [${total}] filter: ${JSON.stringify(
+        filter
+      )} sortBy: ${sortByJson} limit: ${limit}`
+    );
     return { total, objs: ret }; //Work (Todo) Search Results
   } catch (err) {
     if (err.error === "KICKOUT") {
@@ -2062,9 +2064,6 @@ const TemplateSearch = async function (req, h) {
       filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1])) };
     }
 
-    console.log(
-      `[Template Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
-    );
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
 
@@ -2080,6 +2079,11 @@ const TemplateSearch = async function (req, h) {
       x.tags = x.tags.filter((t) => t.owner === myEmail);
       return x;
     });
+    console.log(
+      `[Template Search] ${myEmail} [${total}] filter: ${JSON.stringify(
+        filter
+      )} sortBy: ${sortBy} limit: ${limit}`
+    );
     return { total, objs: ret }; //Template Search Result
   } catch (err) {
     console.error(err);
@@ -4558,6 +4562,9 @@ const TemplateSetCover = async function (req, h) {
         ext = ".jpeg";
         break;
     }
+    let coverFolder = Tools.getTenantFolders(tenant).cover;
+    if (fs.existsSync(coverFolder) === false) fs.mkdirSync(coverFolder, { recursive: true });
+
     let coverFilePath = path.join(Tools.getTenantFolders(tenant).cover, tplid + ext);
     fs.renameSync(blobInfo.path, coverFilePath);
     await Template.findOneAndUpdate({ tenant: tenant, tplid: tplid }, { $set: { hasCover: true } });
