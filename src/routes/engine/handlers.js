@@ -3754,6 +3754,7 @@ const CommentSearch = async function (req, h) {
     let page = req.payload.page;
     let pageSize = req.payload.pageSize;
     let category = req.payload.category;
+    let q = req.payload.q;
 
     let wfIds = [];
     let wfIamVisied = [];
@@ -3817,14 +3818,18 @@ const CommentSearch = async function (req, h) {
     }
 
     if (iamAdmin && category.length === 1 && category[0] === "ALL_VISIED") {
-      total = await Comment.countDocuments({
-        tenant: tenant,
-        objtype: "TODO",
-      });
-      cmts = await Comment.find({
-        tenant: tenant,
-        objtype: "TODO",
-      })
+      let filter_all = q
+        ? {
+            tenant: tenant,
+            objtype: "TODO",
+            content: new RegExp(`.*${q}.*`),
+          }
+        : {
+            tenant: tenant,
+            objtype: "TODO",
+          };
+      total = await Comment.countDocuments(filter_all);
+      cmts = await Comment.find(filter_all)
         .sort("-updatedAt")
         .skip(page * 20)
         .limit(pageSize)
@@ -3832,16 +3837,20 @@ const CommentSearch = async function (req, h) {
     } else {
       wfIds = [...wfIamVisied, ...wfIStarted, ...wfIamIn, ...wfIamQed];
       wfIds = [...new Set(wfIds)];
-      total = await Comment.countDocuments({
-        tenant: tenant,
-        objtype: "TODO",
-        "context.wfid": { $in: wfIds },
-      });
-      cmts = await Comment.find({
-        tenant: tenant,
-        objtype: "TODO",
-        "context.wfid": { $in: wfIds },
-      })
+      let filter_wfid = q
+        ? {
+            tenant: tenant,
+            objtype: "TODO",
+            "context.wfid": { $in: wfIds },
+            content: new RegExp(`.*${q}.*`),
+          }
+        : {
+            tenant: tenant,
+            objtype: "TODO",
+            "context.wfid": { $in: wfIds },
+          };
+      total = await Comment.countDocuments(filter_wfid);
+      cmts = await Comment.find(filter_wfid)
         .sort("-updatedAt")
         .skip(page * 20)
         .limit(pageSize)
@@ -3943,14 +3952,14 @@ const CommentSearch = async function (req, h) {
         }
       }
     }
-    await Template.updateMany(
+    /* await Template.updateMany(
       { tenant: tenant, allowdiscuss: { $exists: false } },
       { $set: { allowdiscuss: true } }
     );
     await Workflow.updateMany(
       { tenant: tenant, allowdiscuss: { $exists: false } },
       { $set: { allowdiscuss: true } }
-    );
+    ); */
     ////////////////////////////
     return h.response({ total, cmts });
   } catch (err) {

@@ -2315,6 +2315,7 @@ internals.endpoints = [
           category: Joi.array().items(Joi.string()).required(),
           page: Joi.number().default(0),
           pageSize: Joi.number().default(20),
+          q: Joi.string().allow("").optional(),
         },
         validator: Joi,
       },
