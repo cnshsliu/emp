@@ -1385,7 +1385,9 @@ const WorkflowSearch = async function (req, h) {
     let fields = { doc: 0 };
     if (req.payload.fields) fields = req.payload.fields;
     console.log(
-      `[Workflow Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
+      `[Workflow Search] ${myEmail} filter: ${JSON.stringify(
+        filter
+      )} sortBy: ${sortBy} limit: ${limit}`
     );
 
     let total = await Workflow.countDocuments(filter, { doc: 0 });
@@ -1518,7 +1520,9 @@ const WorkSearch = async function (req, h) {
     if (req.payload.fields) fields = req.payload.fields;
 
     console.log(
-      `[Work List] filter: ${JSON.stringify(filter)} sortBy: ${sortByJson} limit: ${limit}`
+      `[Work List] ${myEmail} filter: ${JSON.stringify(
+        filter
+      )} sortBy: ${sortByJson} limit: ${limit}`
     );
     let total = await Todo.find(filter).countDocuments();
     let ret = await Todo.aggregate([
