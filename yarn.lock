@@ -2718,11 +2718,6 @@
   dependencies:
     "es6-promise" "^3.0.2"
 
-"nan@2.14.2":
-  "integrity" "sha1-9TdkAGlRaPTMaUrJOT0MlYXu6hk="
-  "resolved" "https://registry.nlark.com/nan/download/nan-2.14.2.tgz?cache=0&sync_timestamp=1628093600180&other_urls=https%3A%2F%2Fregistry.nlark.com%2Fnan%2Fdownload%2Fnan-2.14.2.tgz"
-  "version" "2.14.2"
-
 "nanoid@^3.1.30":
   "integrity" "sha512-fmsZYa9lpn69Ad5eDn7FMcnnSR+8R34W9qJEijxYhTbfOWzr22n1QxCMzXLK+ODyW2973V3Fux959iQoUxzUIA=="
   "resolved" "https://registry.npmmirror.com/nanoid/download/nanoid-3.2.0.tgz"
@@ -2744,11 +2739,6 @@
   "version" "3.0.0"
   dependencies:
     "moment-timezone" "^0.5.31"
-
-"node-gyp-build@^4.2.3":
-  "integrity" "sha1-zmJ3+FODX3GIKe+0fbIPPk2cRzk="
-  "resolved" "https://registry.npm.taobao.org/node-gyp-build/download/node-gyp-build-4.2.3.tgz"
-  "version" "4.2.3"
 
 "node-gyp-build@^4.3.0":
   "integrity" "sha1-nyVrA+WCYVC+Ocdkv1Hpk5RtcaM="
@@ -3685,14 +3675,6 @@
   "integrity" "sha1-m7knkNnA7/7GO+c1GeEaNQGaOnI="
   "resolved" "https://registry.npmmirror.com/yallist/download/yallist-4.0.0.tgz"
   "version" "4.0.0"
-
-"zeromq@^5.2.8":
-  "integrity" "sha1-lLC4XkFS6YuLsWPx20o0KA1E2dA="
-  "resolved" "https://registry.nlark.com/zeromq/download/zeromq-5.2.8.tgz"
-  "version" "5.2.8"
-  dependencies:
-    "nan" "2.14.2"
-    "node-gyp-build" "^4.2.3"
 
 "zip-stream@^4.1.0":
   "integrity" "sha512-zshzwQW7gG7hjpBlgeQP9RuyPGNxvJdzR8SUM3QhxCnLjWN2E7j3dOvpeDcQoETfHx0urRS7EtmVToql7YpU4A=="
