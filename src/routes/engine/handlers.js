@@ -21,6 +21,7 @@ const Route = require("../../database/models/Route");
 const List = require("../../database/models/List");
 const Cell = require("../../database/models/Cell");
 const Comment = require("../../database/models/Comment");
+const Kicklist = require("../../database/models/Kicklist");
 const Thumb = require("../../database/models/Thumb");
 const Mailman = require("../../lib/Mailman");
 const CbPoint = require("../../database/models/CbPoint");
@@ -1424,11 +1425,16 @@ const WorkflowGetLatest = async function (req, h) {
  */
 const WorkSearch = async function (req, h) {
   let tenant = req.auth.credentials.tenant._id;
-  //如果有wfid，则找只属于这个wfid工作流的workitems
   let myEmail = req.auth.credentials.email;
   let doer = req.payload.doer ? req.payload.doer : myEmail;
   try {
+    //如果有wfid，则找只属于这个wfid工作流的workitems
     let myGroup = await Cache.getMyGroup(myEmail);
+    let kicked = await Kicklist.findOne({ email: myEmail }).lean();
+    if (kicked) {
+      throw new EmpError("KICKOUT", "your session is kicked out");
+    }
+
     let filter = {
       tenant: req.auth.credentials.tenant._id,
     };
