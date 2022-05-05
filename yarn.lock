@@ -1424,13 +1424,6 @@
     "parse5-htmlparser2-tree-adapter" "^6.0.1"
     "tslib" "^2.2.0"
 
-"code@^5.2.4":
-  "integrity" "sha1-sbuYHpas+Amf+EdgW0LQTbBcr/o="
-  "resolved" "https://registry.npm.taobao.org/code/download/code-5.2.4.tgz"
-  "version" "5.2.4"
-  dependencies:
-    "hoek" "6.x.x"
-
 "color-convert@^1.9.0":
   "integrity" "sha1-u3GFBpDh8TZWfeYp0tVHHe2kweg="
   "resolved" "https://registry.npmmirror.com/color-convert/download/color-convert-1.9.3.tgz"
@@ -2119,11 +2112,6 @@
   "integrity" "sha512-QLg82fGkfnJ/4iy1xZ81/9SIJiq1NGFUMGs6ParyjBZr6jW2Ufj/snDqTHixNlHdPNwN2RLVD0Pi3igeK9+JfA=="
   "resolved" "https://registry.npmjs.org/hoek/-/hoek-4.2.1.tgz"
   "version" "4.2.1"
-
-"hoek@6.x.x":
-  "integrity" "sha1-c7fTOVLgH+J6OLBFcpS3ndjaJCw="
-  "resolved" "https://registry.npm.taobao.org/hoek/download/hoek-6.1.3.tgz"
-  "version" "6.1.3"
 
 "htmlparser2@^6.0.0", "htmlparser2@^6.1.0":
   "integrity" "sha1-xNditsM3GgXb5l6UrkOp+EX7j7c="

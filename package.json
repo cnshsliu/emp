@@ -43,7 +43,6 @@
     "axios-better-stacktrace": "^2.1.2",
     "bufferutil": "^4.0.6",
     "cheerio": "^1.0.0-rc.10",
-    "code": "^5.2.4",
     "core-js": "^3.20.3",
     "exceljs": "^4.3.0",
     "handlebars": "^4.7.7",
