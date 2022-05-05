@@ -2231,7 +2231,7 @@ internals.endpoints = [
         payload: {
           cmtid: Joi.string().required(),
           content: Joi.string().required(),
-          threadid: Joi.string().required(),
+          threadid: Joi.string().optional(),
         },
         validator: Joi,
       },
