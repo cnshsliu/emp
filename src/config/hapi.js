@@ -28,7 +28,6 @@ var EmpConfig = require("./emp"),
 const Good = require("@hapi/good");
 const hapiAuthJwt = require("hapi-auth-jwt2");
 const hapiAuthBasic = require("@hapi/basic");
-const hapiWebSocket = require("hapi-plugin-websocket");
 //const webSocket = require('ws');
 
 //Static file and directory handlers for hapi.js.
@@ -134,7 +133,6 @@ internals.starter = async function () {
   await register_authBasic();
   //await register_swagger();
 
-  // await internals.server.register(hapiWebSocket);
   await JwtAuth.setStrategy(internals.server);
   await Views.init(internals.server);
   await Routes.init(internals.server);
@@ -169,8 +167,6 @@ internals.init = async function () {
   await register_authJwt();
   await register_authBasic();
   //await register_swagger();
-
-  // await internals.server.register(hapiWebSocket);
 
   await JwtAuth.setStrategy(internals.server);
   await Views.init(internals.server);

@@ -1,4 +1,4 @@
-const Boom = require("boom");
+const Boom = require("@hapi/boom");
 const { Cheerio, Parser } = require("../../lib/Parser");
 const moment = require("moment");
 const Tenant = require("../../database/models/Tenant");

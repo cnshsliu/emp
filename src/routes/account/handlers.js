@@ -5,7 +5,7 @@
  */
 //Boom is an abstraction over http error codes
 const Mongoose = require("mongoose");
-const Boom = require("boom");
+const Boom = require("@hapi/boom");
 const fs = require("fs");
 const path = require("path");
 // our configuration
