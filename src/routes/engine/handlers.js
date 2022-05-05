@@ -3959,42 +3959,57 @@ const CommentSearch = async function (req, h) {
   }
 };
 
+/*Toggle allow discuss for template */
 const CommentToggle = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
+    let myGroup = await Cache.getMyGroup(myEmail);
     let objtype = req.payload.objtype;
     let objid = req.payload.objid;
     let ret = null;
+    let filter = {};
     switch (objtype) {
       case "template":
+        filter = {
+          tenant: tenant,
+          tplid: objid,
+        };
+        if (myGroup !== "ADMIN") {
+          filter.owner = myEmail;
+        }
         let tpl = await Template.findOneAndUpdate(
-          {
-            tenant: tenant,
-            tplid: objid,
-          },
+          filter,
           [{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
           { upsert: false, new: true }
         );
         ret = tpl.allowdiscuss;
         break;
       case "workflow":
+        filter = {
+          tenant: tenant,
+          wfid: objid,
+        };
+        if (myGroup !== "ADMIN") {
+          filter.starter = myEmail;
+        }
         let aWf = await Workflow.findOneAndUpdate(
-          {
-            tenant: tenant,
-            wfid: objid,
-          },
+          filter,
           [{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
           { upsert: false, new: true }
         );
         ret = aWf.allowdiscuss;
         break;
       case "todo":
+        filter = {
+          tenant: tenant,
+          todoid: objid,
+        };
+        if (myGroup !== "ADMIN") {
+          filter.doer = myEmail;
+        }
         let aTodo = await Todo.findOneAndUpdate(
-          {
-            tenant: tenant,
-            todoid: objid,
-          },
+          filter,
           [{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
           { upsert: false, new: true }
         );
@@ -4326,7 +4341,7 @@ const ListDelListOrKey = async function (req, h) {
       filter = { tenant: tenant, author: myEmail, name: req.payload.name };
       await List.findOneAndUpdate(filter, { $pull: { entries: { key: req.payload.key } } });
     } else {
-      fitler = { tenant: tenant, author: myEmail, name: req.payload.name };
+      filter = { tenant: tenant, author: myEmail, name: req.payload.name };
       await List.deleteOne(filter);
     }
 
