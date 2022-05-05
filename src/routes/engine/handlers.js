@@ -3633,29 +3633,6 @@ const CommentDeleteBeforeDays = async function (req, h) {
     return h.response(replyHelper.constructErrorResponse(err)).code(500);
   }
 };
-const CommentAddForComment = async function (req, h) {
-  try {
-    let tenant = req.auth.credentials.tenant._id;
-    let myEmail = req.auth.credentials.email;
-    let thisComment = await Engine.postCommentForComment(
-      tenant,
-      myEmail,
-      req.payload.cmtid,
-      req.payload.content
-    );
-    let comments = await Engine.getComments(
-      tenant,
-      "COMMENT",
-      req.payload.cmtid,
-      Const.COMMENT_LOAD_NUMBER
-    );
-
-    return h.response({ comments, thisComment });
-  } catch (err) {
-    console.error(err);
-    return h.response(replyHelper.constructErrorResponse(err)).code(500);
-  }
-};
 
 const CommentDelNewTimeout = async function (req, h) {
   try {
@@ -3692,6 +3669,31 @@ const CommentAddForBiz = async function (req, h) {
     }
 
     return h.response(null);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+};
+
+const CommentAddForComment = async function (req, h) {
+  try {
+    let tenant = req.auth.credentials.tenant._id;
+    let myEmail = req.auth.credentials.email;
+    let thisComment = await Engine.postCommentForComment(
+      tenant,
+      myEmail,
+      req.payload.cmtid, //被该条评论所评论的评论ID
+      req.payload.content,
+      req.payload.threadid
+    );
+    let comments = await Engine.getComments(
+      tenant,
+      "COMMENT",
+      req.payload.cmtid,
+      Const.COMMENT_LOAD_NUMBER
+    );
+
+    return h.response({ comments, thisComment });
   } catch (err) {
     console.error(err);
     return h.response(replyHelper.constructErrorResponse(err)).code(500);

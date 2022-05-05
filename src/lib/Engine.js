@@ -1160,8 +1160,8 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
     tenant,
     doer,
     todo.doer,
-    "TODO",
-    todo.todoid,
+    "TODO", //被评论的对象是一个TODO
+    todo.todoid, //被评论对象的ID
     content,
     context,
     people,
@@ -1174,7 +1174,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
   ret.todoDoerCN = await Cache.getUserName(tenant, todo.doer);
   return ret;
 };
-Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
+Engine.postCommentForComment = async function (tenant, doer, cmtid, content, threadid) {
   let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
 
   let theTodo = await Todo.findOne({ tenant: tenant, todoid: cmt.context.todoid }).lean();
@@ -1203,13 +1203,14 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content) {
     doer,
     cmt.who,
     "COMMENT",
-    cmtid,
+    cmtid, //被该条评论 所评论的评论的ID
     content,
     cmt.context, //继承上一个comment的业务上下文
     people,
     emails,
     cmt.rehearsal,
-    msg
+    msg,
+    threadid
   );
 };
 Engine.__postComment = async function (
@@ -1223,7 +1224,8 @@ Engine.__postComment = async function (
   thePeople,
   emails,
   rehearsal,
-  emailMsg = null
+  emailMsg = null,
+  threadid = null
 ) {
   try {
     //找里面的 @somebody， regexp是@后面跟着的连续非空字符
@@ -1237,8 +1239,22 @@ Engine.__postComment = async function (
       people: thePeople,
       content: content,
       context: context,
+      threadid: threadid ? threadid : "",
     });
     comment = await comment.save();
+    //对TODO的comment是thread级Comment，需要将其threadid设置为其自身的_id
+    if (comment.objtype === "TODO") {
+      comment.threadid = comment._id;
+      comment = await comment.save();
+    } else if (threadid) {
+      //对Comment的Comment需要将其thread  Comment的 updatedAt进行更新
+      //以便其排到前面
+      let threadComment = await Comment.findOneAndUpdate(
+        { tenant: tenant, _id: comment.threadid },
+        { updatedAt: new Date(0) },
+        { new: true }
+      );
+    }
     //TODO: send TIMEOUT seconds later, then check if still exists, if not, don't send email
     if (emailMsg) {
       setTimeout(async () => {
@@ -4527,7 +4543,7 @@ Engine.loadWorkflowComments = async function (tenant, wfid) {
     {
       __v: 0,
     },
-    { sort: "-createdAt" }
+    { sort: "-updatedAt" }
   ).lean();
   for (let i = 0; i < workComments.length; i++) {
     let todo = await Todo.findOne(
