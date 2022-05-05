@@ -327,6 +327,7 @@ internals.LoginUser = async function (req, h) {
           throw new EmpError("login_emailVerified_false", "Email not verified");
         } else {
           let token = JwtAuth.createToken({ id: user._id });
+          console.log(`[Login] ${user.email}`);
           return {
             objectId: user._id,
             sessionToken: token,
