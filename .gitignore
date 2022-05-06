@@ -1,5 +1,6 @@
 run.sh
 config.json
+secret
 node_modules
 src/config/emp.js
 .DS_Store

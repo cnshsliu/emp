@@ -13,7 +13,7 @@
  *
  */
 // our configurations
-const EmpConfig = require("../config/emp"),
+const EmpConfig = require("../../secret/emp_secret"),
   //the crypto library
   crypto = require("crypto"),
   //algorithm for encryption

@@ -9,7 +9,7 @@ const Boom = require("@hapi/boom");
 const fs = require("fs");
 const path = require("path");
 // our configuration
-const EmpConfig = require("../../config/emp");
+const EmpConfig = require("../../../secret/emp_secret");
 // our encrpyt and decrypt
 const Crypto = require("../../lib/Crypto");
 const { Parser } = require("../../lib/Parser");

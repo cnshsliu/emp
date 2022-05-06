@@ -13,7 +13,7 @@
  * ## Imports
  *
  */
-var EmpConfig = require("./emp"),
+var EmpConfig = require("../../secret/emp_secret"),
   //Hapi itself
   Hapi = require("@hapi/hapi"),
   // the authentication strategy

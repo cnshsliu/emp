@@ -16,7 +16,7 @@ const { isMainThread } = require("worker_threads");
  */
 //use mongoose as the ORM
 const Mongoose = require("mongoose"),
-  EmpConfig = require("../config/emp");
+  EmpConfig = require("../../secret/emp_secret");
 
 /**
  * ## Default the connection string to the development envionment

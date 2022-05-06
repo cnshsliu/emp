@@ -1,5 +1,4 @@
 const Joi = require("joi");
-const EmpConfig = require("../../config/emp");
 var Handlers = require("./handlers"),
   internals = {};
 /**
@@ -2158,22 +2157,6 @@ internals.endpoints = [
         payload: {
           wfid: Joi.string().required(),
         },
-        validator: Joi,
-      },
-    },
-  },
-  {
-    method: "POST",
-    path: "/comment/list",
-    handler: Handlers.CommentList,
-    config: {
-      description: "List comments",
-      tags: ["api"],
-      auth: "token",
-      validate: {
-        headers: Joi.object({
-          Authorization: Joi.string(),
-        }).unknown(),
         validator: Joi,
       },
     },

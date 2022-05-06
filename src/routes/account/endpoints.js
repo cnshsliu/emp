@@ -15,7 +15,7 @@
 //Handle the endpoints
 const AccountHandlers = require("./handlers");
 //The static configurations
-const EmpConfig = require("../../config/emp");
+const EmpConfig = require("../../../secret/emp_secret");
 //Joi is Hapi's validation library
 const Joi = require("joi");
 

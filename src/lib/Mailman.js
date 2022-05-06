@@ -14,7 +14,7 @@ const Hoek = require("@hapi/hoek");
 const Tools = require("../tools/tools.js");
 // the email library
 const nodemailer = require("nodemailer");
-const EmpConfig = require("../config/emp");
+const EmpConfig = require("../../secret/emp_secret");
 
 /**
  * ## mail
@@ -39,7 +39,7 @@ Mailman.mail = async function (smtp, from, toemail, cc, bcc, subject, mailbody) 
     subject: subject, // Subject line
     html: mailbody, // html body
   };
-  if (from.indexOf(smtp.username)<0) {
+  if (from.indexOf(smtp.username) < 0) {
     console.error(`mail from [${from}] != [${smtp.username}]`);
   }
   //Send email

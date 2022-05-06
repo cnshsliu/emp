@@ -12,7 +12,7 @@
  */
 const Redis = require("redis"),
   asyncRedis = require("async-redis"),
-  EmpConfig = require("../config/emp");
+  EmpConfig = require("../../secret/emp_secret");
 var redisClient = {},
   asyncRedisClient = {};
 /**

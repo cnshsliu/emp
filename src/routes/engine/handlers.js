@@ -3550,24 +3550,6 @@ const MemberSystemPerm = async function (req, h) {
   }
 };
 
-const CommentList = async function (req, h) {
-  try {
-    let tenant = req.auth.credentials.tenant._id;
-    let myEmail = req.auth.credentials.email;
-    let filter = { tenant: tenant, toWhom: myEmail };
-    let comments = await Comment.find(filter, { toWhom: 0 }).sort("-createdAt").lean();
-    for (let i = 0; i < comments.length; i++) {
-      comments[i].cn = await Cache.getUserName(tenant, comments[i].who);
-      comments[i].avatar = await Cache.getUserAvatar(tenant, comments[i].who);
-    }
-
-    return h.response(comments);
-  } catch (err) {
-    console.error(err);
-    return h.response(replyHelper.constructErrorResponse(err)).code(500);
-  }
-};
-
 const CommentWorkflowLoad = async function (req, h) {
   try {
     let tenant = req.auth.credentials.tenant._id;
@@ -4857,7 +4839,6 @@ module.exports = {
   OrgChartAddPosition,
   OrgChartDelPosition,
   OrgChartAuthorizedAdmin,
-  CommentList,
   CommentWorkflowLoad,
   CommentDelete,
   CommentDeleteBeforeDays,

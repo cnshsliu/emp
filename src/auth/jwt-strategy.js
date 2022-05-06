@@ -12,7 +12,7 @@
  * ## Imports
  *
  */
-const EmpConfig = require("../config/emp");
+const EmpConfig = require("../../secret/emp_secret");
 const internals = {};
 //the authentication package
 const Jwt = require("jsonwebtoken");
