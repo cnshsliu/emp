@@ -1,0 +1,15 @@
+$docker exec -it mongo1 mongo
+
+use admin;
+db.createUser({'user':'admin', pwd:'password', "roles" : [ { "role" : "dbAdmin", "db" : "admin" }, { "role" : "readWriteAnyDatabase", "db" : "admin" }, { "role" : "userAdminAnyDatabase", "db" : "admin" } ] });
+use grume;
+db.createUser({'user':'hong', pwd:'PASSWORD', "roles" : [ { "role" : "readWrite", "db" : "grume" }, { "role" : "dbAdmin", "db" : "grume" }] });
+
+
+
+db.createUser({'user':'hong', pwd:'PASSWORD', "roles" : [ { "role" : "readWrite", "db" : "emp" }, { "role" : "dbAdmin", "db" : "emp" }] });
+
+
+
+
+

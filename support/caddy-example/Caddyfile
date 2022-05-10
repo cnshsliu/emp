@@ -1,0 +1,7 @@
+mtc.localhost {
+	reverse_proxy http://localhost:3000
+}
+
+emp.localhost {
+	reverse_proxy http://localhost:5008
+}

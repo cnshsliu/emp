@@ -1,0 +1,11 @@
+{
+  "name": "emp_server",
+  "script": "./product/index.js",
+  "node_args": ["--inspect"],
+  "watch": ["product"],
+  "ignore_watch": ["test"],
+  "interpreter": "node",
+  "env": {
+    "NODE_ENV": "dev"
+  }
+}
