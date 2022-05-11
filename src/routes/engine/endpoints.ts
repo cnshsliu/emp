@@ -2937,23 +2937,22 @@ const internals = {
         },
       },
     },
-    /* {
+    {
       method: "POST",
-      path: "/fix/1",
-      handler: Handlers.Fix1,
+      path: "/testwhauth",
+      handler: Handlers.TestWishhouseAuth,
       config: {
+        description: "Test WishHouse Authentication",
         tags: ["api"],
+        auth: "wh",
         validate: {
           headers: Joi.object({
             Authorization: Joi.string(),
           }).unknown(),
-          payload: {
-            tplid: Joi.string(),
-          },
           validator: Joi,
         },
       },
-    }, */
+    },
   ],
 };
 

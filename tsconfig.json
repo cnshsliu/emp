@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "outDir": "product",
+    "outDir": "build",
     "rootDir": "src",
     "target": "es6",
     "module": "commonjs",

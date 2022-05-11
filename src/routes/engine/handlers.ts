@@ -4813,6 +4813,15 @@ async function Fix(req, h) {
   }
 }
 
+async function TestWishhouseAuth(req, h) {
+  try {
+    return h.response(req.auth.credentials.username);
+  } catch (err) {
+    console.error(err);
+    return h.response(replyHelper.constructErrorResponse(err)).code(500);
+  }
+}
+
 export default {
   TemplateCreate,
   TemplateDesc,
@@ -4953,4 +4962,5 @@ export default {
   DemoPostContext,
   ListUsersNotStaff,
   Fix,
+  TestWishhouseAuth,
 };
