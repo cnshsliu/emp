@@ -939,8 +939,8 @@ const Parser = {
 			null,
 			{}, //因此，这里不需要带入流程参数，也无法带入流程参数，因为不在流程🀄️
 		);
-		orgchartAdmins = orgchartAdmins.map((x) => x.uid);
-		let isOneOfOrgChartAdmin = orgchartAdmins.includes(me.email);
+		let orgchartAdminEmails = orgchartAdmins.map((x) => x.uid);
+		let isOneOfOrgChartAdmin = orgchartAdminEmails.includes(me.email);
 		if (!(isTenantOwner || isAdminGroup || isOneOfOrgChartAdmin)) {
 			throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
 		}
