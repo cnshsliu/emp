@@ -25,6 +25,7 @@ const schema = new Mongoose.Schema({
 	signature: { type: Mongoose.Schema.Types.String, default: "" },
 	active: { type: Boolean, default: true },
 	succeed: { type: String, default: "" },
+	succeedname: { type: String, default: "" },
 });
 
 export default Mongoose.model("User", schema);

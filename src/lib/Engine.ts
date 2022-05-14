@@ -103,7 +103,7 @@ Engine.callYarkNodeWorker = function (msg) {
 			} else {
 				console.log("\t" + message);
 				console.log("\t====>Now Resolve YarkNodeWorker ");
-				resolve;
+				resolve("Done worker");
 			}
 		});
 		worker.on("error", reject);
@@ -209,7 +209,7 @@ Engine.sendNexts = async function (nexts) {
 			}
 			let podium_name = nexts[i].CMD;
 			let podium_channel = podium_name + "-1";
-			console.log("\t========", podium_name, "---", podium_channel);
+			console.log("MainThread emit ========", podium_name, "---", podium_channel);
 			Engine.podium.emit({ name: podium_name, channel: podium_channel }, nexts[i]);
 		}
 	} else {
@@ -633,6 +633,7 @@ Engine.__doneTodo = async function (
 	let workNode = wfRoot.find("#" + todo.workid);
 	//let workNodeText = workNode.toString();
 	if (workNode.hasClass("ST_RUN") === false) {
+		debugger;
 		try {
 			let st = Engine.getStatusFromClass(workNode);
 			todo.status = st;
@@ -836,6 +837,97 @@ Engine.__doneTodo = async function (
 		// START -- 处理这个非ADHOC 节点
 		//////////////////////////////////////////////////
 		if (workNode.hasClass("ADHOC") === false) {
+			////////////////////////////////////////////////////
+			// process Script -- START
+			////////////////////////////////////////////////////
+			let parsed_code = Parser.base64ToCode(tpNode.find("code").first().text().trim());
+			//取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
+			let kvarsForScript = await Parser.userGetVars(
+				tenant,
+				"EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
+				wfid,
+				Const.FOR_WHOLE_PROCESS, //整个工作流
+				[],
+				[],
+				Const.VAR_IS_EFFICIENT, //efficient
+			);
+			await Parser.injectCells(tenant, kvarsForScript);
+			kvarsForScript = Parser.injectInternalVars(kvarsForScript);
+			kvarsForScript = Parser.tidyKVars(kvarsForScript);
+			let codeRetString = '{"RET":"DEFAULT"}';
+			let codeRetObj = {};
+			let codeRetDecision = "DEFAULT";
+			let runInSyncMode = true;
+			let callbackId = "";
+			let innerTeamSet = "";
+			try {
+				let pdsResolvedForScript = await Engine.getPdsOfAllNodesForScript({
+					tenant: tenant,
+					tplid: wf.tplid,
+					starter: wf.starter,
+					teamid: teamid,
+					wfid: wf.wfid,
+					tpRoot: tpRoot,
+					wfRoot: wfRoot,
+					tpNode: tpNode,
+					kvars: kvarsForScript,
+				});
+				//console.log(pdsResolvedForScript);
+				codeRetString = await Engine.runCode(
+					tenant, //tenant
+					Tools.getEmailDomain(wf.starter), //Tenant Domain
+					wf.tplid,
+					wf.wfid,
+					wf.starter,
+					kvarsForScript,
+					pdsResolvedForScript,
+					parsed_code,
+					callbackId,
+				);
+			} catch (e) {
+				console.error(e);
+				codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
+			}
+			try {
+				//先尝试解析JSON
+				codeRetObj = JSON.parse(codeRetString);
+				codeRetObj["RET"] && (codeRetDecision = codeRetObj["RET"]);
+				codeRetObj["USE_TEAM"] && (teamid = codeRetObj["USE_TEAM"]);
+				codeRetObj["INNER_TEAM"] && (innerTeamSet = codeRetObj["INNER_TEAM"]);
+			} catch (e) {
+				//如果JSON解析失败，则表示是一个简单字符串
+				//console.log(e);
+				codeRetObj = {};
+				codeRetDecision = codeRetString;
+			}
+			//Get a clean KVAR array
+			//Script运行结束后，下面这些vars不需要被记录在节点上
+			delete codeRetObj["RET"];
+			delete codeRetObj["USE_TEAM"];
+			delete codeRetObj["INNER_TEAM"];
+
+			//设置通过kvar()方法设置的进程参数
+			//直接忽略掉脚本中的Return, 而是使用用户的 userChoice来决定流程流向
+			if (codeRetDecision !== "DEFAULT" && codeRetDecision !== "undefined") {
+				workResultRoute = codeRetDecision;
+				codeRetObj["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: codeRetDecision };
+			}
+			if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
+				await Parser.setVars(
+					tenant,
+					todo.round,
+					wf.wfid,
+					nodeid,
+					workid,
+					codeRetObj,
+					"EMP",
+					Const.VAR_IS_EFFICIENT,
+				);
+			}
+			console.log(`\tAction SCRIPT ${tpNode.attr("id")} end...`);
+			////////////////////////////////////////////////////
+			// process Script -- END
+			////////////////////////////////////////////////////
 			await Engine.procNext(
 				tenant,
 				teamid,
@@ -845,12 +937,19 @@ Engine.__doneTodo = async function (
 				wfRoot,
 				nodeid,
 				todo.workid,
-				workResultRoute,
+				workResultRoute, //用户所做的选择
 				nexts,
 				//TODO: 在这里处理关键逻辑
 				todo.round,
 				wf.rehearsal,
 				wf.starter,
+			);
+			console.log(
+				`From ${nodeid} by ${workResultRoute} to ${JSON.stringify(
+					nexts.map((x) => x.selector),
+					null,
+					2,
+				)}`,
 			);
 			Engine.log(tenant, todo.wfid, "procNext return" + JSON.stringify(nexts));
 			let hasEnd = false;
@@ -1939,10 +2038,11 @@ Client.onStartWorkflow = async function (msg) {
 Client.onYarkNode = async function (obj) {
 	try {
 		//await Engine.yarkNode_internal(obj);
+		await Engine.callYarkNodeWorker(obj);
 
-		Engine.callYarkNodeWorker(obj).then((res) => {
-			console.log(res);
-		});
+		/* Engine.callYarkNodeWorker(obj).then((res) => {
+			console.log("++++", res);
+		}); */
 	} catch (error) {
 		console.error(error);
 	}
@@ -2205,7 +2305,7 @@ Engine.yarkNode_internal = async function (obj) {
 	let parent_nexts = [];
 	if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
 
-	console.log("Begin yarkNode -----> " + obj.selector + " <--------");
+	console.log((isMainThread ? "" : "\t") + "Begin yarkNode -----> " + obj.selector + " <--------");
 
 	let tenant = obj.tenant;
 	let filter = { tenant: obj.tenant, wfid: obj.wfid };
@@ -2527,8 +2627,6 @@ Engine.yarkNode_internal = async function (obj) {
 				obj.wfid,
 				"Caution: this script run in ASYNC mode, following actions only dispatch only by remote callback",
 			);
-		}
-		if (!runInSyncMode) {
 			//异步回调不会调用ProcNext， 而是新建一个Callback Point
 			//需要通过访问callbackpoint，来推动流程向后运行
 			//TODO: round in CbPoint, and callback placeround
@@ -2735,15 +2833,15 @@ Engine.yarkNode_internal = async function (obj) {
 	} else if (tpNode.hasClass("OR")) {
 		//OR不需要检查，只要碰到，就会完成
 		/* let orDone = Engine.checkOr(
-      obj.tenant,
-      obj.wfid,
-      tpRoot,
-      wfRoot,
-      nodeid,
-      from_workid,
-      "DEFAULT",
-      nexts
-    ); */
+			obj.tenant,
+			obj.wfid,
+			tpRoot,
+			wfRoot,
+			nodeid,
+			from_workid,
+			"DEFAULT",
+			nexts
+		); */
 		let orDone = true;
 		if (orDone) {
 			wfRoot.append(
@@ -2994,7 +3092,7 @@ Engine.yarkNode_internal = async function (obj) {
 			);
 		}
 		//END of END node
-	} else {
+	} else if (tpNode.hasClass("ACTION")) {
 		//ACTION
 		//An Action node which should be done by person
 		//Reset team if there is team defination in tpNode.attr("role");
@@ -3033,7 +3131,7 @@ Engine.yarkNode_internal = async function (obj) {
 				cells = cell.cells;
 			}
 		}
-		//从attach csv中取用户
+		//如果使用了csv_,则从attach csv中取用户
 		if (attach_csv) {
 			doerOrDoers = [];
 			if (cells && Array.isArray(cells) && cells.length > 0) {
@@ -3101,10 +3199,9 @@ Engine.yarkNode_internal = async function (obj) {
 
 		//singleRunning的意思是： 无论多少round，总按一个动作执行
 		let singleRunning = Tools.blankToDefault(tpNode.attr("sr"), "false") === "true";
-		//TODO: singleRunning
 		let existingRunningNodeWork = wfRoot.find(`.work.ST_RUN[nodeid="${nodeid}"]`);
 		if (!(singleRunning && existingRunningNodeWork.length > 0)) {
-			//如果  不是 “singleRunning并且有多个运行中的同节点work"
+			//如果  不是 “singleRunning并且有多个运行中的同节点todos"
 			wfRoot.append(
 				`<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${thisRound}"  at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`,
 			);
@@ -3163,7 +3260,10 @@ Engine.yarkNode_internal = async function (obj) {
 				allowdiscuss: wf.allowdiscuss,
 			});
 		}
-	} //End of ACTION
+		//End of ACTION
+	} else {
+		console.error("Unsupported node type", tpNode.attr("class"));
+	}
 	//End of all node type processing
 
 	wfUpdate["doc"] = wfIO.html();
@@ -3192,7 +3292,7 @@ Engine.yarkNode_internal = async function (obj) {
 	//////////////////////////////////////////////////
 	//  END send to workflow endpoint
 	//////////////////////////////////////////////////
-	console.log("END yarkNode -----> " + obj.selector + " <--------");
+	console.log((isMainThread ? "" : "\t") + "END yarkNode -----> " + obj.selector + " <--------");
 };
 
 //Only SCRIPT is supported at this moment.
@@ -4920,6 +5020,7 @@ Engine.__getWorkFullInfo = async function (
 	ret.todoid = todo.todoid;
 	ret.tenant = todo.tenant;
 	ret.doer = todo.doer;
+	ret.doerCN = await Cache.getUserName(tenant, todo.doer);
 	ret.wfid = todo.wfid;
 	ret.nodeid = todo.nodeid;
 	ret.byroute = todo.byroute;
@@ -5107,6 +5208,7 @@ Engine.__getWorkflowWorksHistory = async function (
 		}
 		todoEntry.status = todos[i].status;
 		todoEntry.doer = todos[i].doer;
+		todoEntry.doerCN = doerCN;
 		todoEntry.doneby = todos[i].doneby;
 		todoEntry.doneat = todos[i].doneat;
 		if (todos[i].decision) todoEntry.decision = todos[i].decision;

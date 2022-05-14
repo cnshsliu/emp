@@ -47,7 +47,7 @@
     "exceljs": "^4.3.0",
     "handlebars": "^4.7.7",
     "hapi-auth-jwt2": "^10.2.0",
-    "hapi-auth-wishhouse": "^0.1.0",
+    "hapi-auth-wishhouse": "^0.1.1",
     "hapi-custom-auth": "^0.1.0",
     "hapi-plugin-websocket": "^2.3.8",
     "jimp": "^0.16.1",

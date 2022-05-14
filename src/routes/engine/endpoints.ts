@@ -3042,6 +3042,16 @@ const internals = {
 				},
 			},
 		},
+
+		{
+			method: "GET",
+			path: "/version",
+			handler: Handlers.Version,
+			config: {
+				description: "Get Mtc version",
+				tags: ["api"],
+			},
+		},
 	],
 };
 

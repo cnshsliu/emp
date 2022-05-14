@@ -425,6 +425,7 @@ async function TemplateAddCron(req, h) {
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
+
 async function TemplateBatchStart(req, h) {
 	try {
 		let tenant = req.auth.credentials.tenant._id;
@@ -515,6 +516,7 @@ async function TemplateRename(req, h) {
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
+
 async function TemplateRenameWithIid(req, h) {
 	try {
 		let tenant = req.auth.credentials.tenant._id;
@@ -689,6 +691,7 @@ async function WorkflowRead(req, h) {
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
+
 async function WorkflowCheckStatus(req, h) {
 	try {
 		let myEmail = req.auth.credentials.email;
@@ -851,6 +854,7 @@ async function WorkflowAddFile(req, h) {
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
+
 async function __getCells(tenant, myEmail, pondFile, poindServerFile) {
 	let cells = [];
 	console.log(pondFile.contentType);
@@ -962,6 +966,7 @@ async function __saveCSVAsCells(tenant, myEmail, wfid, csvPondFiles) {
 	}
 	return missedUIDs;
 }
+
 async function WorkflowRemoveAttachment(req, h) {
 	try {
 		let tenant = req.auth.credentials.tenant._id;
@@ -3315,7 +3320,14 @@ async function OrgChartExpand(req, h) {
 		let childrenStaffFilter = { tenant: tenant };
 		childrenStaffFilter["uid"] = { $ne: "OU---" };
 		childrenStaffFilter["ou"] = ou;
-		let tmp = await OrgChart.find(childrenStaffFilter);
+		let tmp = await OrgChart.find(childrenStaffFilter).lean();
+		for (let i = 0; i < tmp.length; i++) {
+			let user = await User.findOne({ tenant: tenant, email: tmp[i].uid });
+			if (user && user.active === false) {
+				tmp[i].uid = user.succeed;
+				tmp[i].cn = await Cache.getUserName(tenant, user.succeed);
+			}
+		}
 		ret = ret.concat(tmp);
 
 		//再放下级组织
@@ -3323,7 +3335,7 @@ async function OrgChartExpand(req, h) {
 		childrenOuFilter["uid"] = "OU---";
 		childrenOuFilter["ou"] = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
 
-		tmp = await OrgChart.find(childrenOuFilter);
+		tmp = await OrgChart.find(childrenOuFilter).lean();
 		ret = ret.concat(tmp);
 
 		return h.response(ret);
@@ -4799,10 +4811,20 @@ async function ReplaceUserSucceed(req, h) {
 		assert.notEqual(toUser, null, new EmpError("USER_NOT_FOUND", "TO user must exists"));
 		let aUser = await User.findOneAndUpdate(
 			{ tenant: tenant, email: fromEmail },
-			{ $set: { active: false, succeed: toEmail } },
+			{ $set: { active: false, succeed: toEmail, succeedname: toUser.username } },
 			{ upsert: false, new: true },
 		);
+
+		// If reassigned user has ever been set as any other reassigned users' succeed, change the succeed to the new user as well.
+		await User.updateMany(
+			{ tenant: tenant, succeed: fromEmail },
+			{ $set: { succeed: toEmail, succeedname: toUser.username } },
+		);
+		//Delete cache of reassigned user's credential cache from Redis,
+		//THis cause credential verifcation failed: no cache, EMP get user info
+		//from database and required the user's active value must be true.
 		await Cache.removeKey(`cred_${aUser._id}`);
+
 		return h.response("Done");
 	} catch (err) {
 		console.log(err);
@@ -4832,7 +4854,7 @@ async function ReplaceUserPrepare(req, h) {
 			email: Tools.makeEmailSameDomain(req.payload.to, myEmail),
 		});
 		assert.notEqual(toUser, null, new EmpError("USER_NOT_FOUND", "TO user must exists"));
-		Engine.replaceUser_child({
+		Engine.replaceUser({
 			tenant,
 			admin: myEmail,
 			domain: Tools.getEmailDomain(myEmail),
@@ -4884,7 +4906,7 @@ async function ReplaceUserExecute(req, h) {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
 		console.log(req.payload);
-		Engine.replaceUser_child({
+		Engine.replaceUser({
 			tenant,
 			domain: Tools.getEmailDomain(myEmail),
 			action: "execute",
@@ -4936,6 +4958,21 @@ async function TestWishhouseAuth(req, h) {
 		return h.response(req.auth.credentials.username);
 	} catch (err) {
 		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function Version(req, h) {
+	try {
+		return h
+			.response(
+				`
+				const internal = {version: "${Const.VERSION}"};
+				export default internal;
+				`,
+			)
+			.header("Content-Type", "application/javascript; charset=utf-8");
+	} catch (err) {
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
@@ -5085,4 +5122,5 @@ export default {
 	ReplaceUserPrepareResult,
 	ReplaceUserExecute,
 	TestWishhouseAuth,
+	Version,
 };
