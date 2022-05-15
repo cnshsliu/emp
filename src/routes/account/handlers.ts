@@ -26,6 +26,33 @@ import EmpError from "../../lib/EmpError";
 import { Engine, Client } from "../../lib/Engine";
 import Cache from "../../lib/Cache";
 
+const buildSessionResponse = (user, tenant) => {
+	let token = JwtAuth.createToken({ id: user._id });
+	return {
+		objectId: user._id,
+		sessionToken: token,
+		user: {
+			userid: user._id,
+			username: user.username,
+			email: user.email,
+			group: user.group,
+			sessionToken: token,
+			ew: user.ew,
+			ps: user.ps ? user.ps : 20,
+			tenant: {
+				_id: tenant._id,
+				css: tenant.css,
+				name: tenant.name,
+				orgmode: tenant.orgmode,
+				timezone: tenant.timezone,
+			},
+			perms: SystemPermController.getMyGroupPerm(user.group),
+			avatar: user.avatar,
+			signature: user.signature,
+		},
+	};
+};
+
 async function RegisterUser(req, h) {
 	try {
 		//在L2C服务端配置里，可以分为多个site，每个site允许哪些用户能注册
@@ -307,31 +334,9 @@ async function LoginUser(req, h) {
 					throw new EmpError("login_emailVerified_false", "Email not verified");
 				} else {
 					await redisClient.del(`logout_${user._id}`);
-					let token = JwtAuth.createToken({ id: user._id });
 					console.log(`[Login] ${user.email}`);
-					return {
-						objectId: user._id,
-						sessionToken: token,
-						user: {
-							userid: user._id,
-							username: user.username,
-							email: user.email,
-							group: user.group,
-							sessionToken: token,
-							ew: user.ew,
-							ps: user.ps ? user.ps : 20,
-							tenant: {
-								_id: user.tenant._id,
-								css: user.tenant.css,
-								name: user.tenant.name,
-								orgmode: user.tenant.orgmode,
-								timezone: user.tenant.timezone,
-							},
-							perms: SystemPermController.getMyGroupPerm(user.group),
-							avatar: user.avatar,
-							signature: user.signature,
-						},
-					};
+					let ret = buildSessionResponse(user, user.tenant);
+					return h.response(ret);
 				}
 			}
 		}
@@ -570,6 +575,7 @@ async function GetProfileByEmail(req, h) {
 async function UpdateProfile(req, h) {
 	try {
 		let tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
 		let user = await User.findById(req.auth.credentials._id);
 		let theTenant = await Tenant.findOne({ _id: tenant });
 		let v = req.payload.value;
@@ -599,7 +605,7 @@ async function UpdateProfile(req, h) {
 			);
 		}
 		if (v.password) {
-			if (Crypto.decrypt(user.password) != req.payload.old_password) {
+			if (Crypto.decrypt(user.password) != v.old_password) {
 				throw new EmpError("wrong_password", "You are using a wrong password");
 			}
 			update["password"] = Crypto.encrypt(v.password);
@@ -613,30 +619,13 @@ async function UpdateProfile(req, h) {
 
 		await Cache.removeKeyByEmail(user.email);
 
-		user = await User.updateOne({ tenant: tenant, email: user.email }, { $set: update });
-		let token = JwtAuth.createToken({ id: user._id });
-		return {
-			objectId: user._id,
-			sessionToken: token,
-			user: {
-				userid: user._id,
-				username: user.username,
-				email: user.email,
-				group: user.group,
-				sessionToken: token,
-				ew: user.ew,
-				ps: user.ps,
-				tenant: {
-					css: theTenant.css,
-					name: theTenant.name,
-					orgmode: theTenant.orgmode,
-					timezone: theTenant.timezone,
-				},
-				perms: SystemPermController.getMyGroupPerm(user.group),
-				avatar: user.avatar,
-				signature: user.signature,
-			},
-		};
+		user = await User.findOneAndUpdate(
+			{ tenant: tenant, email: user.email },
+			{ $set: update },
+			{ upsert: false, new: true },
+		);
+		let ret = buildSessionResponse(user, theTenant);
+		return h.response(ret);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
