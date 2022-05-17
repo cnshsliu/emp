@@ -32,6 +32,7 @@ import CbPoint from "../../database/models/CbPoint";
 import Team from "../../database/models/Team";
 import TempSubset from "../../database/models/TempSubset";
 import OrgChart from "../../database/models/OrgChart";
+import SavedSearch from "../../database/models/SavedSearch";
 import OrgChartHelper from "../../lib/OrgChartHelper";
 import replyHelper from "../../lib/helpers";
 import Tools from "../../tools/tools.js";
@@ -1388,6 +1389,7 @@ async function WorkflowSearch(req, h) {
 		if (req.payload.fields) fields = req.payload.fields;
 
 		let total = await Workflow.countDocuments(filter, { doc: 0 });
+		console.log(JSON.stringify(filter, null, 2));
 		let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
 
 		for (let i = 0; i < retObjs.length; i++) {
@@ -4913,8 +4915,77 @@ async function ReplaceUserExecute(req, h) {
 			...req.payload,
 		}).then();
 		return h.response("Please wait to refresh");
+	} catch (err) {
+		console.log(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
 
-		return h.response("DONE");
+async function SavedSearchSave(req, h) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+		if (myGroup !== "ADMIN") {
+			throw new EmpError("NOT_ADMIN", "You are not admin");
+		}
+		let { objtype, name, ss } = req.payload;
+		let newSs = await SavedSearch.findOneAndUpdate(
+			{ tenant: tenant, author: myEmail, name: name },
+			{ $set: { author: myEmail, name: name, ss: ss, objtype: objtype } },
+			{ upsert: true, new: true },
+		);
+		let total = await SavedSearch.countDocuments({
+			tenant: tenant,
+			author: myEmail,
+			objtype: objtype,
+		});
+		if (total > 20) {
+			SavedSearch.findOneAndDelete({ tenant: tenant, author: myEmail, objtype: objtype }).sort(
+				"-createdAt",
+			);
+		}
+
+		return h.response(newSs);
+	} catch (err) {
+		console.log(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function SavedSearchList(req, h) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+		if (myGroup !== "ADMIN") {
+			throw new EmpError("NOT_ADMIN", "You are not admin");
+		}
+		return h.response(
+			await SavedSearch.find({ tenant: tenant, author: myEmail, objtype: req.payload.objtype })
+				.sort("-createdAt")
+				.lean(),
+		);
+	} catch (err) {
+		console.log(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function SavedSearchGetOne(req, h) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+		if (myGroup !== "ADMIN") {
+			throw new EmpError("NOT_ADMIN", "You are not admin");
+		}
+		return h.response(
+			await SavedSearch.findOne(
+				{ tenant: tenant, author: myEmail, name: req.payload.name, objtype: req.payload.objtype },
+				{ ss: 1, _id: 0 },
+			).lean(),
+		);
 	} catch (err) {
 		console.log(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -5123,4 +5194,7 @@ export default {
 	ReplaceUserExecute,
 	TestWishhouseAuth,
 	Version,
+	SavedSearchSave,
+	SavedSearchList,
+	SavedSearchGetOne,
 };

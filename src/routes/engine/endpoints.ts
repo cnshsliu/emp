@@ -20,6 +20,7 @@ const internals = {
 					payload: {
 						tplid: Joi.string()
 							.required()
+							.trim()
 							.min(3)
 							.description("The name of a template, should not be an exists one."),
 						desc: Joi.string().optional().allow(""),
@@ -321,7 +322,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						fromid: Joi.string().required(),
-						tplid: Joi.string().required(),
+						tplid: Joi.string().required().trim(),
 					},
 					validator: Joi,
 				},
@@ -992,9 +993,9 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						tplid: Joi.string().optional(),
-						wfid: Joi.string().optional(),
-						pattern: Joi.string().empty("").optional(),
+						tplid: Joi.string().optional().allow(""),
+						wfid: Joi.string().optional().allow(""),
+						pattern: Joi.string().empty("").optional().allow(""),
 						starter: Joi.string().optional(),
 						status: Joi.string().optional(),
 						sort_field: Joi.string().optional().default("updatedAt"),
@@ -1003,8 +1004,8 @@ const internals = {
 						limit: Joi.number().optional(),
 						tagsForFilter: Joi.array().items(Joi.string().allow("")).optional(),
 						tspan: Joi.string().optional(),
-						calendar_begin: Joi.string().optional(),
-						calendar_end: Joi.string().optional(),
+						calendar_begin: Joi.string().optional().allow(""),
+						calendar_end: Joi.string().optional().allow(""),
 						reason: Joi.string().optional(),
 					},
 					validator: Joi,
@@ -3050,6 +3051,69 @@ const internals = {
 			config: {
 				description: "Get Mtc version",
 				tags: ["api"],
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/search/save",
+			handler: Handlers.SavedSearchSave,
+			config: {
+				description: "Save a Search",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						name: Joi.string().required(),
+						ss: Joi.string().required(),
+						objtype: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/search/list",
+			handler: Handlers.SavedSearchList,
+			config: {
+				description: "Get all saved search",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						objtype: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/search/getone",
+			handler: Handlers.SavedSearchGetOne,
+			config: {
+				description: "Get one save search",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						name: Joi.string().required(),
+						objtype: Joi.string().required(),
+					},
+					validator: Joi,
+				},
 			},
 		},
 	],
