@@ -1279,7 +1279,7 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/work/list",
+			path: "/work/search",
 			handler: Handlers.WorkSearch,
 			config: {
 				description: "Get worklist of doer",

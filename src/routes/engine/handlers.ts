@@ -404,6 +404,14 @@ async function TemplateAddCron(req, h) {
 				throw new EmpError("QUOTA EXCEEDED", `Exceed cron entry quota ${allowedCronNumber}`);
 			}
 		}
+
+		let existing = await Crontab.findOne({
+			tenant: tenant,
+			tplid: tplid, expr: expr: starters: starters, method: 'STARTWORKFLOW'
+		});
+		if(existing) {
+			throw new EmpError("ALREADY_EXIST", "Same cron already exist");
+		}
 		//
 		//////////////////////////////////////////////////
 		//
@@ -506,7 +514,7 @@ async function TemplateRename(req, h) {
 					path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
 				);
 			} catch (err) {}
-			return h.response(tpl);
+			return h.response(tpl.tplid);
 		} catch (err) {
 			if (err.message.indexOf("duplicate key"))
 				throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
@@ -1271,7 +1279,11 @@ async function __GetTagsFilter(tagsForFilter, myEmail) {
 async function WorkflowSearch(req, h) {
 	let tenant = req.auth.credentials.tenant._id;
 	let myEmail = req.auth.credentials.email;
+	let myGroup = await Cache.getMyGroup(myEmail);
 	try {
+		let starter = req.payload.starter;
+		starter = starter ? starter : myEmail;
+		starter = Tools.makeEmailSameDomain(starter, myEmail);
 		//检查当前用户是否有读取进程的权限
 		let me = await User.findOne({ _id: req.auth.credentials._id });
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
@@ -1294,10 +1306,8 @@ async function WorkflowSearch(req, h) {
 			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 		}
-		if (Tools.hasValue(req.payload.starter)) {
-			filter["starter"] = req.payload.starter;
-			todoFilter["starter"] = req.payload.starter;
-		}
+			filter["starter"] = starter;
+			todoFilter["starter"] = starter;
 		if (Tools.hasValue(req.payload.status)) {
 			filter["status"] = req.payload.status;
 			todoFilter["wfstatus"] = req.payload.status;
@@ -1377,12 +1387,15 @@ async function WorkflowSearch(req, h) {
 			}
 		}
 
-		let myVisiedTemplatesIds = await Engine.getUserVisiedTemplate(tenant, myEmail);
+		let myBannedTemplatesIds = [];
+		if (myGroup !== "ADMIN") {
+			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+		}
 		if (filter.tplid) {
-			filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $in: myVisiedTemplatesIds } }];
+			filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $nin: myBannedTemplatesIds } }];
 			delete filter.tplid;
 		} else {
-			filter.tplid = { $in: myVisiedTemplatesIds };
+			filter.tplid = { $nin: myBannedTemplatesIds };
 		}
 
 		let fields = { doc: 0 };
@@ -1435,6 +1448,7 @@ async function WorkSearch(req, h) {
 	let myEmail = req.auth.credentials.email;
 	let doer = req.payload.doer ? req.payload.doer : myEmail;
 	let reason = req.payload.reason ? req.payload.reason : "unknown";
+	doer = Tools.makeEmailSameDomain(doer, myEmail);
 	try {
 		//如果有wfid，则找只属于这个wfid工作流的workitems
 		let myGroup = await Cache.getMyGroup(myEmail);
@@ -2013,10 +2027,17 @@ async function TemplateSearch(req, h) {
 	try {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
 			throw new EmpError("NO_PERM", "no permission to read template");
 
-		let myVisiedTemplatesIds = await Engine.getUserVisiedTemplate(tenant, myEmail);
+		let author = req.payload.author;
+		if (!author) author = myEmail;
+		else author = Tools.makeEmailSameDomain(author, myEmail);
+		let myBannedTemplatesIds = [];
+		if (myGroup !== "ADMIN") {
+			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+		}
 
 		let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
 		let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
@@ -2029,18 +2050,18 @@ async function TemplateSearch(req, h) {
 			//filter["tplid"] = { $regex: `.*${req.payload.pattern}.*` };
 			filter["$and"] = [
 				{ tplid: { $regex: `.*${req.payload.pattern}.*` } },
-				{ tplid: { $in: myVisiedTemplatesIds } },
+				{ tplid: { $nin: myBannedTemplatesIds } },
 			];
 		} else if (req.payload.tplid) {
 			//如果制定了tplid，则使用指定tplid搜索
 			//filter["tplid"] = req.payload.tplid;
 			filter["$and"] = [
 				{ tplid: { $eq: req.payload.tplid } },
-				{ tplid: { $in: myVisiedTemplatesIds } },
+				{ tplid: { $nin: myBannedTemplatesIds } },
 			];
 			limit = 1;
 		} else {
-			filter["tplid"] = { $in: myVisiedTemplatesIds };
+			filter["tplid"] = { $nin: myBannedTemplatesIds };
 		}
 		if (
 			req.payload.tagsForFilter &&
@@ -2065,9 +2086,7 @@ async function TemplateSearch(req, h) {
 			};
 		}
 
-		if (Tools.hasValue(req.payload.author)) {
-			filter["author"] = req.payload.author;
-		}
+		filter["author"] = author;
 
 		//let tspan = req.payload.tspan;
 		let tspan = "any";
@@ -3799,9 +3818,9 @@ async function CommentSearch(req, h) {
 		}
 		if (category.includes("ALL_VISIED")) {
 			if (!iamAdmin) {
-				let myVisiedTemplatesIds = await Engine.getUserVisiedTemplate(tenant, myEmail);
+				let myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
 				wfIamVisied = await Workflow.find(
-					{ tenant: tenant, tplid: { $in: myVisiedTemplatesIds } },
+					{ tenant: tenant, tplid: { $nin: myBannedTemplatesIds } },
 					{ _id: 0, wfid: 1 },
 				).lean();
 				wfIamVisied = wfIamVisied.map((x) => x.wfid);

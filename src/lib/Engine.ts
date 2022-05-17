@@ -389,7 +389,7 @@ Engine.scheduleCron = async (cron) => {
 Engine.stopCronTask = async function (cronId) {
 	try {
 		let my_job = crontabsMap[cronId];
-		my_job.stop();
+		my_job && my_job.stop();
 	} catch (e) {
 		console.error(e);
 	}
@@ -5954,11 +5954,14 @@ Engine.checkVisi = async function (tenant, tplid, email, withTpl = null) {
  */
 Engine.clearUserVisiedTemplate = async function (tenant) {
 	let uvtKeyPrefix = "uvt_" + tenant + "_";
+	let ubtKeyPrefix = "ubt_" + tenant + "_";
 	let tmp = await User.find({ tenant: tenant }, { _id: 0, email: 1 }).lean();
 	tmp = tmp.map((x) => x.email);
 	for (let i = 0; i < tmp.length; i++) {
 		let uvtKey = uvtKeyPrefix + tmp[i];
 		await redisClient.del(uvtKey);
+		let ubtKey = ubtKeyPrefix + tmp[i];
+		await redisClient.del(ubtKey);
 	}
 };
 
@@ -6013,6 +6016,59 @@ Engine.getUserVisiedTemplate = async function (tenant, myEmail) {
   });
 */
 	return visiedTemplatesIds;
+};
+
+Engine.getUserBannedTemplate = async function (tenant, myEmail) {
+	let ubtKeyPrefix = "ubt_" + tenant + "_";
+	let ubtKey = ubtKeyPrefix + myEmail;
+	let cached = await redisClient.get(ubtKey);
+	let bannedTemplatesIds = [];
+	if (!cached) {
+		console.log("___>Rebuild cache");
+		let allTemplates = await Template.find({ tenant }, { doc: 0 });
+		allTemplates = await asyncFilter(allTemplates, async (x) => {
+			return !(await Engine.checkVisi(tenant, x.tplid, myEmail, x));
+		});
+		bannedTemplatesIds = allTemplates.map((x) => x.tplid);
+		await redisClient.set(ubtKey, JSON.stringify(bannedTemplatesIds));
+		await redisClient.expire(ubtKey, 24 * 60 * 60);
+	} else {
+		console.log("___>Found, use cached", ubtKey);
+		bannedTemplatesIds = JSON.parse(cached);
+		await redisClient.expire(ubtKey, 24 * 60 * 60);
+	}
+
+	/*
+  var cursor = "0";
+  function scan(pattern, callback) {
+    console.log("==>Scan ", pattern);
+    redisClient.scan(cursor, "MATCH", pattern, "COUNT", "1000", function (err, reply) {
+      if (err) {
+        throw err;
+      }
+      cursor = reply[0];
+      console.log(cursor);
+      if (cursor === "0") {
+        return callback();
+      } else {
+        var keys = reply[1];
+        keys.forEach(function (key, i) {
+          console.log("delete ", key);
+           //redisClient.del(key, function (deleteErr, deleteSuccess) {
+            //console.log(key);
+          //}); 
+        });
+
+        return scan(pattern, callback);
+      }
+    });
+  }
+
+  scan(ubtKeyPrefix + "*", function () {
+    console.log("Scan Complete");
+  });
+*/
+	return bannedTemplatesIds;
 };
 
 Engine.init = Engine.once(async function () {
