@@ -407,9 +407,12 @@ async function TemplateAddCron(req, h) {
 
 		let existing = await Crontab.findOne({
 			tenant: tenant,
-			tplid: tplid, expr: expr: starters: starters, method: 'STARTWORKFLOW'
+			tplid: tplid,
+			expr: expr,
+			starters: starters,
+			method: "STARTWORKFLOW",
 		});
-		if(existing) {
+		if (existing) {
 			throw new EmpError("ALREADY_EXIST", "Same cron already exist");
 		}
 		//
@@ -1306,8 +1309,8 @@ async function WorkflowSearch(req, h) {
 			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 		}
-			filter["starter"] = starter;
-			todoFilter["starter"] = starter;
+		filter["starter"] = starter;
+		todoFilter["starter"] = starter;
 		if (Tools.hasValue(req.payload.status)) {
 			filter["status"] = req.payload.status;
 			todoFilter["wfstatus"] = req.payload.status;
@@ -4945,9 +4948,6 @@ async function SavedSearchSave(req, h) {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
 		let { objtype, name, ss } = req.payload;
 		let newSs = await SavedSearch.findOneAndUpdate(
 			{ tenant: tenant, author: myEmail, name: name },
@@ -4965,7 +4965,7 @@ async function SavedSearchSave(req, h) {
 			);
 		}
 
-		return h.response(newSs);
+		return h.response(newSs.name);
 	} catch (err) {
 		console.log(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4977,14 +4977,18 @@ async function SavedSearchList(req, h) {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
-		return h.response(
-			await SavedSearch.find({ tenant: tenant, author: myEmail, objtype: req.payload.objtype })
-				.sort("-createdAt")
-				.lean(),
-		);
+		let ret = await SavedSearch.find(
+			{
+				tenant: tenant,
+				author: myEmail,
+				objtype: req.payload.objtype,
+			},
+			{ name: 1, ss: 1, createdAt: 1, _id: 0 },
+		)
+			.sort("-createdAt")
+			.lean();
+		ret = ret.map((x) => x.name);
+		return h.response(ret);
 	} catch (err) {
 		console.log(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4996,9 +5000,6 @@ async function SavedSearchGetOne(req, h) {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
 		return h.response(
 			await SavedSearch.findOne(
 				{ tenant: tenant, author: myEmail, name: req.payload.name, objtype: req.payload.objtype },
