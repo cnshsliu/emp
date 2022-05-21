@@ -1006,6 +1006,7 @@ Engine.__doneTodo = async function (
 	if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
 	todo.doneat = isoNow;
 	todo = await todo.save();
+	await Cache.resetETag(`ETAG:TODOS:${todo.doer}`);
 	//如果是任一完成即完成多人Todo
 	//则将一个人完成后，其他人的设置为ST_IGNORE
 	//忽略同一个节点上，其他人的todo
@@ -1016,6 +1017,10 @@ Engine.__doneTodo = async function (
 			todoid: { $ne: todo.todoid },
 			status: "ST_RUN", //需要加个这个
 		};
+		let tmp = await Todo.find(filter, { doer: 1 });
+		for (let i = 0; i < tmp.length; i++) {
+			await Cache.resetETag(`ETAG:TODOS:${tmp[i].doer}`);
+		}
 		await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
 	}
 
@@ -1360,6 +1365,8 @@ Engine.__postComment = async function (
 			threadid: threadid ? threadid : "",
 		});
 		comment = await comment.save();
+		await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${comment.context.wfid}`);
+		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
 		//对TODO的comment是thread级Comment，需要将其threadid设置为其自身的_id
 		if (comment.objtype === "TODO") {
 			comment.threadid = comment._id;
@@ -2982,6 +2989,10 @@ Engine.yarkNode_internal = async function (obj) {
 		);
 		await Engine.endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
 		await Engine.stopDelayTimers(obj.tenant, obj.wfid);
+
+		await Engine.resetTodosETagByWfId(tenant, obj.wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+
 		wfUpdate["status"] = "ST_DONE";
 		wfRoot.removeClass("ST_RUN");
 		wfRoot.addClass("ST_DONE");
@@ -3875,6 +3886,7 @@ Engine.newTodo = async function (
 			allowdiscuss: allowdiscuss,
 		});
 		await todo.save();
+		await Cache.resetETag(`ETAG:TODOS:${doer}`);
 
 		await Engine.informUserOnNewTodo({
 			tenant: tenant,
@@ -4315,6 +4327,7 @@ Engine.startWorkflow = async function (
 	});
 	wf.attachments = attachments;
 	wf = await wf.save();
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
 	await Parser.setVars(
 		tenant,
@@ -4450,14 +4463,18 @@ Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
 	if (wf.status === "ST_RUN" || wf.satus === "ST_PAUSE") {
 		wfUpdate["status"] = "ST_STOP";
 	}
+	let ret = "ST_STOP";
 	if (Object.keys(wfUpdate).length > 0) {
 		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
 		Engine.stopWorks(tenant, wfid);
 		Engine.stopDelayTimers(tenant, wfid);
-		return "ST_STOP";
+		ret = "ST_STOP";
 	} else {
-		return Engine.getStatusFromClass(wfRoot);
+		ret = Engine.getStatusFromClass(wfRoot);
 	}
+	await Engine.resetTodosETagByWfId(tenant, wfid);
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+	return ret;
 };
 
 Engine.restartWorkflow = async function (
@@ -4478,11 +4495,14 @@ Engine.restartWorkflow = async function (
 	let old_pwfid = old_wfRoot.attr("pwfid");
 	let old_pworkid = old_wfRoot.attr("pworkid");
 	await Engine.stopWorkflow(tenant, myEmail, old_wfid);
+	await Engine.resetTodosETagByWfId(tenant, old_wfid);
 	let isoNow = Tools.toISOString(new Date());
 	starter = Tools.defaultValue(starter, old_wf.starter);
 	teamid = Tools.defaultValue(teamid, old_wf.teamid);
 	wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
 	pbo = Tools.defaultValue(pbo, await Engine.getPboByWfId(tenant, old_wfid));
+	await Engine.resetTodosETagByWfId(tenant, old_wfid);
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	let new_wfid = IdGenerator();
 	let tplDoc = Cheerio.html(old_wfIO(".template").first());
 	let tplid = old_wf.tplid;
@@ -4513,6 +4533,7 @@ Engine.restartWorkflow = async function (
 	});
 	wf.attachments = await Engine.getPbo(old_wf);
 	wf = await wf.save();
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	await Parser.copyVars(
 		tenant,
 		old_wfid,
@@ -4558,8 +4579,10 @@ Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
 
 Engine.__destroyWorkflow = async function (tenant, wfid) {
 	console.log("Destroy workflow:", wfid);
+	//TODO: reset TODO ETAG
 	try {
 		process.stdout.write("\tDestroy Todo\r");
+		await Engine.resetTodosETagByWfId(tenant, wfid);
 		await Todo.deleteMany({ tenant: tenant, wfid: wfid });
 	} catch (err) {
 		console.log("\tDestroy Todo: ", err.message);
@@ -4596,6 +4619,8 @@ Engine.__destroyWorkflow = async function (tenant, wfid) {
 	}
 	try {
 		process.stdout.write("\tDestroy Comment\r");
+		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+		await Cache.delETag(`ETAG:WF:FORUM:${tenant}:${wfid}`);
 		await Comment.deleteMany({ tenant: tenant, "context.wfid": wfid });
 	} catch (err) {
 		console.log("\tDestroy Comment: ", err.message);
@@ -5649,13 +5674,24 @@ Engine.pauseWorkflow = async function (tenant, email, wfid) {
 	if (wf.status === "ST_RUN") {
 		wfUpdate["status"] = "ST_PAUSE";
 	}
+	let ret = "ST_PAUSE";
 	if (Object.keys(wfUpdate).length > 0) {
 		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
 		await Engine.pauseWorksForPausedWorkflow(tenant, wfid);
 		await Engine.pauseDelayTimers(tenant, wfid);
-		return "ST_PAUSE";
+		ret = "ST_PAUSE";
 	} else {
-		return Engine.getStatusFromClass(wfRoot);
+		ret = Engine.getStatusFromClass(wfRoot);
+	}
+	await Engine.resetTodosETagByWfId(tenant, wfid);
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+	return ret;
+};
+
+Engine.resetTodosETagByWfId = async function (tenant: string, wfid: string) {
+	let todos = await Todo.find({ tenant: tenant, wfid: wfid }, { doer: 1 });
+	for (let i = 0; i < todos.length; i++) {
+		await Cache.resetETag("ETAG:TODOS:${todos[i].doer}");
 	}
 };
 
@@ -5686,14 +5722,18 @@ Engine.resumeWorkflow = async function (tenant, email, wfid) {
 	if (wf.status === "ST_PAUSE") {
 		wfUpdate["status"] = "ST_RUN";
 	}
+	let ret = "ST_RUN";
 	if (Object.keys(wfUpdate).length > 0) {
 		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
 		await Engine.resumeWorksForWorkflow(tenant, wfid);
 		await Engine.resumeDelayTimers(tenant, wfid);
-		return "ST_RUN";
+		ret = "ST_RUN";
 	} else {
-		return Engine.getStatusFromClass(wfRoot);
+		ret = Engine.getStatusFromClass(wfRoot);
 	}
+	await Engine.resetTodosETagByWfId(tenant, wfid);
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+	return ret;
 };
 
 /**

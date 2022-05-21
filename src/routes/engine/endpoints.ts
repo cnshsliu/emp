@@ -270,7 +270,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						tagsForFilter: Joi.array().items(Joi.string().allow("")).optional(),
+						tags: Joi.string().allow("").optional(),
 					},
 					validator: Joi,
 				},
@@ -295,8 +295,7 @@ const internals = {
 						tplid: Joi.string().optional(),
 						author: Joi.string().optional().allow(""),
 						fields: Joi.object().optional(),
-						sort_field: Joi.string().optional().default("updatedAt"),
-						sort_order: Joi.number().optional().default(-1),
+						sortby: Joi.string().optional().allow(""),
 						skip: Joi.number().optional(),
 						limit: Joi.number().optional(),
 						tagsForFilter: Joi.array().items(Joi.string().allow("")).optional(),
@@ -996,10 +995,9 @@ const internals = {
 						tplid: Joi.string().optional().allow(""),
 						wfid: Joi.string().optional().allow(""),
 						pattern: Joi.string().empty("").optional().allow(""),
-						starter: Joi.string().optional(),
+						starter: Joi.string().allow("").optional(),
 						status: Joi.string().optional(),
-						sort_field: Joi.string().optional().default("updatedAt"),
-						sort_order: Joi.number().optional().default(-1),
+						sortby: Joi.string().optional().allow(""),
 						skip: Joi.number().optional(),
 						limit: Joi.number().optional(),
 						tagsForFilter: Joi.array().items(Joi.string().allow("")).optional(),
@@ -1303,8 +1301,7 @@ const internals = {
 						tspan: Joi.string().optional(),
 						calendar_begin: Joi.string().optional(),
 						calendar_end: Joi.string().optional(),
-						sort_field: Joi.string().optional().default("updatedAt"),
-						sort_order: Joi.number().optional().default(-1),
+						sortby: Joi.string().optional().allow(""),
 						skip: Joi.number().optional(),
 						limit: Joi.number().optional(),
 						reason: Joi.string().optional(),
@@ -3056,7 +3053,7 @@ const internals = {
 
 		{
 			method: "POST",
-			path: "/search/save",
+			path: "/savedsearch/save",
 			handler: Handlers.SavedSearchSave,
 			config: {
 				description: "Save a Search",
@@ -3078,7 +3075,7 @@ const internals = {
 
 		{
 			method: "POST",
-			path: "/search/list",
+			path: "/savedsearch/list",
 			handler: Handlers.SavedSearchList,
 			config: {
 				description: "Get all saved search",
@@ -3098,7 +3095,7 @@ const internals = {
 
 		{
 			method: "POST",
-			path: "/search/getone",
+			path: "/savedsearch/getone",
 			handler: Handlers.SavedSearchGetOne,
 			config: {
 				description: "Get one save search",

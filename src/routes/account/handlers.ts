@@ -1154,17 +1154,16 @@ async function Avatar(req, h) {
 		tenant = req.auth.credentials.tenant._id;
 	}
 
-	if (!tenant) {
-		let emailDomain = Tools.getEmailDomain(user_email);
-		let regexp = new RegExp(".+" + emailDomain + "$");
-
-		let sameDomainTenant = await Tenant.findOne({ orgmode: true, owner: regexp });
-		if (sameDomainTenant) {
-			tenant = sameDomainTenant._id;
-		}
-	}
-	let avatarInfo = await Cache.getUserAvatarInfo(tenant, user_email);
-	return h.response(fs.createReadStream(avatarInfo.path)).header("Content-Type", avatarInfo.media);
+	let avatarinfo = await Cache.getUserAvatarInfo(tenant, user_email);
+	return (
+		h
+			.response(fs.createReadStream(avatarinfo.path))
+			.header("Content-Type", avatarinfo.media)
+			.header("X-Content-Type-Options", "nosniff")
+			.header("Cache-Control", "max-age=600, private")
+			//.header("Cache-Control", "no-cache, private")
+			.header("ETag", avatarinfo.etag)
+	);
 }
 
 async function UploadAvatar(req, h) {
@@ -1181,6 +1180,7 @@ async function UploadAvatar(req, h) {
 		let avatarinfo = {
 			path: avatarFilePath,
 			media: media,
+			etag: new Date().getTime().toString(),
 		};
 		await User.findOneAndUpdate(
 			{ _id: payload.user_id },

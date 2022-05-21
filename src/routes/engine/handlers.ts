@@ -90,6 +90,7 @@ async function TemplateCreate(req, h) {
 			visi: "@" + myUid,
 		});
 		obj = await obj.save();
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(obj);
 	} catch (err) {
 		console.log(err);
@@ -204,6 +205,7 @@ async function WorkflowUpgrade(req, h) {
 			}
 		}
 
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("done");
 	} catch (err) {
 		console.error(err);
@@ -344,6 +346,7 @@ async function TemplatePut(req, h) {
 			});
 			obj = await obj.save();
 		}
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		let edittingLog = new EdittingLog({
 			tenant: tenant,
 			objtype: "Template",
@@ -517,6 +520,7 @@ async function TemplateRename(req, h) {
 					path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
 				);
 			} catch (err) {}
+			await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 			return h.response(tpl.tplid);
 		} catch (err) {
 			if (err.message.indexOf("duplicate key"))
@@ -549,6 +553,7 @@ async function TemplateRenameWithIid(req, h) {
 			);
 		} catch (err) {}
 
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(tpl);
 	} catch (err) {
 		console.error(err);
@@ -586,6 +591,7 @@ async function TemplateMakeCopyOf(req, h) {
 			);
 		} catch (err) {}
 
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(newObj);
 	} catch (err) {
 		console.error(err);
@@ -629,6 +635,7 @@ async function TemplateCopyto(req, h) {
 				throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
 			else throw new EmpError("DB_ERROR", err.message);
 		}
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(newObj);
 	} catch (err) {
 		console.error(err);
@@ -650,6 +657,7 @@ async function TemplateDelete(req, h) {
 		try {
 			fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
 		} catch (err) {}
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -672,6 +680,7 @@ async function TemplateDeleteByName(req, h) {
 		try {
 			fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
 		} catch (err) {}
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -819,7 +828,8 @@ async function WorkflowStart(req, h) {
 			"standalone",
 			uploadedFiles,
 		);
-
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return wfDoc;
 	} catch (err) {
 		console.error(err);
@@ -1052,6 +1062,8 @@ async function WorkflowPause(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.pauseWorkflow(tenant, myEmail, wfid);
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
 		console.error(err);
@@ -1065,6 +1077,8 @@ async function WorkflowResume(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.resumeWorkflow(tenant, myEmail, wfid);
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
 		console.error(err);
@@ -1078,6 +1092,8 @@ async function WorkflowStop(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.stopWorkflow(tenant, myEmail, wfid);
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
 		console.error(err);
@@ -1091,6 +1107,8 @@ async function WorkflowRestart(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.restartWorkflow(tenant, myEmail, wfid);
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
 		console.error(err);
@@ -1104,6 +1122,8 @@ async function WorkflowDestroy(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -1119,7 +1139,9 @@ async function WorkflowDestroyByTitle(req, h) {
 		let wfs = await Workflow.find({ tenant: tenant, wftitle: wftitle }, { _id: 0, wfid: 1 }).lean();
 		for (let i = 0; i < wfs.length; i++) {
 			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
+			await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
 		}
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Done");
 	} catch (err) {
 		console.error(err);
@@ -1135,7 +1157,9 @@ async function WorkflowDestroyByTplid(req, h) {
 		let wfs = await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean();
 		for (let i = 0; i < wfs.length; i++) {
 			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
+			await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
 		}
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Done");
 	} catch (err) {
 		console.error(err);
@@ -1150,6 +1174,7 @@ async function WorkflowRestartThenDestroy(req, h) {
 		let wfid = req.payload.wfid;
 		let newWf = await Engine.restartWorkflow(tenant, myEmail, wfid);
 		await Engine.destroyWorkflow(tenant, myEmail, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(newWf);
 	} catch (err) {
 		console.error(err);
@@ -1191,6 +1216,8 @@ async function WorkflowOP(req, h) {
 					req.payload,
 				);
 		}
+		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -1213,6 +1240,7 @@ async function WorkflowSetTitle(req, h) {
 		if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "update"))
 			throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 		wf = await Workflow.updateOne(filter, { $set: { wftitle: wftitle } });
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(wf.wftitle);
 	} catch (err) {
 		console.error(err);
@@ -1284,18 +1312,25 @@ async function WorkflowSearch(req, h) {
 	let myEmail = req.auth.credentials.email;
 	let myGroup = await Cache.getMyGroup(myEmail);
 	try {
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:WORKFLOWS:${tenant}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response({})
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
 		let starter = req.payload.starter;
-		starter = starter ? starter : myEmail;
-		starter = Tools.makeEmailSameDomain(starter, myEmail);
+		//starter = starter ? starter : myEmail;
+		if (starter) starter = Tools.makeEmailSameDomain(starter, myEmail);
 		//检查当前用户是否有读取进程的权限
 		let me = await User.findOne({ _id: req.auth.credentials._id });
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read workflow");
-		//把sort_field做一下转换，因为在前端代码中，统一使用name，
-		//而对于进程来说，实际上是wftitle
-		let mappedField = req.payload.sort_field === "name" ? "wftitle" : req.payload.sort_field;
-		//Sortby，把sort_order改成mongodb的形式，倒叙，在field名称前家-号
-		let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+		let sortBy = req.payload.sortby;
 
 		//开始组装Filter
 		let filter: any = { tenant: req.auth.credentials.tenant._id };
@@ -1309,8 +1344,10 @@ async function WorkflowSearch(req, h) {
 			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 		}
-		filter["starter"] = starter;
-		todoFilter["starter"] = starter;
+		if (starter) {
+			filter["starter"] = starter;
+			todoFilter["starter"] = starter;
+		}
 		if (Tools.hasValue(req.payload.status)) {
 			filter["status"] = req.payload.status;
 			todoFilter["wfstatus"] = req.payload.status;
@@ -1420,7 +1457,12 @@ async function WorkflowSearch(req, h) {
 				filter,
 			)} sortBy: ${sortBy} limit: ${limit}`,
 		);
-		return { total, objs: retObjs, version: Const.VERSION };
+		return h
+			.response({ total, objs: retObjs, version: Const.VERSION })
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1451,8 +1493,20 @@ async function WorkSearch(req, h) {
 	let myEmail = req.auth.credentials.email;
 	let doer = req.payload.doer ? req.payload.doer : myEmail;
 	let reason = req.payload.reason ? req.payload.reason : "unknown";
+	let sortBy = req.payload.sortby;
 	doer = Tools.makeEmailSameDomain(doer, myEmail);
 	try {
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:TODOS:${doer}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response({})
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
 		//如果有wfid，则找只属于这个wfid工作流的workitems
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let kicked = await Kicklist.findOne({ email: myEmail }).lean();
@@ -1471,9 +1525,13 @@ async function WorkSearch(req, h) {
 		if (hasPermForWork === false) {
 			return { total: 0, objs: [] };
 		}
-		let mappedField = req.payload.sort_field === "name" ? "title" : req.payload.sort_field;
 		let sortByJson: any = {};
-		sortByJson[mappedField] = req.payload.sort_order;
+		if (req.payload.sortby[0] === "-") {
+			sortByJson[req.payload.sortby.substring(1)] = -1;
+		} else {
+			sortByJson[req.payload.sortby] = 1;
+		}
+		let mappedField = req.payload.sort_field === "name" ? "title" : req.payload.sort_field;
 		let skip = 0;
 		if (req.payload.skip) skip = req.payload.skip;
 		let limit = 10000;
@@ -1582,7 +1640,12 @@ async function WorkSearch(req, h) {
 				filter,
 			)} sortBy: ${JSON.stringify(sortByJson)} limit: ${limit}`,
 		);
-		return { total, objs: ret, version: Const.VERSION }; //Work (Todo) Search Results
+		return h
+			.response({ total, objs: ret, version: Const.VERSION })
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
 	} catch (err) {
 		if (err.error === "KICKOUT") {
 			console.log(myEmail, "is kick out");
@@ -1902,23 +1965,33 @@ async function TemplateList(req, h) {
 
 async function TemplateIdList(req, h) {
 	try {
-		let filter: any = { tenant: req.auth.credentials.tenant._id, ins: false };
+		let tenant = req.auth.credentials.tenant._id;
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response([])
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
+		let filter: any = { tenant: tenant, ins: false };
 		let myEmail = req.auth.credentials.email;
-		if (
-			req.payload.tagsForFilter &&
-			Array.isArray(req.payload.tagsForFilter) &&
-			req.payload.tagsForFilter.length > 0 &&
-			req.payload.tagsForFilter[0].trim() !== ""
-		) {
+		let tagsArr = req.payload.tags
+			? req.payload.tags.split(";").filter((x) => x.trim().length > 0)
+			: [];
+		if (tagsArr.length > 0) {
 			//filter["tags.text"] = { $all: req.payload.tagsForFilter };
 			//filter["tags.owner"] = myEmail;
 			//filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
 			let tagsMatchArr = [];
-			for (let i = 0; i < req.payload.tagsForFilter.length; i++) {
+			for (let i = 0; i < tagsArr.length; i++) {
 				tagsMatchArr.push({
 					$elemMatch: {
 						$or: [{ owner: myEmail }, { group: "ADMIN" }],
-						text: req.payload.tagsForFilter[i],
+						text: tagsArr[i],
 					},
 				});
 			}
@@ -1927,7 +2000,15 @@ async function TemplateIdList(req, h) {
 			};
 		}
 		let ret = await Template.find(filter, { tplid: 1, _id: 0 }).sort("tplid");
-		return ret;
+		return (
+			h
+				.response(ret)
+				// https://stackoverflow.com/questions/43344819/reading-response-headers-with-fetch-api
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag)
+		);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -2031,6 +2112,17 @@ async function TemplateSearch(req, h) {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response([])
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
 			throw new EmpError("NO_PERM", "no permission to read template");
 
@@ -2042,8 +2134,7 @@ async function TemplateSearch(req, h) {
 			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
 		}
 
-		let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
-		let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+		let sortBy = req.payload.sortby;
 		let filter: any = { tenant: tenant, ins: false };
 		let skip = 0;
 		if (req.payload.skip) skip = req.payload.skip;
@@ -2118,7 +2209,12 @@ async function TemplateSearch(req, h) {
 				filter,
 			)} sortBy: ${sortBy} limit: ${limit}`,
 		);
-		return { total, objs: ret, version: Const.VERSION }; //Template Search Result
+		return h
+			.response({ total, objs: ret, version: Const.VERSION })
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -2192,6 +2288,7 @@ async function TemplateImport(req, h) {
 		fs.unlink(fileInfo.path, () => {
 			console.log("Unlinked temp file:", fileInfo.path);
 		});
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(obj);
 	} catch (err) {
 		console.error(err);
@@ -2227,6 +2324,7 @@ async function TemplateSetAuthor(req, h) {
 			throw new EmpError("NO_TPL", `Not admin or owner`);
 		}
 		tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 
 		return h.response(tpl);
 	} catch (err) {
@@ -2287,6 +2385,7 @@ async function WorkflowSetPboAt(req, h) {
 			throw new EmpError("NO_AUTH", `Not admin or owner`);
 		}
 		wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { doc: 0 });
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 
 		return h.response(wf);
 	} catch (err) {
@@ -2316,6 +2415,7 @@ async function TemplateSetVisi(req, h) {
 
 		await Engine.clearUserVisiedTemplate(tenant);
 
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(tpl);
 	} catch (err) {
 		console.error(err);
@@ -2347,6 +2447,7 @@ async function TemplateClearVisi(req, h) {
 		);
 
 		await Engine.clearUserVisiedTemplate(tenant);
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 
 		return h.response("Done");
 	} catch (err) {
@@ -3611,8 +3712,25 @@ async function CommentWorkflowLoad(req, h) {
 		let wfid = req.payload.wfid;
 		let todoid = req.payload.todoid;
 
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:WF:FORUM:${tenant}:${wfid}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response([])
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
+
 		let comments = await Engine.loadWorkflowComments(tenant, wfid);
-		return h.response(comments);
+		return h
+			.response(comments)
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3643,6 +3761,8 @@ async function CommentDelete(req, h) {
 		//Delete this one
 		await Comment.deleteOne(filter);
 
+		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+		await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${cmt.context.wfid}`);
 		return h.response({ thisComment: cmt });
 	} catch (err) {
 		console.error(err);
@@ -3662,7 +3782,14 @@ async function CommentDeleteBeforeDays(req, h) {
 				$lte: new Date(new Date().getTime() - beforeDays * 24 * 60 * 60 * 1000).toISOString(),
 			},
 		};
+		let cmts = await Comment.find(filter, { context: 1 });
 		await Comment.deleteMany(filter);
+
+		for (let i = 0; i < cmts.length; i++) {
+			if (cmts[i] && cmts[i].context && cmts[i].context.wfid)
+				await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${cmts[i].context.wfid}`);
+		}
+		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
 
 		return h.response("Done");
 	} catch (err) {
@@ -3701,6 +3828,9 @@ async function CommentAddForBiz(req, h) {
 					req.payload.objid,
 					Const.COMMENT_LOAD_NUMBER,
 				);
+
+				await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${thisComment.context.wfid}`);
+				await Cache.resetETag(`ETAG:FORUM:${tenant}`);
 				return h.response({ comments, thisComment });
 			}
 		}
@@ -3729,6 +3859,9 @@ async function CommentAddForComment(req, h) {
 			req.payload.cmtid,
 			Const.COMMENT_LOAD_NUMBER,
 		);
+
+		await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${thisComment.context.wfid}`);
+		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
 
 		return h.response({ comments, thisComment });
 	} catch (err) {
@@ -3773,12 +3906,20 @@ async function CommentThumb(req, h) {
 		let upOrDown = req.payload.thumb;
 		let cmtid = req.payload.cmtid;
 		//找到当前comment
-		await Thumb.deleteMany({ tennant: tenant, cmtid: cmtid, who: myEmail });
-		let tmp = new Thumb({ tenant: tenant, cmtid: cmtid, who: myEmail, upordown: upOrDown });
-		tmp = await tmp.save();
-		let upnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "UP" });
-		let downnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "DOWN" });
-		return h.response({ upnum, downnum });
+		let thisComment = await Comment.findOne({ tenant: tenant, _id: cmtid }, { context: 1 });
+		if (thisComment) {
+			await Thumb.deleteMany({ tennant: tenant, cmtid: cmtid, who: myEmail });
+			let tmp = new Thumb({ tenant: tenant, cmtid: cmtid, who: myEmail, upordown: upOrDown });
+			tmp = await tmp.save();
+			let upnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "UP" });
+			let downnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "DOWN" });
+
+			await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${thisComment.context.wfid}`);
+			await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+			return h.response({ upnum, downnum });
+		} else {
+			throw new EmpError("CMT_NOT_FOUND", "Comment not found");
+		}
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -3793,6 +3934,18 @@ async function CommentSearch(req, h) {
 		let pageSize = req.payload.pageSize;
 		let category = req.payload.category;
 		let q = req.payload.q;
+
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:FORUM:${tenant}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response({})
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
 
 		let wfIds = [];
 		let wfIamVisied = [];
@@ -3999,7 +4152,12 @@ async function CommentSearch(req, h) {
       { $set: { allowdiscuss: true } }
     ); */
 		////////////////////////////
-		return h.response({ total, cmts });
+		return h
+			.response({ total, cmts })
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4650,7 +4808,11 @@ async function TemplateSetCover(req, h) {
 
 		let coverFilePath = path.join(Tools.getTenantFolders(tenant).cover, tplid + ext);
 		fs.renameSync(blobInfo.path, coverFilePath);
-		await Template.findOneAndUpdate({ tenant: tenant, tplid: tplid }, { $set: { hasCover: true } });
+		await Template.findOneAndUpdate(
+			{ tenant: tenant, tplid: tplid },
+			{ $set: { hasCover: true, coverTag: new Date().getTime().toString() } },
+		);
+		await Cache.delTplCoverInfo(tplid);
 		return { result: tplid + " cover set" };
 	} catch (err) {
 		console.error(err);
@@ -4664,9 +4826,17 @@ async function TemplateGetCover(req, h) {
 		let tplid = req.params.tplid;
 		let tmp = null;
 
-		let theCoverImagePath = Tools.getTemplateCoverPath(tenant, tplid);
-		if (fs.existsSync(theCoverImagePath)) {
-			return h.response(fs.createReadStream(theCoverImagePath)).header("Content-Type", "image/png");
+		let coverInfo = await Cache.getTplCoverInfo(tenant, tplid);
+		if (fs.existsSync(coverInfo.path)) {
+			return (
+				h
+					.response(fs.createReadStream(coverInfo.path))
+					.header("Content-Type", "image/png")
+					.header("X-Content-Type-Options", "nosniff")
+					.header("Cache-Control", "no-cache, private")
+					//.header("Cache-Control", "no-cache, private")
+					.header("ETag", coverInfo.etag)
+			);
 		} else {
 		}
 	} catch (err) {
@@ -4965,6 +5135,8 @@ async function SavedSearchSave(req, h) {
 			);
 		}
 
+		await Cache.resetETag(`ETAG:SAVEDSEARCH:${myEmail}`);
+
 		return h.response(newSs.name);
 	} catch (err) {
 		console.log(err);
@@ -4977,6 +5149,17 @@ async function SavedSearchList(req, h) {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = await Cache.getETag(`ETAG:SAVEDSEARCH:${myEmail}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response([])
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
 		let ret = await SavedSearch.find(
 			{
 				tenant: tenant,
@@ -4988,7 +5171,12 @@ async function SavedSearchList(req, h) {
 			.sort("-createdAt")
 			.lean();
 		ret = ret.map((x) => x.name);
-		return h.response(ret);
+		return h
+			.response(ret)
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
 	} catch (err) {
 		console.log(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);

@@ -1,5 +1,5 @@
 const internals = {
-	VERSION: "5.1",
+	VERSION: "6.0",
 	COMMENT_LOAD_NUMBER: -1,
 	INJECT_INTERNAL_VARS: true,
 	NO_INTERNAL_VARS: false,

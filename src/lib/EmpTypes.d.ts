@@ -1,6 +1,13 @@
 export type AvatarInfo = {
 	path: string;
 	media: string;
+	etag: string;
+};
+
+export type CoverInfo = {
+	path: string;
+	media: string;
+	etag: string;
 };
 
 export type ErrResponse = {

@@ -21,7 +21,7 @@ const schema = new Mongoose.Schema({
 		default: "ADMIN",
 	},
 	avatar: { type: Mongoose.Schema.Types.String },
-	avatarinfo: { path: String, media: String },
+	avatarinfo: { path: String, media: String, etag: { type: String, default: "" } },
 	signature: { type: Mongoose.Schema.Types.String, default: "" },
 	active: { type: Boolean, default: true },
 	succeed: { type: String, default: "" },
