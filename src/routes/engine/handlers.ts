@@ -384,10 +384,10 @@ async function TemplateAddCron(req, h) {
 	try {
 		let tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
 		let tplid = req.payload.tplid;
 		let expr = req.payload.expr;
 		let starters = req.payload.starters.trim();
-		let myGroup = await Cache.getMyGroup(myEmail);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		//////////////////////////////////////////////////
@@ -1408,7 +1408,7 @@ async function WorkflowSearch(req, h) {
 		//如果当前用户不是ADMIN, 则需要检查进程是否与其相关
 		if (me.group !== "ADMIN") {
 			todoFilter.doer = myEmail;
-			console.log(`[WfIamIn Filter]  ${JSON.stringify(todoFilter)} `);
+			//console.log(`[WfIamIn Filter]  ${JSON.stringify(todoFilter)} `);
 			let todoGroup = await Todo.aggregate([
 				{ $match: todoFilter },
 				{ $group: { _id: "$wfid", count: { $sum: 1 } } },
@@ -1442,7 +1442,7 @@ async function WorkflowSearch(req, h) {
 		if (req.payload.fields) fields = req.payload.fields;
 
 		let total = await Workflow.countDocuments(filter, { doc: 0 });
-		console.log(JSON.stringify(filter, null, 2));
+		//console.log(JSON.stringify(filter, null, 2));
 		let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
 
 		for (let i = 0; i < retObjs.length; i++) {
@@ -4838,6 +4838,7 @@ async function TemplateGetCover(req, h) {
 					.header("ETag", coverInfo.etag)
 			);
 		} else {
+			throw new EmpError("COVER_FILE_LOST", "Cover file does not exist");
 		}
 	} catch (err) {
 		console.error(err);
@@ -5256,6 +5257,43 @@ async function Version(req, h) {
 	}
 }
 
+async function FlexibleStart(req, h) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+
+		let innerTpl: TemplateObj = {
+			tplid: `Flexible tpl of ${myEmail}`,
+			pboat: "ANY_RUNNING",
+			doc: `<div class="template"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left:300px; top:300px;" role="DEFAULT" wecom="false" transferable="no" sr="no" sb="no" rvk="no" adhoc="yes" cmt="yes"><p>${req.payload.name}</p><div class="kvars">e30=</div><div class="instruct">6K+35Zyo6L+Z6YeM54G15rS75Y+R6LW35LiA5Yiw5aSa5Liq54us56uL5bel5L2c5Lu75Yqh44CCCuWcqOehruWumuaVtOS4quS6i+mhue+8iOmhueebru+8ieWujOaIkOS7peWQju+8jOaCqOWPr+S7peWFs+mXreW9k+WJjeeBtea0u+S6i+mhue+8iOivt+azqOaEj++8jOWFs+mXreW9k+WJjeW3peS9nOS7u+WKoeWQju+8jOaJgOacieW3suWPkeWHuuS9huacquWujOaIkOeahOeLrOeri+W3peS9nOS7u+WKoeS5n+WwhuiHquWKqOWkseaViO+8iQ==</div><code>Ly8gcmVhZCBIeXBlcmZsb3cgRGV2ZWxvcGVyJ3MgR3VpZGUgZm9yIGRldGFpbHMKcmV0PSdERUZBVUxUJzs=</code></div><div class="node END" id="end" style="left: 600px; top: 240px; z-index: 0;"><p>END</p> </div><div class="link" from="start" to="hellohyperflow"  >link</div><div class="link" from="hellohyperflow" to="end" case="关闭本灵活事项" >link</div></div>`,
+			endpoint: "",
+			endpointmode: "none",
+			allowdiscuss: true,
+		};
+		let wf = await Engine.startWorkflow_with(
+			false, //rehearsal
+			tenant, //tenant
+			innerTpl.tplid, //template id
+			innerTpl, //TemplateObj object
+			myEmail, //starter
+			"", //text pbo
+			"", //teamid
+			null, //wf id
+			req.payload.name, //wf title
+			"", //parent_wfid
+			"", //parent_work_id
+			{}, //parent_kvars
+			"standalone", //runmode
+			[], //uploadFiles
+		);
+
+		return h.response(wf);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
 export default {
 	TemplateCreate,
 	TemplateDesc,
@@ -5405,4 +5443,5 @@ export default {
 	SavedSearchSave,
 	SavedSearchList,
 	SavedSearchGetOne,
+	FlexibleStart,
 };

@@ -633,7 +633,6 @@ Engine.__doneTodo = async function (
 	let workNode = wfRoot.find("#" + todo.workid);
 	//let workNodeText = workNode.toString();
 	if (workNode.hasClass("ST_RUN") === false) {
-		debugger;
 		try {
 			let st = Engine.getStatusFromClass(workNode);
 			todo.status = st;
@@ -1709,6 +1708,8 @@ Engine.addAdhoc = async function (payload) {
 			payload.comment,
 		)}</div></div>`,
 	);
+	wf.doc = wfIO.html();
+	await wf.save();
 	let todoObj = {
 		tenant: payload.tenant,
 		doer: doers,
@@ -1720,7 +1721,8 @@ Engine.addAdhoc = async function (payload) {
 		workid: workid,
 		tpNodeTitle: payload.title,
 		origTitle: payload.title,
-		comment: payload.comment,
+		comment: "",
+		instruct: payload.comment,
 		transferable: false,
 		byroute: "DEFAULT",
 		teamid: wf.teamid,
@@ -1728,7 +1730,7 @@ Engine.addAdhoc = async function (payload) {
 		allowdiscuss: wf.allowdiscuss,
 	};
 	//create adhoc todo
-	todoObj = await Engine.createTodo(todoObj);
+	await Engine.createTodo(todoObj);
 	let adhocWork = new Work({
 		tenant: payload.tenant,
 		wfid: wf.wfid,
@@ -1738,9 +1740,6 @@ Engine.addAdhoc = async function (payload) {
 		status: "ST_RUN",
 	});
 	await adhocWork.save();
-	wf.doc = wfIO.html();
-	await wf.save();
-	return todoObj;
 };
 
 /**
@@ -2277,7 +2276,6 @@ Engine.replaceUser_child = async function (msg) {
 				/*
 				if (tempsubset.wf && msg.wf.length > 0) {
 					regex = new RegExp(`\\b${tempsubset.wf.from}\\b`, "g");
-					debugger;
 					let cursor = Workflow.find({ wfid: { $in: msg.wf } }).cursor();
 
 					for (let wf = await cursor.next(); wf != null; wf = await cursor.next()) {
@@ -3263,6 +3261,7 @@ Engine.yarkNode_internal = async function (obj) {
 				tpNodeTitle: tpNodeTitle,
 				origTitle: originalNodeTitle,
 				comment: "",
+				instruct: "",
 				byroute: obj.byroute,
 				transferable: transferable,
 				teamid: teamid,
@@ -3412,6 +3411,7 @@ Engine.createTodo = async function (obj) {
 				nodeTitleForPerson,
 				obj.origTitle,
 				obj.comment,
+				obj.instruct,
 				obj.transferable,
 				obj.teamid,
 				obj.byroute,
@@ -3842,6 +3842,7 @@ Engine.newTodo = async function (
 	title,
 	origtitle, //替换var之前的原始Title
 	comment,
+	instruct,
 	transferable,
 	teamid,
 	byroute,
@@ -3878,6 +3879,7 @@ Engine.newTodo = async function (
 			status: "ST_RUN",
 			wfstatus: "ST_RUN",
 			comment: comment,
+			instruct: instruct,
 			transferable: transferable,
 			teamid: teamid,
 			byroute: byroute,
@@ -4236,19 +4238,56 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  */
 
 Engine.startWorkflow = async function (
-	rehearsal,
-	tenant,
-	tplid,
-	starter,
-	textPbo,
-	teamid,
-	wfid,
-	wftitle,
-	parent_wf_id,
-	parent_work_id,
-	parent_vars,
+	rehearsal: boolean,
+	tenant: string,
+	tplid: string,
+	starter: string,
+	textPbo: string,
+	teamid: string,
+	wfid: string,
+	wftitle: string,
+	parent_wf_id: string,
+	parent_work_id: string,
+	parent_vars: any,
 	runmode = "standalone",
-	uploadedFiles,
+	uploadedFiles: any,
+) {
+	let filter = { tenant: tenant, tplid: tplid };
+	let theTemplate = await Template.findOne(filter);
+
+	return await Engine.startWorkflow_with(
+		rehearsal,
+		tenant,
+		tplid,
+		theTemplate,
+		starter,
+		textPbo,
+		teamid,
+		wfid,
+		wftitle,
+		parent_wf_id,
+		parent_work_id,
+		parent_vars,
+		runmode,
+		uploadedFiles,
+	);
+};
+
+Engine.startWorkflow_with = async function (
+	rehearsal: boolean,
+	tenant: string,
+	tplid: string,
+	theTemplate: TemplateObj,
+	starter: string,
+	textPbo: string,
+	teamid: string,
+	wfid: string,
+	wftitle: string,
+	parent_wf_id: string,
+	parent_work_id: string,
+	parent_vars: any,
+	runmode = "standalone",
+	uploadedFiles: any,
 ) {
 	if (parent_vars === null || parent_vars === undefined) {
 		parent_vars = {};
@@ -4275,8 +4314,8 @@ Engine.startWorkflow = async function (
 		};
 	}
 
-	let filter = { tenant: tenant, tplid: tplid };
-	let theTemplate = await Template.findOne(filter);
+	// let filter = { tenant: tenant, tplid: tplid };
+	// let theTemplate = await Template.findOne(filter);
 	let isoNow = Tools.toISOString(new Date());
 	wfid = Tools.isEmpty(wfid) ? IdGenerator() : wfid;
 
@@ -5115,17 +5154,22 @@ Engine.__getWorkFullInfo = async function (
 	};
 	ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
 
-	let tmpInstruction = Parser.base64ToCode(Engine.getInstruct(tpRoot, todo.nodeid));
-	tmpInstruction = Engine.sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
-	if (tmpInstruction.indexOf("[") >= 0) {
-		tmpInstruction = await Parser.replaceStringWithKVar(
-			tenant,
-			tmpInstruction,
-			ALL_VISIED_KVARS,
-			Const.INJECT_INTERNAL_VARS,
-		);
+	if (todo.nodeid !== "ADHOC") {
+		let tmpInstruction = Parser.base64ToCode(Engine.getInstruct(tpRoot, todo.nodeid));
+		tmpInstruction = Engine.sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
+		if (tmpInstruction.indexOf("[") >= 0) {
+			tmpInstruction = await Parser.replaceStringWithKVar(
+				tenant,
+				tmpInstruction,
+				ALL_VISIED_KVARS,
+				Const.INJECT_INTERNAL_VARS,
+			);
+		}
+		ret.instruct = Parser.codeToBase64(tmpInstruction);
+	} else {
+		//Adhoc task has it's own instruction
+		ret.instruct = Parser.codeToBase64(Marked.parse(todo.instruct, {}));
 	}
-	ret.instruct = Parser.codeToBase64(tmpInstruction);
 
 	//the 3rd param, true: removeOnlyDefault:  如果只有一个DEFAULT，返回空数组
 	ret.routingOptions = Engine.getRoutingOptions(tpRoot, todo.nodeid, true);

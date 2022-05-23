@@ -27,16 +27,16 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		/*
 		 * https://stackoverflow.com/questions/57653272/how-to-allow-cors-in-hapi-js
 		 * const server = Hapi.server({
-port: 3000,
-host: '192.168.1.13',        
-"routes": {
-    "cors": {
-        "origin": ["http://192.168.1.13:4200"],
-        "headers": ["Accept", "Content-Type"],
-        "additionalHeaders": ["X-Requested-With"]
-    }
-}
-});
+				port: 3000,
+				host: '192.168.1.13',        
+				"routes": {
+						"cors": {
+								"origin": ["http://192.168.1.13:4200"],
+								"headers": ["Accept", "Content-Type"],
+								"additionalHeaders": ["X-Requested-With"]
+						}
+				}
+				});
 		 */
 		routes: {
 			//Allow CORS for all

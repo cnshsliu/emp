@@ -3113,6 +3113,26 @@ const internals = {
 				},
 			},
 		},
+
+		{
+			method: "POST",
+			path: "/flexible/start",
+			handler: Handlers.FlexibleStart,
+			config: {
+				description: "Start a flexible process",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						name: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
 	],
 };
 
