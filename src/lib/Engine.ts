@@ -1,6 +1,5 @@
 import Cheerio from "cheerio";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
-import Mongoose from "mongoose";
 import cronEngine from "node-cron";
 import Wreck from "@hapi/wreck";
 import Https from "https";
@@ -23,7 +22,6 @@ import Route from "../database/models/Route";
 import CbPoint from "../database/models/CbPoint";
 import Comment from "../database/models/Comment";
 import Thumb from "../database/models/Thumb";
-import Team from "../database/models/Team";
 import Delegation from "../database/models/Delegation";
 import KVar from "../database/models/KVar";
 import Cell from "../database/models/Cell";
@@ -60,6 +58,8 @@ const asyncFilter = async (arr, predicate) => {
 	return arr.filter((_v, index) => results[index]);
 };
 
+const frontendUrl = Tools.getFrontEndUrl();
+
 const CF = {
 	ONE_DOER: 1,
 	BY_ANY: 21,
@@ -79,12 +79,11 @@ const CFNameMap = {
 };
 
 const crontabsMap = {};
+let checkingTimer = false;
 
-const Engine: any = {
-	podium: null,
-};
+const podium = new Podium();
 const Client: any = {};
-Engine.callYarkNodeWorker = function (msg) {
+const callYarkNodeWorker = function (msg) {
 	msg = JSON.parse(JSON.stringify(msg));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(path.dirname(__filename) + "/worker/YarkNodeWorker.js", {
@@ -94,12 +93,12 @@ Engine.callYarkNodeWorker = function (msg) {
 		worker.on("message", async (message) => {
 			if (message.cmd && message.cmd === "worker_log") console.log("\tWorker Log:", message.msg);
 			else if (message.cmd && message.cmd === "worker_sendNexts") {
-				await Engine.sendNexts(message.msg);
+				await sendNexts(message.msg);
 				console.log("\tNexts from YarkNodeWorker was sent");
 			} else if (message.cmd && message.cmd === "worker_sendTenantMail") {
 				let smtp = await Cache.getOrgSmtp(message.msg.tenant);
 				message.msg.smtp = smtp;
-				await Engine.callSendMailWorker(message.msg);
+				await callSendMailWorker(message.msg);
 			} else {
 				console.log("\t" + message);
 				console.log("\t====>Now Resolve YarkNodeWorker ");
@@ -115,7 +114,7 @@ Engine.callYarkNodeWorker = function (msg) {
 
 //
 // msg: {endpoint: URL,data: JSON}
-Engine.callWebApiPosterWorker = async function (msg) {
+const callWebApiPosterWorker = async function (msg) {
 	msg = JSON.parse(JSON.stringify(msg));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(path.dirname(__filename) + "/worker/WebApiPosterWorker.js", {
@@ -130,7 +129,7 @@ Engine.callWebApiPosterWorker = async function (msg) {
 	});
 };
 
-Engine.callSendMailWorker = async function (msg) {
+const callSendMailWorker = async function (msg) {
 	try {
 		msg = JSON.parse(JSON.stringify(msg));
 		return new Promise((resolve, reject) => {
@@ -159,7 +158,7 @@ Engine.callSendMailWorker = async function (msg) {
  * @param {function} fn function to be run
  * @param {context} context
  */
-Engine.once = function (fn, context) {
+const once = function (fn, context) {
 	var result;
 
 	return function () {
@@ -172,13 +171,12 @@ Engine.once = function (fn, context) {
 	};
 };
 
-Engine.serverInit = async function () {
+const serverInit = async function () {
 	if (!isMainThread) {
-		console.error("Engine.serverInit() should happen only in main thread");
+		console.error("serverInit() should happen only in main thread");
 		return;
 	}
-	Engine.podium = new Podium();
-	Engine.podium.registerEvent([
+	podium.registerEvent([
 		{
 			name: "CMD_yarkNode",
 			channels: ["CMD_yarkNode-1"],
@@ -198,7 +196,7 @@ Engine.serverInit = async function () {
 	]);
 };
 
-Engine.sendNexts = async function (nexts) {
+const sendNexts = async function (nexts) {
 	if (isMainThread) {
 		for (let i = 0; i < nexts.length; i++) {
 			if (nexts[i].tenant && typeof nexts[i].tenant !== "string") {
@@ -210,7 +208,7 @@ Engine.sendNexts = async function (nexts) {
 			let podium_name = nexts[i].CMD;
 			let podium_channel = podium_name + "-1";
 			console.log("MainThread emit ========", podium_name, "---", podium_channel);
-			Engine.podium.emit({ name: podium_name, channel: podium_channel }, nexts[i]);
+			podium.emit({ name: podium_name, channel: podium_channel }, nexts[i]);
 		}
 	} else {
 		if (nexts.length > 0) {
@@ -224,30 +222,30 @@ Client.clientInit = async function () {
 		console.error("Client.clientInit() should happen only in main thread");
 		return;
 	}
-	Engine.podium.on(
+	podium.on(
 		{
 			name: "CMD_yarkNode",
 			channels: ["CMD_yarkNode-1"],
 		},
 		async (msgObject) => {
 			//同一个wfid，通过Mutex实现顺序处理
-			Mutex.putObject(msgObject.wfid, msgObject);
-			await Mutex.process(msgObject.wfid, Client.onYarkNode);
+			Mutex.putObject((msgObject as any).wfid, msgObject);
+			await Mutex.process((msgObject as any).wfid, Client.onYarkNode);
 		},
 	);
 
-	Engine.podium.on(
+	podium.on(
 		{
 			name: "CMD_startWorkflow",
 			channels: ["CMD_startWorkflow-1"],
 		},
 		async (msgObject) => {
 			//同一个tplid，通过Mutex，实现顺序处理
-			Mutex.putObject(msgObject.tplid, msgObject);
-			await Mutex.process(msgObject.tplid, Client.onStartWorkflow);
+			Mutex.putObject((msgObject as any).tplid, msgObject);
+			await Mutex.process((msgObject as any).tplid, Client.onStartWorkflow);
 		},
 	);
-	Engine.podium.on(
+	podium.on(
 		{
 			name: "CMD_sendSystemMail",
 			channels: ["CMD_sendSystemMail-1"],
@@ -258,7 +256,7 @@ Client.clientInit = async function () {
 			await Mutex.process("mutex_system_mailer", Client.onSendSystemMail);
 		},
 	);
-	Engine.podium.on(
+	podium.on(
 		{
 			name: "CMD_sendTenantMail",
 			channels: ["CMD_sendTenantMail-1"],
@@ -271,7 +269,7 @@ Client.clientInit = async function () {
 	);
 };
 
-Engine.cleanupFaultCrons = async function () {
+const cleanupFaultCrons = async function () {
 	let crons = await Crontab.find();
 	for (let i = 0; i < crons.length; i++) {
 		let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
@@ -283,23 +281,23 @@ Engine.cleanupFaultCrons = async function () {
 		}
 	}
 };
-Engine.rescheduleCrons = async function () {
+const rescheduleCrons = async function () {
 	try {
-		await Engine.cleanupFaultCrons();
-		await Engine.scheduleAllValidCrons();
+		await cleanupFaultCrons();
+		await scheduleAllValidCrons();
 	} finally {
 	}
 };
 
-Engine.scheduleAllValidCrons = async function () {
+const scheduleAllValidCrons = async function () {
 	try {
 		let crons = await Crontab.find({ scheduled: false });
 		for (let i = 0; i < crons.length; i++) {
 			if (cronEngine.validate(crons[i].expr) === true) {
 				if (crontabsMap[crons[i]._id]) {
-					await Engine.stopCronTask(crons[i]._id);
+					await stopCronTask(crons[i]._id);
 				}
-				await Engine.scheduleCron(crons[i]);
+				await scheduleCron(crons[i]);
 				await Crontab.updateOne({ _id: crons[i]._id }, { $set: { scheduled: true } });
 			}
 		}
@@ -307,8 +305,8 @@ Engine.scheduleAllValidCrons = async function () {
 	}
 };
 
-Engine.startWorkflowByCron = async (cron) => {
-	let doers = await Engine.getDoer(
+const startWorkflowByCron = async (cron) => {
+	let doers = await getDoer(
 		cron.tenant,
 		"", //Team id
 		cron.starters, //PDS
@@ -320,11 +318,11 @@ Engine.startWorkflowByCron = async (cron) => {
 	); //
 	console.log("Cron Start Workflow for ", doers.length, " people");
 	let emails = doers.map((x) => x.uid);
-	await Engine.__batchStartWorkflow(cron.tenant, cron.tplid, emails, "Cron");
+	await __batchStartWorkflow(cron.tenant, cron.tplid, emails, "Cron");
 };
 
-Engine.startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
-	let doers = await Engine.getDoer(
+const startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
+	let doers = await getDoer(
 		tenant,
 		"", //Team id
 		starters, //PDS
@@ -337,9 +335,9 @@ Engine.startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
 	let directorCN = await Cache.getUserName(tenant, directorEmail);
 	console.log(directorCN, " start Workflow for ", doers.length, " people");
 	let emails = doers.map((x) => x.uid);
-	await Engine.__batchStartWorkflow(tenant, tplid, emails, directorCN);
+	await __batchStartWorkflow(tenant, tplid, emails, directorCN);
 };
-Engine.__batchStartWorkflow = async (tenant, tplid, emails, sender) => {
+const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 	for (let i = 0; i < emails.length; i++) {
 		let processTitle = (await Cache.getUserName(tenant, emails[i])) + ": " + tplid;
 		let msgToSend = {
@@ -360,11 +358,11 @@ Engine.__batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 			sender: sender,
 		};
 
-		await Engine.sendNexts([msgToSend]);
+		await sendNexts([msgToSend]);
 	}
 };
 
-Engine.scheduleCron = async (cron) => {
+const scheduleCron = async (cron) => {
 	console.log("Schedule one cron", cron);
 	//cron.expr = "*/5 * * * * *";
 	let task = cronEngine.schedule(
@@ -372,7 +370,7 @@ Engine.scheduleCron = async (cron) => {
 		async () => {
 			try {
 				if (cron.method === "STARTWORKFLOW") {
-					Engine.startWorkflowByCron(cron).then((res) => {});
+					startWorkflowByCron(cron).then((res) => {});
 				}
 			} catch (e) {
 				console.error(e);
@@ -386,7 +384,7 @@ Engine.scheduleCron = async (cron) => {
 	crontabsMap[cron._id] = task;
 };
 
-Engine.stopCronTask = async function (cronId) {
+const stopCronTask = async function (cronId) {
 	try {
 		let my_job = crontabsMap[cronId];
 		my_job && my_job.stop();
@@ -395,7 +393,7 @@ Engine.stopCronTask = async function (cronId) {
 	}
 };
 
-Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
+const runScheduled = async function (obj, cleanUpIds, isCron = false) {
 	let wffilter = {
 		tenant: obj.tenant,
 		wfid: obj.wfid,
@@ -420,7 +418,7 @@ Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
 	}
 	//ProcNext, 后续节点在nexts
 	let nexts = [];
-	await Engine.procNext(
+	await procNext(
 		obj.tenant,
 		obj.teamid,
 		obj.tplid,
@@ -446,41 +444,13 @@ Engine.runScheduled = async function (obj, cleanUpIds, isCron = false) {
 	await wf.save();
 	//将Nexts数组中的消息BODY依次发送出去
 	//推入处理队列
-	await Engine.sendNexts(nexts);
-};
-
-Engine.__hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
-	let hasPermForWork = false;
-	if (doerEmail === myEmail) {
-		hasPermForWork = true;
-	} else {
-		if ((await Cache.getMyGroup(myEmail)) === "ADMIN") {
-			//如果我是管理员，则只要doerEmail是我的组织成员之一，即返回真
-			let doerUser = await User.findOne({
-				email: doerEmail,
-				tenant: tenant_id,
-			});
-			if (doerUser) {
-				hasPermForWork = true;
-			}
-		} else {
-			//否则，doerEmail当前有委托给我，则返回真
-			let delegationToMe = await Engine.delegationToMeToday(tenant_id, myEmail);
-
-			let delegators = [];
-			delegators = delegationToMe.map((x) => x.delegator);
-			if (delegators.includes(doerEmail)) {
-				hasPermForWork = true;
-			}
-		}
-	}
-	return hasPermForWork;
+	await sendNexts(nexts);
 };
 
 /**
- * Engine.doWork = async() 执行一个工作项
+ * doWork = async() 执行一个工作项
  *
- * @param {...} Engine.doWork = asynctenant -
+ * @param {...} doWork = asynctenant -
  * @param {...} doer - 工作者
  * @param {...} workid - 工作编号, optional, 如提供，按workid查节点，如未提供，按nodeid查节点
  * @param {...} wfid - 工作流编号
@@ -490,7 +460,7 @@ Engine.__hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
  *
  * @return {...}
  */
-Engine.doWork = async function (
+const doWork = async function (
 	email,
 	todoid,
 	tenant,
@@ -526,14 +496,14 @@ Engine.doWork = async function (
 	}
 
 	//此时，是真正的用户
-	let fact_doer = await Engine.getWorkDoer(tenant, todo, email);
+	let fact_doer = await getWorkDoer(tenant, todo, email);
 	if (fact_doer === "NOT_YOUR_REHEARSAL") {
 		throw new EmpError("NOT_YOUR_REHEARSAL", "Not your rehearsal");
 	} else if (fact_doer === "NO_PERM_TO_DO") {
 		throw new EmpError("NO_PERM_TO_DO", "Not doer/No Delegation");
 	}
 	// 调用Engine方法，完成本Todo
-	return await Engine.__doneTodo(
+	return await __doneTodo(
 		tenant,
 		todo,
 		fact_doer,
@@ -545,14 +515,42 @@ Engine.doWork = async function (
 	);
 };
 
-Engine.getWorkDoer = async function (tenant, work, currentUser) {
+const hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
+	let hasPerm = false;
+	if (doerEmail === myEmail) {
+		hasPerm = true;
+	} else {
+		if ((await Cache.getMyGroup(myEmail)) === "ADMIN") {
+			//如果我是管理员，则只要doerEmail是我的组织成员之一，即返回真
+			let doerUser = await User.findOne({
+				email: doerEmail,
+				tenant: tenant_id,
+			});
+			if (doerUser) {
+				hasPerm = true;
+			}
+		} else {
+			//否则，doerEmail当前有委托给我，则返回真
+			let delegationToMe = await delegationToMeToday(tenant_id, myEmail);
+
+			let delegators = [];
+			delegators = delegationToMe.map((x) => x.delegator);
+			if (delegators.includes(doerEmail)) {
+				hasPerm = true;
+			}
+		}
+	}
+	return hasPerm;
+};
+
+const getWorkDoer = async function (tenant, work, currentUser) {
 	if (work.rehearsal) {
 		if (work.wfstarter === currentUser) return work.doer;
 		else return "NOT_YOUR_REHEARSAL";
 	} else {
 		if (currentUser !== work.doer) {
-			let hasPermForWork = await Engine.__hasPermForWork(tenant, currentUser, work.doer);
-			if (!hasPermForWork) {
+			let hasPerm = await hasPermForWork(tenant, currentUser, work.doer);
+			if (!hasPerm) {
 				return "NO_PERM_TO_DO";
 			}
 		}
@@ -571,15 +569,15 @@ Engine.getWorkDoer = async function (tenant, work, currentUser) {
  *
  * @return {...}
  */
-Engine.__doneTodo = async function (
-	tenant,
-	todo,
-	doer,
-	wfid,
-	workid,
-	userDecision,
-	kvarsFromBrowserInput,
-	comment,
+const __doneTodo = async function (
+	tenant: string,
+	todo: any,
+	doer: string,
+	wfid: string,
+	workid: string,
+	userDecision: string,
+	kvarsFromBrowserInput: any,
+	comment: string,
 ) {
 	let logMsg = "";
 	if (typeof kvarsFromBrowserInput === "string")
@@ -634,7 +632,7 @@ Engine.__doneTodo = async function (
 	//let workNodeText = workNode.toString();
 	if (workNode.hasClass("ST_RUN") === false) {
 		try {
-			let st = Engine.getStatusFromClass(workNode);
+			let st = getStatusFromClass(workNode);
 			todo.status = st;
 			if (st === "ST_DONE") {
 				todo.doneat = isoNow;
@@ -703,7 +701,7 @@ Engine.__doneTodo = async function (
 					if (voteControl.vote_percent === NaN) {
 						voteControl.vote_percent = 60;
 					}
-					let voteDecision = await Engine.calculateVote(tenant, voteControl, sameWorkTodos, todo);
+					let voteDecision = await calculateVote(tenant, voteControl, sameWorkTodos, todo);
 					if (voteDecision === "NULL") {
 						workDecision = "VOTING";
 						voteDecision = "";
@@ -743,7 +741,7 @@ Engine.__doneTodo = async function (
 		}
 	}
 	workDecision = workDecision ? workDecision : "";
-	Engine.log(
+	log(
 		tenant,
 		wfid,
 		`[DoTask] [${todo.title}] [${todo.tplid}] [${doer}] [${userDecision}] [${workDecision}] [${completeFlag}] [${CFNameMap[completeFlag]}]`,
@@ -764,7 +762,7 @@ Engine.__doneTodo = async function (
 				Const.VAR_IS_EFFICIENT, //efficient
 			);
 		}
-		comment = Engine.sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, comment);
+		comment = sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, comment);
 		if (comment.indexOf("[") >= 0) {
 			comment = await Parser.replaceStringWithKVar(
 				tenant,
@@ -830,104 +828,111 @@ Engine.__doneTodo = async function (
 		// 发送WeComBotMessage
 		//
 
-		await Engine.procWeComBot(tenant, wf, todo, doer, tpNode, theWork, workDecision, comment);
+		await procWeComBot(tenant, wf, todo, doer, tpNode, theWork, workDecision, comment);
 
 		//////////////////////////////////////////////////
 		// START -- 处理这个非ADHOC 节点
 		//////////////////////////////////////////////////
 		if (workNode.hasClass("ADHOC") === false) {
-			////////////////////////////////////////////////////
-			// process Script -- START
-			////////////////////////////////////////////////////
-			let parsed_code = Parser.base64ToCode(tpNode.find("code").first().text().trim());
-			//取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
-			let kvarsForScript = await Parser.userGetVars(
-				tenant,
-				"EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
-				wfid,
-				Const.FOR_WHOLE_PROCESS, //整个工作流
-				[],
-				[],
-				Const.VAR_IS_EFFICIENT, //efficient
-			);
-			await Parser.injectCells(tenant, kvarsForScript);
-			kvarsForScript = Parser.injectInternalVars(kvarsForScript);
-			kvarsForScript = Parser.tidyKVars(kvarsForScript);
-			let codeRetString = '{"RET":"DEFAULT"}';
-			let codeRetObj = {};
-			let codeRetDecision = "DEFAULT";
-			let runInSyncMode = true;
-			let callbackId = "";
-			let innerTeamSet = "";
-			try {
-				let pdsResolvedForScript = await Engine.getPdsOfAllNodesForScript({
-					tenant: tenant,
-					tplid: wf.tplid,
-					starter: wf.starter,
-					teamid: teamid,
-					wfid: wf.wfid,
-					tpRoot: tpRoot,
-					wfRoot: wfRoot,
-					tpNode: tpNode,
-					kvars: kvarsForScript,
-				});
-				//console.log(pdsResolvedForScript);
-				codeRetString = await Engine.runCode(
-					tenant, //tenant
-					Tools.getEmailDomain(wf.starter), //Tenant Domain
-					wf.tplid,
-					wf.wfid,
-					wf.starter,
-					kvarsForScript,
-					pdsResolvedForScript,
-					parsed_code,
-					callbackId,
-				);
-			} catch (e) {
-				console.error(e);
-				codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
-			}
-			try {
-				//先尝试解析JSON
-				codeRetObj = JSON.parse(codeRetString);
-				codeRetObj["RET"] && (codeRetDecision = codeRetObj["RET"]);
-				codeRetObj["USE_TEAM"] && (teamid = codeRetObj["USE_TEAM"]);
-				codeRetObj["INNER_TEAM"] && (innerTeamSet = codeRetObj["INNER_TEAM"]);
-			} catch (e) {
-				//如果JSON解析失败，则表示是一个简单字符串
-				//console.log(e);
-				codeRetObj = {};
-				codeRetDecision = codeRetString;
-			}
-			//Get a clean KVAR array
-			//Script运行结束后，下面这些vars不需要被记录在节点上
-			delete codeRetObj["RET"];
-			delete codeRetObj["USE_TEAM"];
-			delete codeRetObj["INNER_TEAM"];
-
-			//设置通过kvar()方法设置的进程参数
-			//直接忽略掉脚本中的Return, 而是使用用户的 userChoice来决定流程流向
-			if (codeRetDecision !== "DEFAULT" && codeRetDecision !== "undefined") {
-				workResultRoute = codeRetDecision;
-				codeRetObj["$decision_" + nodeid] = { name: "$decision_" + nodeid, value: codeRetDecision };
-			}
-			if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
-				await Parser.setVars(
+			let activityCode = tpNode.find("code").first().text().trim();
+			debugger;
+			if (activityCode.length > 0) {
+				////////////////////////////////////////////////////
+				// process Script -- START
+				////////////////////////////////////////////////////
+				let parsed_code = Parser.base64ToCode(activityCode);
+				//取得整个workflow的数据，并不检查visi，在脚本中需要全部参数
+				let kvarsForScript = await Parser.userGetVars(
 					tenant,
-					todo.round,
-					wf.wfid,
-					nodeid,
-					workid,
-					codeRetObj,
-					"EMP",
-					Const.VAR_IS_EFFICIENT,
+					"EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
+					wfid,
+					Const.FOR_WHOLE_PROCESS, //整个工作流
+					[],
+					[],
+					Const.VAR_IS_EFFICIENT, //efficient
 				);
+				await Parser.injectCells(tenant, kvarsForScript);
+				kvarsForScript = Parser.injectInternalVars(kvarsForScript);
+				kvarsForScript = Parser.tidyKVars(kvarsForScript);
+				let codeRetString = '{"RET":"DEFAULT"}';
+				let codeRetObj = {};
+				let codeRetDecision = "DEFAULT";
+				let runInSyncMode = true;
+				let callbackId = "";
+				let innerTeamSet = "";
+				try {
+					let pdsResolvedForScript = await getPdsOfAllNodesForScript({
+						tenant: tenant,
+						tplid: wf.tplid,
+						starter: wf.starter,
+						teamid: teamid,
+						wfid: wf.wfid,
+						tpRoot: tpRoot,
+						wfRoot: wfRoot,
+						tpNode: tpNode,
+						kvars: kvarsForScript,
+					});
+					//console.log(pdsResolvedForScript);
+					codeRetString = await runCode(
+						tenant, //tenant
+						Tools.getEmailDomain(wf.starter), //Tenant Domain
+						wf.tplid,
+						wf.wfid,
+						wf.starter,
+						kvarsForScript,
+						pdsResolvedForScript,
+						parsed_code,
+						callbackId,
+					);
+				} catch (e) {
+					console.error(e);
+					codeRetString = '{"RET":"ERROR", "error":"' + e + '"}';
+				}
+				try {
+					//先尝试解析JSON
+					codeRetObj = JSON.parse(codeRetString);
+					codeRetObj["RET"] && (codeRetDecision = codeRetObj["RET"]);
+					codeRetObj["USE_TEAM"] && (teamid = codeRetObj["USE_TEAM"]);
+					codeRetObj["INNER_TEAM"] && (innerTeamSet = codeRetObj["INNER_TEAM"]);
+				} catch (e) {
+					//如果JSON解析失败，则表示是一个简单字符串
+					//console.log(e);
+					codeRetObj = {};
+					codeRetDecision = codeRetString;
+				}
+				//Get a clean KVAR array
+				//Script运行结束后，下面这些vars不需要被记录在节点上
+				delete codeRetObj["RET"];
+				delete codeRetObj["USE_TEAM"];
+				delete codeRetObj["INNER_TEAM"];
+
+				//设置通过kvar()方法设置的进程参数
+				//直接忽略掉脚本中的Return, 而是使用用户的 userChoice来决定流程流向
+				if (codeRetDecision !== "DEFAULT" && codeRetDecision !== "undefined") {
+					workResultRoute = codeRetDecision;
+					codeRetObj["$decision_" + nodeid] = {
+						name: "$decision_" + nodeid,
+						value: codeRetDecision,
+					};
+				}
+				if (lodash.isEmpty(lodash.keys(codeRetObj)) === false) {
+					await Parser.setVars(
+						tenant,
+						todo.round,
+						wf.wfid,
+						nodeid,
+						workid,
+						codeRetObj,
+						"EMP",
+						Const.VAR_IS_EFFICIENT,
+					);
+				}
+				console.log(`\tAction SCRIPT ${tpNode.attr("id")} end...`);
+				////////////////////////////////////////////////////
+				// process Script -- END
+				////////////////////////////////////////////////////
 			}
-			console.log(`\tAction SCRIPT ${tpNode.attr("id")} end...`);
-			////////////////////////////////////////////////////
-			// process Script -- END
-			////////////////////////////////////////////////////
-			await Engine.procNext(
+			await procNext(
 				tenant,
 				teamid,
 				todo.tplid,
@@ -950,7 +955,7 @@ Engine.__doneTodo = async function (
 					2,
 				)}`,
 			);
-			Engine.log(tenant, todo.wfid, "procNext return" + JSON.stringify(nexts));
+			log(tenant, todo.wfid, "procNext return" + JSON.stringify(nexts));
 			let hasEnd = false;
 			let nextOfEnd = null;
 			for (let i = 0; i < nexts.length; i++) {
@@ -1027,7 +1032,7 @@ Engine.__doneTodo = async function (
 	//参数输入区里的comment同时添加为讨论区的comment
 	////////////////////////////////////////////////////
 	try {
-		if (comment.trim().length > 0) await Engine.postCommentForTodo(tenant, doer, todo, comment);
+		if (comment.trim().length > 0) await postCommentForTodo(tenant, doer, todo, comment);
 	} catch (err) {
 		console.error(err);
 	}
@@ -1035,7 +1040,7 @@ Engine.__doneTodo = async function (
 	////////////////////////////////////////////////////
 	//送出next
 	////////////////////////////////////////////////////
-	await Engine.sendNexts(nexts);
+	await sendNexts(nexts);
 
 	////////////////////////////////////////////////////
 	// 调用endpoint
@@ -1088,34 +1093,65 @@ Engine.__doneTodo = async function (
 		};
 		console.log("//////////////////////////////////////////////////");
 		console.log(`[CALL ENDPOINT] ${endpoint}`);
-		Engine.callWebApiPosterWorker({ url: endpoint, data: data })
+		callWebApiPosterWorker({ url: endpoint, data: data })
 			.then((res) => {
 				console.log(res);
 			})
 			.catch((err) => {
-				console.error("Error from Engine.callWebApiPosterWorker" + err.message);
+				console.error("Error from callWebApiPosterWorker" + err.message);
 			});
 
 		console.log("//////////////////////////////////////////////////");
 	}
 
+	let someone = [];
+	for (const key of Object.keys(kvarsFromBrowserInput)) {
+		let valueDef: Emp.KVarDef = kvarsFromBrowserInput[key];
+		if (valueDef?.type === "textarea") {
+			let tmp = splitComment(valueDef.value);
+			someone = tmp.filter((x) => x.startsWith("@"));
+		}
+	}
+	let recipients = [];
+	for (let i = 0; i < someone.length; i++) {
+		const email = Tools.makeEmailSameDomain(someone[i], todo.doer);
+		const userName = await Cache.getUserName(tenant, email);
+		if (userName !== "USER_NOT_FOUND") recipients.push(email);
+	}
+	if (recipients.length > 0) {
+		recipients = [...new Set(recipients)];
+		sendTenantMail(
+			tenant,
+			recipients,
+			`MTC Notification: you are mentiond in ${todo.title} `,
+			`Hello ,<br/><br/>You are mentioned:
+    <br/>
+    <br/>
+        From: ${doer}<br/>
+        In task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
+        Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
+        <br/><br/><br/> Metatocome`,
+			"YOU_ARE_QED",
+		).then();
+	}
+
 	return { workid: todo.workid, todoid: todo.todoid, status: todo.status, doneat: todo.doneat };
 };
 
-Engine.procWeComBot = async function (
-	tenant,
-	wf,
-	todo,
-	doer,
-	tpNode,
-	theWork,
-	workDecision,
-	comment,
+const procWeComBot = async function (
+	tenant: string,
+	wf: any,
+	todo: any,
+	doer: string,
+	tpNode: any,
+	theWork: any,
+	workDecision: any,
+	comment: any,
 ) {
 	try {
 		// 当前节点是否发送weCom BOT message
 		if (Tools.blankToDefault(tpNode.attr("wecom"), "false") === "true") {
-			Engine.log(tenant, todo.wfid, `This node ${theWork.title} need to send wecom`);
+			log(tenant, todo.wfid, `This node ${theWork.title} need to send wecom`);
 			let template = await Template.findOne(
 				{ tenat: tenant, tplid: wf.tplid },
 				{ _id: 0, author: 1 },
@@ -1132,10 +1168,10 @@ Engine.procWeComBot = async function (
 					$elemMatch: { key: wf.tplid },
 				},
 			});
-			Engine.log(tenant, todo.wfid, `Query List, ${wecomBot ? "successfully" : "not found"}`);
+			log(tenant, todo.wfid, `Query List, ${wecomBot ? "successfully" : "not found"}`);
 			if (wecomBot) {
 				//如果当前tplid在 wecombots_tpl中
-				let markdownMsg = await Engine.buildWorkDoneMarkdownMessage(
+				let markdownMsg = await buildWorkDoneMarkdownMessage(
 					tenant,
 					doer,
 					todo,
@@ -1143,7 +1179,7 @@ Engine.procWeComBot = async function (
 					workDecision,
 					comment,
 				);
-				Engine.log(tenant, todo.wfid, `Query List got bot keys ${wecomBot.entries[0].items}`);
+				log(tenant, todo.wfid, `Query List got bot keys ${wecomBot.entries[0].items}`);
 				try {
 					//到当前tplid的所有bots keys
 					let botKeys = wecomBot.entries[0].items.split(";");
@@ -1153,37 +1189,37 @@ Engine.procWeComBot = async function (
 						let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
 						let botKey = botKeys[botIndex];
 						let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-						Engine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
+						callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
 							.then((res) => {
-								Engine.log(
+								log(
 									tenant,
 									todo.wfid,
 									`Wreck Bot WORK_DONE ${botKey}, ${botIndex + 1}/${botsNumber}`,
 								);
 							})
 							.catch((err) => {
-								Engine.log(tenant, todo.wfid, "Error from WebApiPosterWorker: " + err.message);
+								log(tenant, todo.wfid, "Error from WebApiPosterWorker: " + err.message);
 							});
 					}
 				} catch (e) {
 					console.error(e);
 				}
 			} else {
-				Engine.log(
+				log(
 					tenant,
 					todo.wfid,
 					`!!!!! Query List return null, something must wrong, please check  list defination\n list name = wecombots_tpl key = ${wf.tplid}`,
 				);
 			}
 		} else {
-			Engine.log(tenant, todo.wfid, `This node ${todo.title} does not send wecom`);
+			log(tenant, todo.wfid, `This node ${todo.title} does not send wecom`);
 		}
 	} catch (wecomError) {
 		console.error(wecomError.message);
 	}
 };
 
-Engine.buildWorkDoneMarkdownMessage = async function (
+const buildWorkDoneMarkdownMessage = async function (
 	tenant,
 	doer,
 	todo,
@@ -1191,8 +1227,7 @@ Engine.buildWorkDoneMarkdownMessage = async function (
 	workDecision,
 	comment,
 ) {
-	let frontendUrl = Tools.getFrontEndUrl();
-	let workKVars = await Engine.getWorkKVars(tenant, doer, todo);
+	let workKVars = await getWorkKVars(tenant, doer, todo);
 	let kvarsMD = "";
 	for (let i = 0; i < workKVars.kvarsArr.length; i++) {
 		if (workKVars.kvarsArr[i].label[0] === "$") continue;
@@ -1231,7 +1266,7 @@ ${kvarsMD}
 	return markdownMsg;
 };
 
-Engine.setPeopleFromContent = async function (
+const setPeopleFromContent = async function (
 	tenant,
 	emailDomainReferenceUser,
 	content,
@@ -1254,13 +1289,12 @@ Engine.setPeopleFromContent = async function (
 };
 
 //对每个@somebody存储，供somebody反向查询comment
-Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
+const postCommentForTodo = async function (tenant, doer, todo, content) {
 	if (content.trim().length === 0) return;
 	let emails = [todo.wfstarter];
 	let people = [Tools.getEmailPrefix(todo.wfstarter)];
 	let doerCN = await Cache.getUserName(tenant, doer);
-	[people, emails] = await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
-	let frontendUrl = Tools.getFrontEndUrl();
+	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
 	let msg = {
 		tenant: todo.tenant,
 		doer: doer,
@@ -1278,7 +1312,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
 	};
 	let context = { wfid: todo.wfid, workid: todo.workid, todoid: todo.todoid };
-	let ret = await Engine.__postComment(
+	let ret = await __postComment(
 		tenant,
 		doer,
 		todo.doer,
@@ -1296,7 +1330,7 @@ Engine.postCommentForTodo = async function (tenant, doer, todo, content) {
 	ret.todoDoerCN = await Cache.getUserName(tenant, todo.doer);
 	return ret;
 };
-Engine.postCommentForComment = async function (tenant, doer, cmtid, content, threadid) {
+const postCommentForComment = async function (tenant, doer, cmtid, content, threadid) {
 	let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
 
 	let theTodo = await Todo.findOne({ tenant: tenant, todoid: cmt.context.todoid }).lean();
@@ -1304,8 +1338,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content, thr
 	people.push(Tools.getEmailPrefix(cmt.who));
 	let emails = people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
 	let doerCN = await Cache.getUserName(tenant, doer);
-	let frontendUrl = Tools.getFrontEndUrl();
-	[people, emails] = await Engine.setPeopleFromContent(tenant, doer, content, people, emails);
+	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
 	let msg = {
 		tenant: tenant,
 		doer: doer,
@@ -1320,7 +1353,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content, thr
 		}</a><br/>
     <br/><br/> Metatocome`,
 	};
-	return await Engine.__postComment(
+	return await __postComment(
 		tenant,
 		doer,
 		cmt.who,
@@ -1335,7 +1368,7 @@ Engine.postCommentForComment = async function (tenant, doer, cmtid, content, thr
 		threadid,
 	);
 };
-Engine.__postComment = async function (
+const __postComment = async function (
 	tenant,
 	doer,
 	toWhom,
@@ -1396,7 +1429,7 @@ Engine.__postComment = async function (
 						//ANCHOR, use to scroll to attached comment by comment id.
 						body = body.replace("ANCHOR", "tcmt_" + comment._id.toString());
 
-						Engine.sendTenantMail(
+						sendTenantMail(
 							tenant, //not rehearsal
 							rehearsal ? doer : emails[i],
 							subject,
@@ -1421,12 +1454,12 @@ Engine.__postComment = async function (
 		comment.whoCN = await Cache.getUserName(tenant, comment.who);
 		comment.towhomCN = await Cache.getUserName(tenant, toWhom);
 		comment.splitted = splitComment(comment.content);
-		let tmpret = await Engine.splitMarked(tenant, comment);
+		let tmpret = await splitMarked(tenant, comment);
 		comment.mdcontent = tmpret.mdcontent;
 		comment.mdcontent2 = tmpret.mdcontent2;
 		let people = [];
 		let emails = [];
-		[people, emails] = await Engine.setPeopleFromContent(
+		[people, emails] = await setPeopleFromContent(
 			tenant,
 			comment.who, //Email domain reference user
 			comment.content,
@@ -1445,7 +1478,7 @@ Engine.__postComment = async function (
 };
 
 //workflow/docallback: 回调， 也就是从外部应用中回调工作流引擎
-Engine.doCallback = async function (cbp, payload) {
+const doCallback = async function (cbp, payload) {
 	//test/callback.js
 	if (typeof payload.kvars === "string")
 		payload.kvars = Tools.hasValue(payload.kvars) ? JSON.parse(payload.kvars) : {};
@@ -1483,7 +1516,7 @@ Engine.doCallback = async function (cbp, payload) {
 	}
 
 	let nexts = [];
-	await Engine.procNext(
+	await procNext(
 		cbp.tenant,
 		teamid,
 		cbp.tplid,
@@ -1495,7 +1528,6 @@ Engine.doCallback = async function (cbp, payload) {
 		payload.decision,
 		nexts,
 		cbp.round,
-		wf,
 		payload.rehearsal,
 		wf.starter,
 	);
@@ -1516,20 +1548,20 @@ Engine.doCallback = async function (cbp, payload) {
 	);
 
 	await cbp.delete();
-	await Engine.sendNexts(nexts);
+	await sendNexts(nexts);
 	return cbp.workid;
 };
 
 /**
- * Engine.revokeWork = async() 撤回，撤回一个已经完成的工作
+ * revokeWork = async() 撤回，撤回一个已经完成的工作
  *
- * @param {...} Engine.revokeWork = asynctenant -
+ * @param {...} revokeWork = asynctenant -
  * @param {...} wfid -
  * @param {...} todoid : 已经完成了的todo的id
  *
  * @return {...}
  */
-Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
+const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 	// 先找到当前的TODO
 	let old_todo = await Todo.findOne({ todoid: todoid, status: "ST_DONE" });
 	if (Tools.isEmpty(old_todo)) {
@@ -1544,7 +1576,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
-	let info = await Engine.__getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, old_todo);
+	let info = await __getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, old_todo);
 	if (info.revocable === false) {
 		throw new EmpError("WORK_NOT_REVOCABLE", "Todo is not revocable", {
 			wfid,
@@ -1568,7 +1600,7 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
 				[],
 				Const.VAR_IS_EFFICIENT,
 			);
-			comment = Engine.sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, comment);
+			comment = sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, comment);
 			if (comment.indexOf("[") >= 0) {
 				comment = await Parser.replaceStringWithKVar(
 					tenant,
@@ -1581,13 +1613,13 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
 	}
 	// 撤回 doc 中的 RUNNING node
 	//把已经启动的后续节点标注为ST_REVOKED
-	let followingActions = Engine._getFollowingActions(tpRoot, wfRoot, workNode, true);
+	let followingActions = _getFollowingActions(tpRoot, wfRoot, workNode, true);
 	//let followingWorks = workNode.nextAll(`.work.ST_RUN[from_workid='${old_todo.workid}']`);
 	for (let i = followingActions.length - 1; i >= 0; i--) {
 		//let afw = followingWorks.eq(i);
 		let afw = followingActions[i].work;
 		/*
-    afw.removeClass(Engine.getStatusFromClass(afw)).addClass("ST_REVOKED");
+    afw.removeClass(getStatusFromClass(afw)).addClass("ST_REVOKED");
     await Todo.updateMany(
       { tenant: tenant, wfid: wfid, workid: afw.attr("id"), status: "ST_RUN" },
       { $set: { status: "ST_REVOKED" } }
@@ -1670,25 +1702,24 @@ Engine.revokeWork = async function (email, tenant, wfid, todoid, comment) {
 		{ upsert: false, new: true },
 	);
 	try {
-		if (comment.trim().length > 0)
-			await Engine.postCommentForTodo(tenant, email, old_todo, comment);
+		if (comment.trim().length > 0) await postCommentForTodo(tenant, email, old_todo, comment);
 	} catch (err) {}
 
-	await Engine.sendNexts(nexts);
+	await sendNexts(nexts);
 
-	Engine.log(tenant, wfid, `[Revoke] [${old_todo.title}] [${old_todo.tplid}] [${email}]`);
+	log(tenant, wfid, `[Revoke] [${old_todo.title}] [${old_todo.tplid}] [${email}]`);
 
 	return todoid;
 };
 
-Engine.addAdhoc = async function (payload) {
+const addAdhoc = async function (payload) {
 	let filter = { tenant: payload.tenant, wfid: payload.wfid };
 	let wf = await Workflow.findOne(filter);
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
 	let workid = IdGenerator();
 
-	let doers = await Engine.getDoer(
+	let doers = await getDoer(
 		payload.tenant,
 		wf.teamid,
 		payload.doer,
@@ -1730,7 +1761,7 @@ Engine.addAdhoc = async function (payload) {
 		allowdiscuss: wf.allowdiscuss,
 	};
 	//create adhoc todo
-	await Engine.createTodo(todoObj);
+	await createTodo(todoObj);
 	let adhocWork = new Work({
 		tenant: payload.tenant,
 		wfid: wf.wfid,
@@ -1743,13 +1774,13 @@ Engine.addAdhoc = async function (payload) {
 };
 
 /**
- * Engine.explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, uid, pds, 除pds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
+ * explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, uid, pds, 除pds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
  *
  * @param {...} payload: {tenant, wfid, pds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user uid
  *
  * @return {...}
  */
-Engine.explainPds = async function (payload) {
+const explainPds = async function (payload) {
 	let theTeamid = "";
 	let theUser = payload.email;
 	let theKvarString = payload.kvar;
@@ -1772,7 +1803,7 @@ Engine.explainPds = async function (payload) {
 		}
 	}
 
-	let doers = await Engine.getDoer(
+	let doers = await getDoer(
 		payload.tenant,
 		theTeamid,
 		payload.pds,
@@ -1788,7 +1819,7 @@ Engine.explainPds = async function (payload) {
 };
 
 /**
- * Engine.sendback = async() 退回，退回到上一个节点
+ * sendback = async() 退回，退回到上一个节点
  *
  * @param {...} tenant -
  * @param {...} wfid -
@@ -1798,7 +1829,7 @@ Engine.explainPds = async function (payload) {
  *
  * @return {...}
  */
-Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comment) {
+const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comment) {
 	let fact_doer = doer;
 	let fact_email = email;
 
@@ -1812,8 +1843,8 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 		throw new EmpError("WORK_DOER_WRONG", `${fact_doer} is not the right person`);
 	}
 	if (email !== fact_doer) {
-		let hasPermForWork = await Engine.__hasPermForWork(tenant, email, fact_doer);
-		if (!hasPermForWork) {
+		let hasPerm = await hasPermForWork(tenant, email, fact_doer);
+		if (!hasPerm) {
 			throw new EmpError("NO_PERM_TO_DO", "Not doer or no delegation");
 		}
 		fact_email = fact_doer;
@@ -1836,7 +1867,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
-	let info = await Engine.__getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, todo);
+	let info = await __getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, todo);
 	if (info.returnable === false) {
 		throw new EmpError("WORK_NOT_RETURNABLE", "Todo is not returnable", {
 			wfid,
@@ -1850,7 +1881,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 	let workNode = wfRoot.find(`#${todo.workid}`);
 	let nexts = [];
 
-	let fromWorks = await Engine._getFromActionsWithRoutes(tenant, tpRoot, wfRoot, workNode);
+	let fromWorks = await _getFromActionsWithRoutes(tenant, tpRoot, wfRoot, workNode);
 	for (let i = 0; i < fromWorks.length; i++) {
 		let prevWorkid = fromWorks[i].workid;
 		//await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid, status: "ST_PASS" });
@@ -1875,7 +1906,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 			};
 			nexts.push(msgToSend);
 		} else {
-			from_workNode.removeClass(Engine.getStatusFromClass(from_workNode)).addClass("ST_RETURNED");
+			from_workNode.removeClass(getStatusFromClass(from_workNode)).addClass("ST_RETURNED");
 		}
 	}
 
@@ -1892,7 +1923,7 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 				[],
 				Const.VAR_IS_EFFICIENT, //efficient
 			);
-			comment = Engine.sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, comment);
+			comment = sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, comment);
 			if (comment.indexOf("[") >= 0) {
 				comment = await Parser.replaceStringWithKVar(
 					tenant,
@@ -1949,11 +1980,11 @@ Engine.sendback = async function (email, tenant, wfid, todoid, doer, kvars, comm
 	);
 
 	try {
-		if (comment.trim().length > 0) await Engine.postCommentForTodo(tenant, doer, todo, comment);
+		if (comment.trim().length > 0) await postCommentForTodo(tenant, doer, todo, comment);
 	} catch (err) {}
 
-	await Engine.sendNexts(nexts);
-	Engine.log(tenant, wfid, `[Sendback] [${todo.title}] [${todo.tplid}] [${email}]`);
+	await sendNexts(nexts);
+	log(tenant, wfid, `[Sendback] [${todo.title}] [${todo.tplid}] [${email}]`);
 	return todoid;
 };
 
@@ -1976,9 +2007,9 @@ Client.setKVarFromString = async function (tenant, round, wfid, nodeid, workid, 
 	await Parser.setVars(tenant, round, wfid, nodeid, workid, kvObj, "EMP", Const.VAR_IS_EFFICIENT);
 };
 
-Engine.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInternal) {
+const parseContent = async function (tenant, wfRoot, kvars, inputStr, withInternal) {
 	if (Tools.hasValue(inputStr) === false) return "";
-	let ret = Engine.sanitizeHtmlAndHandleBar(wfRoot, kvars, Parser.base64ToCode(inputStr));
+	let ret = sanitizeHtmlAndHandleBar(wfRoot, kvars, Parser.base64ToCode(inputStr));
 	if (ret.indexOf("[") >= 0) {
 		//null位置的参数是以e字符串数组，包含k=v;k=v的定义
 		ret = await Parser.replaceStringWithKVar(tenant, ret, kvars, withInternal);
@@ -1989,7 +2020,7 @@ Engine.parseContent = async function (tenant, wfRoot, kvars, inputStr, withInter
 Client.onSendTenantMail = async function (msg) {
 	try {
 		let smtp = await Cache.getOrgSmtp(msg.tenant);
-		Engine.callSendMailWorker({
+		callSendMailWorker({
 			smtp: smtp,
 			recipients: msg.recipients,
 			cc: msg.cc,
@@ -2004,7 +2035,7 @@ Client.onSendTenantMail = async function (msg) {
 
 Client.onSendSystemMail = async function (msg) {
 	try {
-		Engine.callSendMailWorker({
+		callSendMailWorker({
 			smtp: "System",
 			recipients: msg.recipients,
 			subject: msg.subject,
@@ -2019,7 +2050,7 @@ Client.onSendSystemMail = async function (msg) {
 //////////////////////////////////////////////////
 Client.onStartWorkflow = async function (msg) {
 	try {
-		Engine.startWorkflow(
+		startWorkflow(
 			msg.rehearsal, //not rehearsal
 			msg.tenant,
 			msg.tplid, //tplid
@@ -2043,10 +2074,10 @@ Client.onStartWorkflow = async function (msg) {
 
 Client.onYarkNode = async function (obj) {
 	try {
-		//await Engine.yarkNode_internal(obj);
-		await Engine.callYarkNodeWorker(obj);
+		//await yarkNode_internal(obj);
+		await callYarkNodeWorker(obj);
 
-		/* Engine.callYarkNodeWorker(obj).then((res) => {
+		/* callYarkNodeWorker(obj).then((res) => {
 			console.log("++++", res);
 		}); */
 	} catch (error) {
@@ -2054,7 +2085,7 @@ Client.onYarkNode = async function (obj) {
 	}
 };
 
-Engine.replaceUser = async function (msg) {
+const replaceUser = async function (msg) {
 	try {
 		return new Promise((resolve, reject) => {
 			const worker = new Worker(path.dirname(__filename) + "/worker/FindAndReplaceUser.js", {
@@ -2085,7 +2116,7 @@ Engine.replaceUser = async function (msg) {
 };
 
 // Run in child thread, include prepare and execute
-Engine.replaceUser_child = async function (msg) {
+const replaceUser_child = async function (msg) {
 	try {
 		let cursor = null;
 		let regex = null;
@@ -2305,7 +2336,7 @@ Engine.replaceUser_child = async function (msg) {
 };
 
 //Client是指接受 yarkNode消息的client
-Engine.yarkNode_internal = async function (obj) {
+const yarkNode_internal = async function (obj) {
 	let nexts = [];
 	let parent_nexts = [];
 	if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
@@ -2347,7 +2378,7 @@ Engine.yarkNode_internal = async function (obj) {
 			starter: obj.starter,
 			round: obj.round,
 		};
-		await Engine.sendNexts([an]);
+		await sendNexts([an]);
 		return;
 	}
 	let nodeid = tpNode.attr("id");
@@ -2387,7 +2418,7 @@ Engine.yarkNode_internal = async function (obj) {
 		wfRoot.append(
 			`<div class="work START ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="DEFAULT" round="${obj.round}" at="${isoNow}"></div>`,
 		);
-		await Engine.procNext(
+		await procNext(
 			obj.tenant,
 			teamid,
 			obj.tplid,
@@ -2405,7 +2436,7 @@ Engine.yarkNode_internal = async function (obj) {
 	} else if (tpNode.hasClass("INFORM")) {
 		//这里的GetDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
 		try {
-			let doers = await Engine.getDoer(
+			let doers = await getDoer(
 				obj.tenant,
 				teamid,
 				tpNode.attr("role"),
@@ -2417,14 +2448,15 @@ Engine.yarkNode_internal = async function (obj) {
 			);
 			if (Array.isArray(doers) === false) {
 				console.error("C.GetDoer should return array", 5);
-				if (doers.uid) doers = [doers];
+				//if doers.uid, then doers is a single user,so place it into array;
+				if ((doers as any).uid) doers = [doers];
 				else {
 					doers = [];
 				}
 			}
 			let mail_subject = "Message from Metatocome";
 			let mail_body = "Message from Metatocome";
-			//let recipients = Engine.getEmailRecipientsFromDoers(doers);
+			//let recipients = getEmailRecipientsFromDoers(doers);
 
 			let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
 				obj.tenant,
@@ -2466,14 +2498,14 @@ Engine.yarkNode_internal = async function (obj) {
 							KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
 							let tmp_subject = tpNode.find("subject").first().text();
 							let tmp_body = tpNode.find("content").first().text();
-							mail_subject = await Engine.parseContent(
+							mail_subject = await parseContent(
 								tenant,
 								wfRoot,
 								KVARS_WITHOUT_VISIBILITY,
 								tmp_subject,
 								Const.INJECT_INTERNAL_VARS,
 							);
-							mail_body = await Engine.parseContent(
+							mail_body = await parseContent(
 								tenant,
 								wfRoot,
 								KVARS_WITHOUT_VISIBILITY,
@@ -2502,19 +2534,13 @@ Engine.yarkNode_internal = async function (obj) {
 								mail_subject = "Rehearsal: " + mail_subject;
 								recipient = wf.starter;
 							}
-							Engine.log(tenant, obj.wfid, "Queue send email", {
+							log(tenant, obj.wfid, "Queue send email", {
 								fact: factRecipients,
 								to: recipient,
 								subject: mail_subject,
 								body: mail_body,
 							});
-							await Engine.sendTenantMail(
-								tenant,
-								recipient,
-								mail_subject,
-								mail_body,
-								"INFORM_MAIL_CSV",
-							);
+							await sendTenantMail(tenant, recipient, mail_subject, mail_body, "INFORM_MAIL_CSV");
 						} catch (error) {
 							console.error(error);
 						}
@@ -2533,14 +2559,14 @@ Engine.yarkNode_internal = async function (obj) {
 							//因为每个用户的授权字段可能不同，因此需要对每个用户单独取kvars
 							//userGetVars是一个费时的工作，通过下面的if判断，只有在必须要时才取kvars
 							KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
-							mail_subject = await Engine.parseContent(
+							mail_subject = await parseContent(
 								tenant,
 								wfRoot,
 								KVARS_WITHOUT_VISIBILITY,
 								tmp_subject,
 								Const.INJECT_INTERNAL_VARS,
 							);
-							mail_body = await Engine.parseContent(
+							mail_body = await parseContent(
 								tenant,
 								wfRoot,
 								KVARS_WITHOUT_VISIBILITY,
@@ -2556,19 +2582,13 @@ Engine.yarkNode_internal = async function (obj) {
 								mail_subject = "Rehearsal: " + mail_subject;
 								recipient = wf.starter;
 							}
-							Engine.log(tenant, obj.wfid, "Queue send email", {
+							log(tenant, obj.wfid, "Queue send email", {
 								fact: factRecipients,
 								to: recipient,
 								subject: mail_subject,
 								body: mail_body,
 							});
-							await Engine.sendTenantMail(
-								tenant,
-								recipient,
-								mail_subject,
-								mail_body,
-								"INFORM_MAIL",
-							);
+							await sendTenantMail(tenant, recipient, mail_subject, mail_body, "INFORM_MAIL");
 						} catch (emailError) {
 							console.error(emailError);
 						}
@@ -2580,7 +2600,7 @@ Engine.yarkNode_internal = async function (obj) {
 			wfRoot.append(
 				`<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" route="${obj.route}" round="${obj.round}" at="${isoNow}"></div>`,
 			);
-			await Engine.procNext(
+			await procNext(
 				obj.tenant,
 				teamid,
 				obj.tplid,
@@ -2597,7 +2617,7 @@ Engine.yarkNode_internal = async function (obj) {
 			);
 		} catch (informNodeError) {
 			console.log("INFORM node exception:" + informNodeError.message);
-			Engine.log(tenant, obj.wfid, "INFORM node exception", {
+			log(tenant, obj.wfid, "INFORM node exception", {
 				nodeid: tpNode.attr("id"),
 				message: informNodeError.message,
 			});
@@ -2627,7 +2647,7 @@ Engine.yarkNode_internal = async function (obj) {
 		let innerTeamSet = "";
 		if (tpNode.attr("runmode") === "ASYNC") {
 			runInSyncMode = false;
-			Engine.log(
+			log(
 				tenant,
 				obj.wfid,
 				"Caution: this script run in ASYNC mode, following actions only dispatch only by remote callback",
@@ -2646,10 +2666,10 @@ Engine.yarkNode_internal = async function (obj) {
 			});
 			cbp = await cbp.save();
 			callbackId = cbp._id.toString();
-			Engine.log(tenant, obj.wfid, "ASYNC mode, callbackID is " + callbackId);
+			log(tenant, obj.wfid, "ASYNC mode, callbackID is " + callbackId);
 		}
 		try {
-			let pdsResolvedForScript = await Engine.getPdsOfAllNodesForScript({
+			let pdsResolvedForScript = await getPdsOfAllNodesForScript({
 				tenant: obj.tenant,
 				tplid: obj.tplid,
 				starter: obj.starter,
@@ -2661,7 +2681,7 @@ Engine.yarkNode_internal = async function (obj) {
 				kvars: kvarsForScript,
 			});
 			//console.log(pdsResolvedForScript);
-			codeRetString = await Engine.runCode(
+			codeRetString = await runCode(
 				obj.tenant, //tenant
 				Tools.getEmailDomain(obj.starter), //Tenant Domain
 				obj.tplid,
@@ -2710,7 +2730,7 @@ Engine.yarkNode_internal = async function (obj) {
 			wfRoot.append(
 				`<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`,
 			);
-			await Engine.procNext(
+			await procNext(
 				obj.tenant,
 				teamid,
 				obj.tplid,
@@ -2746,7 +2766,7 @@ Engine.yarkNode_internal = async function (obj) {
 		}
 		console.log(`\tSCRIPT ${tpNode.attr("id")} end...`);
 	} else if (tpNode.hasClass("AND")) {
-		let andDone = await Engine.checkAnd(
+		let andDone = await checkAnd(
 			obj.tenant,
 			obj.wfid,
 			obj.round,
@@ -2790,7 +2810,7 @@ Engine.yarkNode_internal = async function (obj) {
 				//刚刚新建的ROUTE，to_workid不用改
 			}
 			//既然AND已经完成，那么，就可以继续处理AND后面的节点
-			await Engine.procNext(
+			await procNext(
 				obj.tenant,
 				teamid,
 				obj.tplid,
@@ -2837,7 +2857,7 @@ Engine.yarkNode_internal = async function (obj) {
 		}
 	} else if (tpNode.hasClass("OR")) {
 		//OR不需要检查，只要碰到，就会完成
-		/* let orDone = Engine.checkOr(
+		/* let orDone = checkOr(
 			obj.tenant,
 			obj.wfid,
 			tpRoot,
@@ -2853,8 +2873,8 @@ Engine.yarkNode_internal = async function (obj) {
 				`<div class="work OR ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 			);
 			//OR需要忽略掉其它未执行的兄弟节点
-			Engine.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
-			await Engine.procNext(
+			ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
+			await procNext(
 				obj.tenant,
 				teamid,
 				obj.tplid,
@@ -2874,8 +2894,8 @@ Engine.yarkNode_internal = async function (obj) {
 		wfRoot.append(
 			`<div class="work THROUGH ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 		);
-		//Engine.ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
-		await Engine.procNext(
+		//ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
+		await procNext(
 			obj.tenant,
 			teamid,
 			obj.tplid,
@@ -2896,7 +2916,7 @@ Engine.yarkNode_internal = async function (obj) {
 		);
 		let nodeSelector = `.node#${nodeid}`;
 		let delayString = tpRoot.find(nodeSelector).find("code").text().trim();
-		let time = Engine.__getFutureSecond(wfRoot, delayString);
+		let time = __getFutureSecond(wfRoot, delayString);
 		let delayTimer = new DelayTimer({
 			tenant: obj.tenant,
 			round: obj.round,
@@ -2925,7 +2945,7 @@ Engine.yarkNode_internal = async function (obj) {
 			[],
 			Const.VAR_IS_EFFICIENT,
 		);
-		let pbo = await Engine.getPboByWfId(obj.tenant, obj.wfid);
+		let pbo = await getPboByWfId(obj.tenant, obj.wfid);
 		let sub_tpl_id = tpNode.attr("sub").trim();
 		let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
 		let sub_wf_id = IdGenerator();
@@ -2933,7 +2953,7 @@ Engine.yarkNode_internal = async function (obj) {
 		let parent_work_id = isStandalone ? "" : workid;
 		let runmode = isStandalone ? "standalone" : "sub";
 		try {
-			await Engine.startWorkflow(
+			await startWorkflow(
 				//runsub
 				wf.rehearsal,
 				obj.tenant,
@@ -2949,9 +2969,9 @@ Engine.yarkNode_internal = async function (obj) {
 				runmode,
 				[],
 			);
-			Engine.log(tenant, obj.wfid, `[Start Sub] [Success] [${runmode}] ${sub_tpl_id}`);
+			log(tenant, obj.wfid, `[Start Sub] [Success] [${runmode}] ${sub_tpl_id}`);
 		} catch (e) {
-			Engine.log(tenant, obj.wfid, `[Start Sub] [Failed] [${runmode}] ${sub_tpl_id}`, {
+			log(tenant, obj.wfid, `[Start Sub] [Failed] [${runmode}] ${sub_tpl_id}`, {
 				message: e.message,
 			});
 		}
@@ -2959,7 +2979,7 @@ Engine.yarkNode_internal = async function (obj) {
 			wfRoot.append(
 				`<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 			);
-			await Engine.procNext(
+			await procNext(
 				obj.tenant,
 				teamid,
 				obj.tplid,
@@ -2981,14 +3001,14 @@ Engine.yarkNode_internal = async function (obj) {
 		}
 		//END of SUB
 	} else if (tpNode.hasClass("END")) {
-		Engine.log(tenant, obj.wfid, "Process Ending");
+		log(tenant, obj.wfid, "Process Ending");
 		wfRoot.append(
 			`<div class="work END ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}"  byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 		);
-		await Engine.endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
-		await Engine.stopDelayTimers(obj.tenant, obj.wfid);
+		await endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
+		await stopDelayTimers(obj.tenant, obj.wfid);
 
-		await Engine.resetTodosETagByWfId(tenant, obj.wfid);
+		await resetTodosETagByWfId(tenant, obj.wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 
 		wfUpdate["status"] = "ST_DONE";
@@ -3006,9 +3026,9 @@ Engine.yarkNode_internal = async function (obj) {
 			let parent_wfRoot = parent_wfIO(".workflow");
 			let parent_work = parent_wfRoot.find(`#${parent_workid}`);
 			let parent_nodeid = Cheerio(parent_work).attr("nodeid");
-			let parent_work_round = Cheerio(parent_work).attr("round");
+			let parent_work_round = Number(Cheerio(parent_work).attr("round"));
 			//TODO: workflow work round
-			Engine.log(
+			log(
 				tenant,
 				obj.wfid,
 				`This process has parent process, continue to parent [${parent_wf.tplid}]`,
@@ -3040,7 +3060,7 @@ Engine.yarkNode_internal = async function (obj) {
 			let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
 			//console.log(`Child kvars ${JSON.stringify(child_kvars)}`);
 			//console.log(`Child RET ${child_route}`);
-			await Engine.procNext(
+			await procNext(
 				obj.tenant,
 				teamid,
 				parent_tplid,
@@ -3064,13 +3084,12 @@ Engine.yarkNode_internal = async function (obj) {
 			parent_wf.doc = parent_wfIO.html();
 			await parent_wf.save();
 		}
-		Engine.log(tenant, obj.wfid, "End");
+		log(tenant, obj.wfid, "End");
 		let sendEmailTo = obj.starter;
 		let ew = await Cache.getUserEw(sendEmailTo);
 		let withEmail = ew && ew.email;
 		if (withEmail) {
 			let cn = await Cache.getUserName(tenant, sendEmailTo);
-			let frontendUrl = Tools.getFrontEndUrl();
 			let mail_body = `Hello, ${cn}, <br/>
           <br/>
           The workflow you started as <br/>
@@ -3092,13 +3111,7 @@ Engine.yarkNode_internal = async function (obj) {
 			}
 			mail_body += extra_body;
 
-			await Engine.sendTenantMail(
-				tenant,
-				sendEmailTo,
-				subject,
-				mail_body,
-				"WORKFLOW_COMPLETE_MAIL",
-			);
+			await sendTenantMail(tenant, sendEmailTo, subject, mail_body, "WORKFLOW_COMPLETE_MAIL");
 		}
 		//END of END node
 	} else if (tpNode.hasClass("ACTION")) {
@@ -3150,7 +3163,7 @@ Engine.yarkNode_internal = async function (obj) {
 				}
 			}
 		} else {
-			doerOrDoers = await Engine.getDoer(
+			doerOrDoers = await getDoer(
 				obj.tenant,
 				teamid,
 				tpNode.attr("role"), //pds
@@ -3248,7 +3261,7 @@ Engine.yarkNode_internal = async function (obj) {
 				status: "ST_RUN",
 			});
 			await newWork.save();
-			await Engine.createTodo({
+			await createTodo({
 				tenant: obj.tenant,
 				round: thisRound,
 				doer: doerOrDoers,
@@ -3292,8 +3305,8 @@ Engine.yarkNode_internal = async function (obj) {
 		{ upsert: false, new: true },
 	);
 
-	await Engine.sendNexts(nexts);
-	await Engine.sendNexts(parent_nexts);
+	await sendNexts(nexts);
+	await sendNexts(parent_nexts);
 
 	//////////////////////////////////////////////////
 	//  START send to workflow endpoint
@@ -3306,7 +3319,7 @@ Engine.yarkNode_internal = async function (obj) {
 };
 
 //Only SCRIPT is supported at this moment.
-Engine.rerunNode = async function (tenant, wfid, nodeid) {
+const rerunNode = async function (tenant, wfid, nodeid) {
 	let wf_filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(wf_filter);
 	let wfIO = await Parser.parse(wf.doc);
@@ -3332,11 +3345,11 @@ Engine.rerunNode = async function (tenant, wfid, nodeid) {
 		starter: wf.starter,
 		round: workNode.attr("round"),
 	};
-	await Engine.sendNexts([an]);
+	await sendNexts([an]);
 };
 
 //TODO:
-Engine.getPdsOfAllNodesForScript = async function (data) {
+const getPdsOfAllNodesForScript = async function (data) {
 	let ret = {};
 	let PDS = [];
 	try {
@@ -3370,12 +3383,12 @@ Engine.getPdsOfAllNodesForScript = async function (data) {
 			);
 		}
 	} catch (e) {
-		Engine.log(data.tenant, data.wfid, e.message);
+		log(data.tenant, data.wfid, e.message);
 	}
 	return ret;
 };
 
-Engine.createTodo = async function (obj) {
+const createTodo = async function (obj) {
 	if (lodash.isArray(obj.doer) === false) {
 		obj.doer = [obj.doer];
 	}
@@ -3398,7 +3411,7 @@ Engine.createTodo = async function (obj) {
 			if (obj.cells && obj.cells.length > 0) {
 				cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
 			}
-			await Engine.newTodo(
+			await newTodo(
 				obj.tenant,
 				obj.round,
 				doerEmail,
@@ -3423,7 +3436,7 @@ Engine.createTodo = async function (obj) {
 	} //for
 };
 
-Engine.sanitizeHtmlAndHandleBar = function (wfRoot, all_kvars, txt) {
+const sanitizeHtmlAndHandleBar = function (wfRoot, all_kvars, txt) {
 	let ret = txt;
 	let template = Handlebars.compile(txt);
 	ret = template(all_kvars);
@@ -3463,10 +3476,10 @@ Engine.sanitizeHtmlAndHandleBar = function (wfRoot, all_kvars, txt) {
 /**
  *
  * No use at all
-Engine.defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId, defiedNodes) {
+const defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId, defiedNodes) {
   if (defiedNodes.includes(afterThisNodeId)) return;
   defiedNodes.push(afterThisNodeId);
-  let nextNodeIds = await Engine.getNextNodeIds(tpRoot, afterThisNodeId);
+  let nextNodeIds = await getNextNodeIds(tpRoot, afterThisNodeId);
   let tmp2 = await Route.find({ tenant: tenant, wfid: wfid }, { _id: 0, from_nodeid: 1 }).lean();
   tmp2 = tmp2.map((x) => x.from_nodeid);
   let tobeDefiedNodeIds = lodash.intersection(tmp2, nextNodeIds);
@@ -3482,13 +3495,13 @@ Engine.defyKVar = async function (tenant, wfid, tpRoot, wfRoot, afterThisNodeId,
     await KVar.updateMany(filter, { $set: { eff: Const.VAR_NOT_EFFICIENT } });
     //run deep further
     for (let i = 0; i < tobeDefiedNodeIds.length; i++) {
-      await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, tobeDefiedNodeIds[i], defiedNodes);
+      await defyKVar(tenant, wfid, tpRoot, wfRoot, tobeDefiedNodeIds[i], defiedNodes);
     }
   }
 };
 */
 
-Engine.getNextNodeIds = async function (tpRoot, nodeid) {
+const getNextNodeIds = async function (tpRoot, nodeid) {
 	let ret = [];
 	let linkSelector = '.link[from="' + nodeid + '"]';
 	tpRoot.find(linkSelector).each(function (i, el) {
@@ -3498,7 +3511,7 @@ Engine.getNextNodeIds = async function (tpRoot, nodeid) {
 	return ret;
 };
 
-Engine.clearFollowingDoneRoute = async function (
+const clearFollowingDoneRoute = async function (
 	tenant,
 	wfid,
 	round,
@@ -3517,7 +3530,7 @@ Engine.clearFollowingDoneRoute = async function (
 //TODO: ignoreRoute with round???!!!
 //添加ST_INGORED类型的route，用于标志在当前round下，哪些route即便被执行过，也要专门建立一个ST_INGORED类型的route，以便前端显示route状态。
 //之前的route不删除，否则影响运行，ingoreROute更多的作用只是用于标记route前端显示
-Engine.ignoreRoute = async function (
+const ignoreRoute = async function (
 	tenant,
 	wfid,
 	round,
@@ -3531,7 +3544,7 @@ Engine.ignoreRoute = async function (
 	isoNow,
 	decentlevel,
 ) {
-	let prevNodeIds = Engine._getFromNodeIds(tpRoot, toNodeId);
+	let prevNodeIds = _getFromNodeIds(tpRoot, toNodeId);
 	let toNode = tpRoot.find("#" + toNodeId);
 	let toType = Parser.getNodeType(toNode);
 	if (toType === "END" && prevNodeIds.length <= 1) return;
@@ -3575,7 +3588,7 @@ Engine.ignoreRoute = async function (
 	let linkSelector = '.link[from="' + toNodeId + '"]';
 	tpRoot.find(linkSelector).each(async function (i, el) {
 		let nextToNodeId = Cheerio(el).attr("to");
-		await Engine.ignoreRoute(
+		await ignoreRoute(
 			tenant,
 			wfid,
 			round,
@@ -3592,7 +3605,7 @@ Engine.ignoreRoute = async function (
 	});
 };
 
-Engine.getBackPath = async function (tenant, round, wfid, workId, withouts, path) {
+const getBackPath = async function (tenant, round, wfid, workId, withouts, path) {
 	let filter = {
 		tenant: tenant,
 		wfid: wfid,
@@ -3609,7 +3622,7 @@ Engine.getBackPath = async function (tenant, round, wfid, workId, withouts, path
 				path.push({ workid: routes[i].from_workid, nodeid: routes[i].from_nodeid });
 			}
 			if (routes[i].from_nodetype !== "START") {
-				await Engine.getBackPath(tenant, round, wfid, routes[i].from_workid, withouts, path);
+				await getBackPath(tenant, round, wfid, routes[i].from_workid, withouts, path);
 			}
 		}
 	} catch (e) {
@@ -3617,7 +3630,7 @@ Engine.getBackPath = async function (tenant, round, wfid, workId, withouts, path
 	}
 };
 
-Engine.getRoundWork = async function (tenant, round, wfid, path) {
+const getRoundWork = async function (tenant, round, wfid, path) {
 	let filter = {
 		tenant: tenant,
 		wfid: wfid,
@@ -3638,7 +3651,7 @@ Engine.getRoundWork = async function (tenant, round, wfid, path) {
 	}
 };
 
-Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
+const transferWork = async function (tenant, whom, myEmail, todoid) {
 	let whomUser = await User.findOne(
 		{ tenant: tenant, email: whom + myEmail.substring(myEmail.indexOf("@")) },
 		{ email: 1, username: 1, _id: 0 },
@@ -3656,7 +3669,7 @@ Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
 
 	let fromCN = await Cache.getUserName(tenant, myEmail);
 	let newCN = await Cache.getUserName(tenant, newDoer);
-	await Engine.informUserOnNewTodo({
+	await informUserOnNewTodo({
 		tenant: tenant,
 		doer: newDoer,
 		todoid: todoid,
@@ -3672,11 +3685,11 @@ Engine.transferWork = async function (tenant, whom, myEmail, todoid) {
 	return whomUser;
 };
 
-Engine.sendTenantMail = async function (
-	tenant,
-	recipients,
-	subject,
-	mail_body,
+const sendTenantMail = async function (
+	tenant: string,
+	recipients: string | string[],
+	subject: string,
+	mail_body: string,
 	reason = "DEFAULT",
 ) {
 	console.log(
@@ -3700,7 +3713,7 @@ Engine.sendTenantMail = async function (
 		if (isMainThread) {
 			let smtp = await Cache.getOrgSmtp(msg.tenant);
 			msg.smtp = smtp;
-			await Engine.callSendMailWorker(msg);
+			await callSendMailWorker(msg);
 		} else {
 			parentPort.postMessage({ cmd: "worker_sendTenantMail", msg: msg });
 		}
@@ -3709,7 +3722,7 @@ Engine.sendTenantMail = async function (
 	}
 };
 
-Engine.informUserOnNewTodo = async function (inform) {
+const informUserOnNewTodo = async function (inform) {
 	console.log("\t==>informUserOnNewTodo in ", isMainThread ? "Main Thread" : "Child Thread");
 	try {
 		let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
@@ -3721,7 +3734,6 @@ Engine.informUserOnNewTodo = async function (inform) {
 		}
 		withEmail = ew && ew.email;
 		let cn = await Cache.getUserName(inform.tenant, inform.doer);
-		let frontendUrl = Tools.getFrontEndUrl();
 		let mail_body = `Hello, ${cn}, new task is comming in:
 <br/><a href="${frontendUrl}/work/@${inform.todoid}">${inform.title} </a><br/>
 in Workflow: <br/>
@@ -3752,7 +3764,7 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 		mail_body += extra_body;
 
 		if (withEmail) {
-			await Engine.sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body, "NEWTODO_MAIL");
+			await sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body, "NEWTODO_MAIL");
 		}
 
 		let markdownMsg = {
@@ -3795,16 +3807,16 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 			try {
 				let botKey = botKeys[botIndex];
 				let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-				Engine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
+				callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
 					.then((res) => {
-						Engine.log(
+						log(
 							inform.tenant,
 							inform.wfid,
 							`Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`,
 						);
 					})
 					.catch((err) => {
-						console.error("Error from Engine.callWebApiPosterWorker" + err.message);
+						console.error("Error from callWebApiPosterWorker" + err.message);
 					});
 			} catch (e) {
 				console.error(e);
@@ -3829,7 +3841,7 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
  *
  * @return {...}
  */
-Engine.newTodo = async function (
+const newTodo = async function (
 	tenant,
 	round,
 	doer,
@@ -3861,7 +3873,7 @@ Engine.newTodo = async function (
 		 * 用户离职后，在User数据表中，将其设置为active=false，并设置其succeed继承人
 		 */
 		// 如active=true，则返回自身，否则，使用继承者
-		doer = await Engine.getSucceed(tenant, doer);
+		doer = await getSucceed(tenant, doer);
 
 		let todo = new Todo({
 			todoid: todoid,
@@ -3890,7 +3902,7 @@ Engine.newTodo = async function (
 		await todo.save();
 		await Cache.resetETag(`ETAG:TODOS:${doer}`);
 
-		await Engine.informUserOnNewTodo({
+		await informUserOnNewTodo({
 			tenant: tenant,
 			doer: doer,
 			todoid: todoid,
@@ -3912,12 +3924,12 @@ Engine.newTodo = async function (
 	//
 };
 
-Engine.getSucceed = async (tenant, doerEmail) => {
+const getSucceed = async (tenant, doerEmail) => {
 	let user = await User.findOne({ tenant: tenant, email: doerEmail }, { active: 1, succeed: 1 });
 	return user.active ? doerEmail : user.succeed;
 };
 
-Engine.WreckPost = async (url, content) => {
+const WreckPost = async (url, content) => {
 	const wreck = Wreck.defaults({
 		headers: { "x-foo-bar": "123" },
 		agents: {
@@ -3962,10 +3974,10 @@ Engine.WreckPost = async (url, content) => {
 	}
 };
 
-Engine.log = function (tenant, wfid, txt, json, withConsole = false) {
+const log = function (tenant, wfid, txt, json = null, withConsole = false) {
 	if (withConsole) console.log(txt);
 	let isoNow = Tools.toISOString(new Date());
-	let logfilename = Engine.getWfLogFilename(tenant, wfid);
+	let logfilename = getWfLogFilename(tenant, wfid);
 	fs.writeFileSync(logfilename, `${isoNow}\t${txt}\n`, { flag: "a+" });
 	if (json) {
 		if (withConsole) console.log(JSON.stringify(json, null, 2));
@@ -3973,7 +3985,7 @@ Engine.log = function (tenant, wfid, txt, json, withConsole = false) {
 	}
 };
 
-Engine.getWfLogFilename = function (tenant, wfid) {
+const getWfLogFilename = function (tenant, wfid) {
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_log_folder = emp_runtime_folder + "/" + tenant + "/log";
@@ -3994,7 +4006,7 @@ Engine.getWfLogFilename = function (tenant, wfid) {
  *
  * @return {...}
  */
-Engine.runCode = async function (
+const runCode = async function (
 	tenant,
 	tenantDomain,
 	tplid,
@@ -4149,11 +4161,11 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 		let returnedLines = stdout.trim();
 		//////////////////////////////////////////////////
 		// Write logs
-		Engine.log(tenant, wfid, "Script============");
-		Engine.log(tenant, wfid, code);
-		Engine.log(tenant, wfid, "============Script");
-		Engine.log(tenant, wfid, returnedLines);
-		Engine.log(tenant, wfid, "==================");
+		log(tenant, wfid, "Script============");
+		log(tenant, wfid, code);
+		log(tenant, wfid, "============Script");
+		log(tenant, wfid, returnedLines);
+		log(tenant, wfid, "==================");
 
 		// write returnedLines to a file associated with wfid
 		//////////////////////////////////////////////////
@@ -4237,7 +4249,7 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  * @param  {} uploadedFiles     uarent workflow vars
  */
 
-Engine.startWorkflow = async function (
+const startWorkflow = async function (
 	rehearsal: boolean,
 	tenant: string,
 	tplid: string,
@@ -4255,7 +4267,7 @@ Engine.startWorkflow = async function (
 	let filter = { tenant: tenant, tplid: tplid };
 	let theTemplate = await Template.findOne(filter);
 
-	return await Engine.startWorkflow_with(
+	return await startWorkflow_with(
 		rehearsal,
 		tenant,
 		tplid,
@@ -4273,11 +4285,11 @@ Engine.startWorkflow = async function (
 	);
 };
 
-Engine.startWorkflow_with = async function (
+const startWorkflow_with = async function (
 	rehearsal: boolean,
 	tenant: string,
 	tplid: string,
-	theTemplate: TemplateObj,
+	theTemplate: Emp.TemplateObj,
 	starter: string,
 	textPbo: string,
 	teamid: string,
@@ -4393,11 +4405,11 @@ Engine.startWorkflow_with = async function (
 		round: 0,
 	};
 
-	await Engine.sendNexts([an]);
-	Engine.clearOlderRehearsal(tenant, starter, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
+	await sendNexts([an]);
+	clearOlderRehearsal(tenant, starter, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
 		(ret) => {},
 	);
-	Engine.clearOlderScripts(tenant).then((ret) => {
+	clearOlderScripts(tenant).then((ret) => {
 		console.log("Old script clearing finished");
 	});
 
@@ -4407,7 +4419,7 @@ Engine.startWorkflow_with = async function (
 /**
  * clearnout rehearsal workflow and todos old than 1 day.
  */
-Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit: any = "h") {
+const clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit: any = "h") {
 	let theMoment = moment().subtract(howmany, unit);
 	let wfFilter = {
 		tenant: tenant,
@@ -4419,7 +4431,7 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
 	wfids = wfids.map((x) => x.wfid);
 	if (wfids.length > 0) {
 		for (let i = 0; i < wfids.length; i++) {
-			Engine.__destroyWorkflow(tenant, wfids[i]).then((ret) => {
+			__destroyWorkflow(tenant, wfids[i]).then((ret) => {
 				console.log(`Garbage rm rehearsal: ${wfids[i]} `);
 			});
 		}
@@ -4428,7 +4440,7 @@ Engine.clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit
 
 //清楚超过半小时的脚本文件，
 //在半小时内，运维可以拷贝出去做测试
-Engine.clearOlderScripts = async function (tenant) {
+const clearOlderScripts = async function (tenant) {
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
 	//定义两个函数
@@ -4477,7 +4489,7 @@ Engine.clearOlderScripts = async function (tenant) {
 	return "Done";
 };
 
-Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
+const stopWorkflow = async function (tenant, myEmail, wfid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter);
 	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "update"))
@@ -4505,18 +4517,18 @@ Engine.stopWorkflow = async function (tenant, myEmail, wfid) {
 	let ret = "ST_STOP";
 	if (Object.keys(wfUpdate).length > 0) {
 		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
-		Engine.stopWorks(tenant, wfid);
-		Engine.stopDelayTimers(tenant, wfid);
+		stopWorks(tenant, wfid);
+		stopDelayTimers(tenant, wfid);
 		ret = "ST_STOP";
 	} else {
-		ret = Engine.getStatusFromClass(wfRoot);
+		ret = getStatusFromClass(wfRoot);
 	}
-	await Engine.resetTodosETagByWfId(tenant, wfid);
+	await resetTodosETagByWfId(tenant, wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	return ret;
 };
 
-Engine.restartWorkflow = async function (
+const restartWorkflow = async function (
 	tenant,
 	myEmail,
 	wfid,
@@ -4533,14 +4545,14 @@ Engine.restartWorkflow = async function (
 	let old_wfRoot = old_wfIO(".workflow");
 	let old_pwfid = old_wfRoot.attr("pwfid");
 	let old_pworkid = old_wfRoot.attr("pworkid");
-	await Engine.stopWorkflow(tenant, myEmail, old_wfid);
-	await Engine.resetTodosETagByWfId(tenant, old_wfid);
+	await stopWorkflow(tenant, myEmail, old_wfid);
+	await resetTodosETagByWfId(tenant, old_wfid);
 	let isoNow = Tools.toISOString(new Date());
 	starter = Tools.defaultValue(starter, old_wf.starter);
 	teamid = Tools.defaultValue(teamid, old_wf.teamid);
 	wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
-	pbo = Tools.defaultValue(pbo, await Engine.getPboByWfId(tenant, old_wfid));
-	await Engine.resetTodosETagByWfId(tenant, old_wfid);
+	pbo = Tools.defaultValue(pbo, await getPboByWfId(tenant, old_wfid));
+	await resetTodosETagByWfId(tenant, old_wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	let new_wfid = IdGenerator();
 	let tplDoc = Cheerio.html(old_wfIO(".template").first());
@@ -4570,7 +4582,7 @@ Engine.restartWorkflow = async function (
 		runmode: old_wf.runmode ? old_wf.runmode : "standalone",
 		allowdiscuss: old_wf.allowdiscuss,
 	});
-	wf.attachments = await Engine.getPbo(old_wf);
+	wf.attachments = await getPbo(old_wf);
 	wf = await wf.save();
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	await Parser.copyVars(
@@ -4597,11 +4609,11 @@ Engine.restartWorkflow = async function (
 		rehearsal: old_wf.rehearsal,
 		round: 0,
 	};
-	await Engine.sendNexts([an]);
+	await sendNexts([an]);
 	return wf;
 };
 
-Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
+const destroyWorkflow = async function (tenant, myEmail, wfid) {
 	let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
 	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "delete"))
 		throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
@@ -4610,18 +4622,18 @@ Engine.destroyWorkflow = async function (tenant, myEmail, wfid) {
 	//starter可以destroy rehearsal
 	//starter可以destroy 尚在第一个活动上的流程
 	if (myGroup === "ADMIN" || (wf.starter === myEmail && (wf.rehearsal || wf.pnodeid === "start"))) {
-		Engine.__destroyWorkflow(tenant, wfid).then((ret) => {});
+		__destroyWorkflow(tenant, wfid).then((ret) => {});
 	} else {
 		throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
 	}
 };
 
-Engine.__destroyWorkflow = async function (tenant, wfid) {
+const __destroyWorkflow = async function (tenant, wfid) {
 	console.log("Destroy workflow:", wfid);
 	//TODO: reset TODO ETAG
 	try {
 		process.stdout.write("\tDestroy Todo\r");
-		await Engine.resetTodosETagByWfId(tenant, wfid);
+		await resetTodosETagByWfId(tenant, wfid);
 		await Todo.deleteMany({ tenant: tenant, wfid: wfid });
 	} catch (err) {
 		console.log("\tDestroy Todo: ", err.message);
@@ -4676,7 +4688,7 @@ Engine.__destroyWorkflow = async function (tenant, wfid) {
 	}
 	try {
 		process.stdout.write("\tDestroy log file\r");
-		fs.rmSync(Engine.getWfLogFilename(tenant, wfid), {
+		fs.rmSync(getWfLogFilename(tenant, wfid), {
 			recursive: true,
 			force: true,
 		});
@@ -4705,7 +4717,7 @@ Engine.__destroyWorkflow = async function (tenant, wfid) {
 	}
 };
 
-Engine.setPboByWfId = async function (email, tenant, wfid, pbos) {
+const setPboByWfId = async function (email, tenant, wfid, pbos) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter);
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
@@ -4718,27 +4730,27 @@ Engine.setPboByWfId = async function (email, tenant, wfid, pbos) {
 	return wf.attachments;
 };
 
-Engine.getPbo = async function (wf) {
+const getPbo = async function (wf) {
 	let attachments = wf.attachments;
 	attachments = attachments.filter((x) => x.forKey === "pbo");
 	return attachments;
 };
-Engine.getPboByWfId = async function (tenant, wfid) {
-	let attachments = await Engine.getAttachmentsByWfId(tenant, wfid);
+const getPboByWfId = async function (tenant, wfid) {
+	let attachments = await getAttachmentsByWfId(tenant, wfid);
 	attachments = attachments.filter((x) => x.forKey === "pbo");
 	return attachments;
 };
-Engine.getAttachmentsByWfId = async function (tenant, wfid) {
+const getAttachmentsByWfId = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter, { attachments: 1 }).lean();
 	return wf.attachments;
 };
 
-Engine.getWorkflowPbo = async function (email, tenant, wfid) {
-	return await Engine.getPboByWfId(tenant, wfid);
+const getWorkflowPbo = async function (email, tenant, wfid) {
+	return await getPboByWfId(tenant, wfid);
 };
 
-Engine.workflowGetList = async function (tenant, email, filter, sortdef) {
+const workflowGetList = async function (tenant, email, filter, sortdef) {
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, "", "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read workflow");
 	filter.tenant = tenant;
@@ -4751,7 +4763,7 @@ Engine.workflowGetList = async function (tenant, email, filter, sortdef) {
 	return wfs;
 };
 
-Engine.workflowGetLatest = async function (tenant, email, filter) {
+const workflowGetLatest = async function (tenant, email, filter) {
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, "", "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read workflow");
 	filter.tenant = tenant;
@@ -4782,12 +4794,12 @@ Engine.workflowGetLatest = async function (tenant, email, filter) {
 	}
 };
 
-Engine.getWorkInfo = async function (emailInBrowser, tenant, todoid) {
+const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	//查找TODO，可以找到任何人的TODO
 	let todo_filter = { tenant: tenant, todoid: todoid };
 	let todo = await Todo.findOne(todo_filter);
 	if (!todo) {
-		return {};
+		throw new EmpError("WORK_NOT_EXIST", "Todo not exist");
 	}
 	let peopleInBrowser = emailInBrowser;
 	let shouldDoer = todo.doer;
@@ -4816,23 +4828,15 @@ Engine.getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
 
-	return await Engine.__getWorkFullInfo(
-		tenant,
-		peopleInBrowser,
-		wf,
-		tpRoot,
-		wfRoot,
-		todo.wfid,
-		todo,
-	);
+	return await __getWorkFullInfo(tenant, peopleInBrowser, wf, tpRoot, wfRoot, todo.wfid, todo);
 };
 
-Engine.getWfHistory = async function (email, tenant, wfid, wf) {
+const getWfHistory = async function (email, tenant, wfid, wf) {
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
 
-	return await Engine.__getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
+	return await __getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
 };
 
 const splitComment = function (str) {
@@ -4846,12 +4850,12 @@ const splitComment = function (str) {
 	else return [];
 };
 //为MD中的@uid添加<span>
-Engine.splitMarked = async function (tenant, cmt) {
+const splitMarked = async function (tenant, cmt) {
 	let mdcontent = Marked.parse(cmt.content, {});
 	let splittedMd = splitComment(mdcontent);
 	let people = [];
 	let emails = [];
-	[people, emails] = await Engine.setPeopleFromContent(
+	[people, emails] = await setPeopleFromContent(
 		tenant,
 		cmt.who, //Email domain reference user
 		cmt.content,
@@ -4877,7 +4881,7 @@ Engine.splitMarked = async function (tenant, cmt) {
  * todo的变量值没有输入，只有一种情况，那就是在procNext中处理ACTION类型时，从模版中去到的数据，模版中可能有缺省值，也可能没有值。所以，取单一工作项的参数值，需要使用any
  * 然后，已经存在的值，也就是工作项完成后所记录的值，必须是yes
  */
-Engine.getWorkKVars = async function (tenant, email, todo) {
+const getWorkKVars = async function (tenant, email, todo) {
 	let ret: any = {};
 	//取得当前workid的kvars, efficient可以是no
 	ret.kvars = await Parser.userGetVars(tenant, email, todo.wfid, todo.workid, [], [], "any");
@@ -4897,7 +4901,7 @@ Engine.getWorkKVars = async function (tenant, email, todo) {
 	return ret;
 };
 
-Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = -1) {
+const getComments = async function (tenant, objtype, objid, depth = -1, skip = -1) {
 	//对objtype+objid的comment可能是多个
 	let cmtCount = await Comment.countDocuments({ tenant, objtype, objid });
 	if (cmtCount === 0) {
@@ -4925,7 +4929,7 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
 			cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
 			cmts[i].towhomCN = await Cache.getUserName(tenant, cmts[i].towhom);
 			cmts[i].splitted = splitComment(cmts[i].content);
-			let tmpret = await Engine.splitMarked(tenant, cmts[i]);
+			let tmpret = await splitMarked(tenant, cmts[i]);
 			cmts[i].mdcontent = tmpret.mdcontent;
 			cmts[i].mdcontent2 = tmpret.mdcontent2;
 			cmts[i].showChildren = true;
@@ -4940,7 +4944,7 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
 				upordown: "DOWN",
 			});
 			//每个 comment 自身还会有被评价
-			let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id, depth);
+			let children = await getComments(tenant, "COMMENT", cmts[i]._id, depth);
 			if (children.length > 0) {
 				cmts[i]["children"] = children;
 				cmts[i].showChildren = true;
@@ -4957,7 +4961,7 @@ Engine.getComments = async function (tenant, objtype, objid, depth = -1, skip = 
 	}
 };
 
-Engine.loadWorkflowComments = async function (tenant, wfid) {
+const loadWorkflowComments = async function (tenant, wfid) {
 	let cmts = [];
 	let workComments = await Comment.find(
 		{
@@ -5001,12 +5005,12 @@ Engine.loadWorkflowComments = async function (tenant, wfid) {
 	for (let i = 0; i < cmts.length; i++) {
 		cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
 		cmts[i].splitted = splitComment(cmts[i].content);
-		let tmpret = await Engine.splitMarked(tenant, cmts[i]);
+		let tmpret = await splitMarked(tenant, cmts[i]);
 		cmts[i].mdcontent = tmpret.mdcontent;
 		cmts[i].mdcontent2 = tmpret.mdcontent2;
 		let people = [];
 		let emails = [];
-		[people, emails] = await Engine.setPeopleFromContent(
+		[people, emails] = await setPeopleFromContent(
 			tenant,
 			cmts[i].who, //Email domain reference user
 			cmts[i].content,
@@ -5015,7 +5019,7 @@ Engine.loadWorkflowComments = async function (tenant, wfid) {
 		);
 		cmts[i].people = people;
 		//每个 comment 自身还会有被评价
-		let children = await Engine.getComments(tenant, "COMMENT", cmts[i]._id);
+		let children = await getComments(tenant, "COMMENT", cmts[i]._id);
 		cmts[i]["children"] = children;
 		cmts[i].showChildren = true;
 		cmts[i].transition = i === 0;
@@ -5037,7 +5041,7 @@ Engine.loadWorkflowComments = async function (tenant, wfid) {
  *
  * @return {...}
  */
-Engine.__getWorkFullInfo = async function (
+const __getWorkFullInfo = async function (
 	tenant,
 	peopleInBrowser,
 	theWf,
@@ -5122,7 +5126,7 @@ Engine.__getWorkFullInfo = async function (
 	ret.role = workNode.attr("role");
 	ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
 	ret.doer_string = workNode.attr("doer");
-	//ret.comments = await Engine.getComments(tenant, "TODO", todo.todoid, Const.COMMENT_LOAD_NUMBER);
+	//ret.comments = await getComments(tenant, "TODO", todo.todoid, Const.COMMENT_LOAD_NUMBER);
 	ret.comment =
 		Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
 			? []
@@ -5145,18 +5149,18 @@ Engine.__getWorkFullInfo = async function (
 		wftitle: wfRoot.attr("wftitle"),
 		pwfid: wfRoot.attr("pwfid"),
 		pworkid: wfRoot.attr("pworkid"),
-		attachments: await Engine.getAttachmentsByWfId(tenant, wfid),
-		status: Engine.getWorkflowStatus(wfRoot),
+		attachments: await getAttachmentsByWfId(tenant, wfid),
+		status: getWorkflowStatus(wfRoot),
 		beginat: wfRoot.attr("at"),
-		doneat: Engine.getWorkflowDoneAt(wfRoot),
+		doneat: getWorkflowDoneAt(wfRoot),
 		allowdiscuss: theWf.allowdiscuss,
 		history: [],
 	};
 	ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
 
 	if (todo.nodeid !== "ADHOC") {
-		let tmpInstruction = Parser.base64ToCode(Engine.getInstruct(tpRoot, todo.nodeid));
-		tmpInstruction = Engine.sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
+		let tmpInstruction = Parser.base64ToCode(getInstruct(tpRoot, todo.nodeid));
+		tmpInstruction = sanitizeHtmlAndHandleBar(wfRoot, ALL_VISIED_KVARS, tmpInstruction);
 		if (tmpInstruction.indexOf("[") >= 0) {
 			tmpInstruction = await Parser.replaceStringWithKVar(
 				tenant,
@@ -5172,11 +5176,11 @@ Engine.__getWorkFullInfo = async function (
 	}
 
 	//the 3rd param, true: removeOnlyDefault:  如果只有一个DEFAULT，返回空数组
-	ret.routingOptions = Engine.getRoutingOptions(tpRoot, todo.nodeid, true);
-	ret.from_actions = Engine._getFromActions(tpRoot, wfRoot, workNode);
-	//ret.following_actions = Engine._getFollowingActions(tpRoot, wfRoot, workNode);
-	ret.following_actions = await Engine._getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
-	ret.parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, workNode);
+	ret.routingOptions = getRoutingOptions(tpRoot, todo.nodeid, true);
+	ret.from_actions = _getFromActions(tpRoot, wfRoot, workNode);
+	//ret.following_actions = _getFollowingActions(tpRoot, wfRoot, workNode);
+	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
+	ret.parallel_actions = _getParallelActions(tpRoot, wfRoot, workNode);
 
 	if (todo.nodeid === "ADHOC") {
 		ret.revocable = false;
@@ -5214,7 +5218,7 @@ Engine.__getWorkFullInfo = async function (
 					workNode.hasClass("ACTION") &&
 					ret.status === "ST_DONE" &&
 					all_following_are_running &&
-					(await Engine.notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
+					(await notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
 			} else {
 				ret.withrvk = false;
 			}
@@ -5224,7 +5228,7 @@ Engine.__getWorkFullInfo = async function (
 		}
 	}
 
-	ret.wf.history = await Engine.__getWorkflowWorksHistory(TodoOwner, tenant, tpRoot, wfRoot, wfid);
+	ret.wf.history = await __getWorkflowWorksHistory(TodoOwner, tenant, tpRoot, wfRoot, wfid);
 	ret.version = Const.VERSION;
 
 	return ret;
@@ -5246,7 +5250,7 @@ Engine.__getWorkFullInfo = async function (
  * kvarsArr}
  * ]
  */
-Engine.__getWorkflowWorksHistory = async function (
+const __getWorkflowWorksHistory = async function (
 	email,
 	tenant,
 	tpRoot,
@@ -5345,7 +5349,7 @@ Engine.__getWorkflowWorksHistory = async function (
 	return ret;
 };
 
-Engine.__getTodosByWorkid = async function (tenant, workid, full) {
+const getTodosByWorkid = async function (tenant, workid, full) {
 	let todo_filter = { tenant: tenant, workid: workid };
 	let todos = [];
 	if (full) todos = await Todo.find(todo_filter).sort("-updatedAt").lean();
@@ -5359,7 +5363,7 @@ Engine.__getTodosByWorkid = async function (tenant, workid, full) {
 	return todos;
 };
 
-Engine._getFollowingActions = function (
+const _getFollowingActions = function (
 	tpRoot,
 	wfRoot,
 	workNode,
@@ -5379,7 +5383,7 @@ Engine._getFollowingActions = function (
 		let tmpWork = workNode.nextAll(workSelector);
 		if (tmpWork.length > 0) {
 			tmpWork = tmpWork.eq(0);
-			let st = Engine.getStatusFromClass(tmpWork);
+			let st = getStatusFromClass(tmpWork);
 			if (tmpWork.hasClass("ACTION")) {
 				let action = {
 					nodeid: tmpWork.attr("nodeid"),
@@ -5407,16 +5411,14 @@ Engine._getFollowingActions = function (
 				};
 				withWork && (action["work"] = tmpWork);
 				ret.push(action);
-				ret = ret.concat(
-					Engine._getFollowingActions(tpRoot, wfRoot, tmpWork, withWork, decentlevel + 1),
-				);
+				ret = ret.concat(_getFollowingActions(tpRoot, wfRoot, tmpWork, withWork, decentlevel + 1));
 			}
 		}
 	});
 	return ret;
 };
 
-Engine._getRoutedPassedWorks = async function (
+const _getRoutedPassedWorks = async function (
 	tenant,
 	tpRoot,
 	wfRoot,
@@ -5442,7 +5444,7 @@ Engine._getRoutedPassedWorks = async function (
 			continue;
 		}
 		routedWork = routedWork.eq(0);
-		let st = Engine.getStatusFromClass(routedWork);
+		let st = getStatusFromClass(routedWork);
 		if (routedWork.hasClass("ACTION")) {
 			let action = {
 				nodeid: routedWork.attr("nodeid"),
@@ -5471,21 +5473,14 @@ Engine._getRoutedPassedWorks = async function (
 			withWork && (action["work"] = routedWork);
 			ret.push(action);
 			ret = ret.concat(
-				await Engine._getRoutedPassedWorks(
-					tenant,
-					tpRoot,
-					wfRoot,
-					routedWork,
-					withWork,
-					decentlevel + 1,
-				),
+				await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, routedWork, withWork, decentlevel + 1),
 			);
 		}
 	}
 	return ret;
 };
 
-Engine._getParallelActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): ActionDef[] {
+const _getParallelActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): ActionDef[] {
 	if (Tools.isEmpty(workNode)) return [];
 	let ret = [];
 	let parallel_id = workNode.attr("prl_id");
@@ -5494,7 +5489,7 @@ Engine._getParallelActions = function (tpRoot, wfRoot, workNode, decentlevel = 0
 		let tmpWorks = wfRoot.find(workSelector);
 		for (let i = 0; i < tmpWorks.length; i++) {
 			let tmpWork = tmpWorks.eq(i);
-			let st = Engine.getStatusFromClass(tmpWork);
+			let st = getStatusFromClass(tmpWork);
 			if (tmpWork.hasClass("ST_END") === false) {
 				ret.push({
 					nodeid: tmpWork.attr("nodeid"),
@@ -5510,11 +5505,11 @@ Engine._getParallelActions = function (tpRoot, wfRoot, workNode, decentlevel = 0
 };
 
 //workid 没有运行到某些节点dests
-Engine.notRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
-	return !(await Engine.isRoutePassTo(tenant, wfid, workid, checkType, dests));
+const notRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
+	return !(await isRoutePassTo(tenant, wfid, workid, checkType, dests));
 };
 //workid 运行到某些节点dests
-Engine.isRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
+const isRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
 	if (["NODETYPE", "WORKID", "NODEID"].includes(checkType) === false)
 		throw new EmpError("NOT_SUPPORT", "isRoutePassTo " + checkType);
 	let tmp = await Route.findOne({
@@ -5532,7 +5527,7 @@ Engine.isRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
 	}
 };
 
-Engine._isOneBeforeAnd = function (tpRoot, wfRoot, workNode, decentlevel = 0) {
+const _isOneBeforeAnd = function (tpRoot, wfRoot, workNode, decentlevel = 0) {
 	if (Tools.isEmpty(workNode)) return [];
 	let ret = [];
 	let parallel_id = workNode.attr("prl_id");
@@ -5541,7 +5536,7 @@ Engine._isOneBeforeAnd = function (tpRoot, wfRoot, workNode, decentlevel = 0) {
 		let tmpWorks = wfRoot.find(workSelector);
 		for (let i = 0; i < tmpWorks.length; i++) {
 			let tmpWork = tmpWorks.eq(i);
-			let st = Engine.getStatusFromClass(tmpWork);
+			let st = getStatusFromClass(tmpWork);
 			if (tmpWork.hasClass("ST_END") === false) {
 				ret.push({
 					nodeid: tmpWork.attr("nodeid"),
@@ -5556,7 +5551,7 @@ Engine._isOneBeforeAnd = function (tpRoot, wfRoot, workNode, decentlevel = 0) {
 	return ret;
 };
 
-Engine._getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): ActionDef[] {
+const _getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): ActionDef[] {
 	if (Tools.isEmpty(workNode)) return [];
 	let tplNodeId = workNode.attr("nodeid");
 	if (Tools.isEmpty(tplNodeId)) return [];
@@ -5587,7 +5582,7 @@ Engine._getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): A
 						route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
 						byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
 					});
-					let tmp = Engine._getFromActions(tpRoot, wfRoot, tmpWork, decentlevel + 1);
+					let tmp = _getFromActions(tpRoot, wfRoot, tmpWork, decentlevel + 1);
 					ret = ret.concat(tmp);
 				}
 			}
@@ -5596,7 +5591,7 @@ Engine._getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): A
 	return ret;
 };
 
-Engine._getFromActionsWithRoutes = async function (
+const _getFromActionsWithRoutes = async function (
 	tenant,
 	tpRoot,
 	wfRoot,
@@ -5628,7 +5623,7 @@ Engine._getFromActionsWithRoutes = async function (
 			});
 			if (fromNodeType !== "ACTION" && fromNodeType !== "END") {
 				ret = ret.concat(
-					await Engine._getFromActionsWithRoutes(tenant, tpRoot, wfRoot, fromWork, decentlevel + 1),
+					await _getFromActionsWithRoutes(tenant, tpRoot, wfRoot, fromWork, decentlevel + 1),
 				);
 			}
 		}
@@ -5636,7 +5631,7 @@ Engine._getFromActionsWithRoutes = async function (
 	return ret;
 };
 
-Engine._getFromNodeIds = function (tpRoot, thisNodeId) {
+const _getFromNodeIds = function (tpRoot, thisNodeId) {
 	let linkSelector = `.link[to="${thisNodeId}"]`;
 	let ret = [];
 	tpRoot.find(linkSelector).each(function (i, el) {
@@ -5647,7 +5642,7 @@ Engine._getFromNodeIds = function (tpRoot, thisNodeId) {
 	return [...new Set(ret)];
 };
 
-Engine.getStatusFromClass = function (node) {
+const getStatusFromClass = function (node) {
 	if (node.hasClass("ST_RUN")) return "ST_RUN";
 	if (node.hasClass("ST_PAUSE")) return "ST_PAUSE";
 	if (node.hasClass("ST_DONE")) return "ST_DONE";
@@ -5667,15 +5662,15 @@ Engine.getStatusFromClass = function (node) {
 	);
 };
 /**
- * Engine.getWorkflowOrNodeStatus = async() Get status of workflow or a worknode
+ * getWorkflowOrNodeStatus = async() Get status of workflow or a worknode
  *
- * @param {...} Engine.getWorkflowOrNodeStatus = asynctenant -
+ * @param {...} getWorkflowOrNodeStatus = asynctenant -
  * @param {...} wfid - the id of workflow
  * @param {...} workid - the id of work
  *
  * @return {...} status of workid is present, status of workflow if workid is absent
  */
-Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
+const getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid = null) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter);
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
@@ -5684,10 +5679,10 @@ Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
 	let wfRoot = wfIO(".workflow");
 	if (workid) {
 		let workNode = wfRoot.find("#" + workid);
-		return Engine.getStatusFromClass(workNode);
+		return getStatusFromClass(workNode);
 	} else {
 		//workid为空，
-		return Engine.getStatusFromClass(wfRoot);
+		return getStatusFromClass(wfRoot);
 	}
 };
 
@@ -5698,7 +5693,7 @@ Engine.getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid) {
  *
  * @return {...}
  */
-Engine.pauseWorkflow = async function (tenant, email, wfid) {
+const pauseWorkflow = async function (tenant, email, wfid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter);
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
@@ -5721,18 +5716,18 @@ Engine.pauseWorkflow = async function (tenant, email, wfid) {
 	let ret = "ST_PAUSE";
 	if (Object.keys(wfUpdate).length > 0) {
 		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
-		await Engine.pauseWorksForPausedWorkflow(tenant, wfid);
-		await Engine.pauseDelayTimers(tenant, wfid);
+		await pauseWorksForPausedWorkflow(tenant, wfid);
+		await pauseDelayTimers(tenant, wfid);
 		ret = "ST_PAUSE";
 	} else {
-		ret = Engine.getStatusFromClass(wfRoot);
+		ret = getStatusFromClass(wfRoot);
 	}
-	await Engine.resetTodosETagByWfId(tenant, wfid);
+	await resetTodosETagByWfId(tenant, wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	return ret;
 };
 
-Engine.resetTodosETagByWfId = async function (tenant: string, wfid: string) {
+const resetTodosETagByWfId = async function (tenant: string, wfid: string) {
 	let todos = await Todo.find({ tenant: tenant, wfid: wfid }, { doer: 1 });
 	for (let i = 0; i < todos.length; i++) {
 		await Cache.resetETag("ETAG:TODOS:${todos[i].doer}");
@@ -5746,7 +5741,7 @@ Engine.resetTodosETagByWfId = async function (tenant: string, wfid: string) {
  *
  * @return {...}
  */
-Engine.resumeWorkflow = async function (tenant, email, wfid) {
+const resumeWorkflow = async function (tenant, email, wfid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter);
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
@@ -5769,26 +5764,26 @@ Engine.resumeWorkflow = async function (tenant, email, wfid) {
 	let ret = "ST_RUN";
 	if (Object.keys(wfUpdate).length > 0) {
 		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
-		await Engine.resumeWorksForWorkflow(tenant, wfid);
-		await Engine.resumeDelayTimers(tenant, wfid);
+		await resumeWorksForWorkflow(tenant, wfid);
+		await resumeDelayTimers(tenant, wfid);
 		ret = "ST_RUN";
 	} else {
-		ret = Engine.getStatusFromClass(wfRoot);
+		ret = getStatusFromClass(wfRoot);
 	}
-	await Engine.resetTodosETagByWfId(tenant, wfid);
+	await resetTodosETagByWfId(tenant, wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	return ret;
 };
 
 /**
- * Engine.stopWorks = async() 停止一个流程中所有进行中的Todo
+ * stopWorks = async() 停止一个流程中所有进行中的Todo
  *
- * @param {...} Engine.stopWorks = asynctenant -
+ * @param {...} stopWorks = asynctenant -
  * @param {...} wfid -
  *
  * @return {...}
  */
-Engine.stopWorks = async function (tenant, wfid) {
+const stopWorks = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, status: "ST_RUN" };
 	await Todo.updateMany(filter, {
 		$set: { status: "ST_STOP", wfstatus: "ST_STOP" },
@@ -5797,14 +5792,14 @@ Engine.stopWorks = async function (tenant, wfid) {
 };
 
 /**
- * Engine.stopDelayTimers = async() 停止延时器
+ * stopDelayTimers = async() 停止延时器
  *
- * @param {...} Engine.stopDelayTimers = asynctenant -
+ * @param {...} stopDelayTimers = asynctenant -
  * @param {...} wfid -
  *
  * @return {...}
  */
-Engine.stopDelayTimers = async function (tenant, wfid) {
+const stopDelayTimers = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	await DelayTimer.deleteMany(filter);
 	console.log("delaytimer stopped");
@@ -5812,28 +5807,28 @@ Engine.stopDelayTimers = async function (tenant, wfid) {
 /**
  * 暂停wfid的Todo
  */
-Engine.pauseWorksForPausedWorkflow = async function (tenant, wfid) {
+const pauseWorksForPausedWorkflow = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, wfstatus: "ST_RUN", status: "ST_RUN" };
 	await Todo.updateMany(filter, { $set: { wfstatus: "ST_PAUSE", status: "ST_PAUSE" } });
 };
 /**
  * 暂停wfid的延时器
  */
-Engine.pauseDelayTimers = async function (tenant, wfid) {
+const pauseDelayTimers = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, wfstatus: "ST_RUN" };
 	await DelayTimer.updateMany(filter, { $set: { wfstatus: "ST_PAUSE" } });
 };
 /**
  * 重启Todo
  */
-Engine.resumeWorksForWorkflow = async function (tenant, wfid) {
+const resumeWorksForWorkflow = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, wfstatus: "ST_PAUSE", status: "ST_PAUSE" };
 	await Todo.updateMany(filter, { $set: { wfstatus: "ST_RUN", status: "ST_RUN" } });
 };
 /**
  * 重启延时器
  */
-Engine.resumeDelayTimers = async function (tenant, wfid) {
+const resumeDelayTimers = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, wfstatus: "ST_PAUSE" };
 	await DelayTimer.updateMany(filter, { $set: { wfstatus: "ST_RUN" } });
 };
@@ -5843,7 +5838,7 @@ Engine.resumeDelayTimers = async function (tenant, wfid) {
  * 如果忽略workid,则取工作流的变量
  * 如果有workID, 则取工作项的变量
  */
-Engine.getKVars = async function (tenant, email, wfid, workid) {
+const getKVars = async function (tenant, email, wfid, workid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	let wf = await Workflow.findOne(filter, { doc: 0 });
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
@@ -5866,7 +5861,7 @@ Engine.getKVars = async function (tenant, email, wfid, workid) {
 /**
  * 返回一个工作流所有的延时器
  */
-Engine.getDelayTimers = async function (tenant, wfid) {
+const getDelayTimers = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid };
 	return await DelayTimer.find(filter);
 };
@@ -5874,21 +5869,21 @@ Engine.getDelayTimers = async function (tenant, wfid) {
 /**
  * 返回一个工作流所有运行中的延时器
  */
-Engine.getActiveDelayTimers = async function (tenant, wfid) {
+const getActiveDelayTimers = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, wfstatus: "ST_RUN" };
 	return await DelayTimer.find(filter);
 };
 
 /**
- * Engine.getTrack = async() Get the track of work execution reversely.
+ * getTrack = async() Get the track of work execution reversely.
  *
- * @param {...} Engine.getTrack = asynctenant -
+ * @param {...} getTrack = asynctenant -
  * @param {...} wfid -
  * @param {...} workid -
  *
  * @return {...}  Array :[ {from_workid, from_nodeid} ]
  */
-Engine.getTrack = async function (email, tenant, wfid, workid) {
+const getTrack = async function (email, tenant, wfid, workid) {
 	try {
 		let wf_filter = { wfid: wfid };
 		let wf = await Workflow.findOne(wf_filter);
@@ -5914,7 +5909,7 @@ Engine.getTrack = async function (email, tenant, wfid, workid) {
 	}
 };
 
-Engine.delegate = async function (tenant, delegator, delegatee, begindate, enddate) {
+const delegate = async function (tenant, delegator, delegatee, begindate, enddate) {
 	if (delegator === delegatee) {
 		throw new EmpError("DELEGATE_FAILED", `${delegator} and ${delegatee} are the same one`);
 	}
@@ -5940,13 +5935,13 @@ Engine.delegate = async function (tenant, delegator, delegatee, begindate, endda
 	obj = await obj.save();
 };
 
-Engine.delegationFromMe = async function (tenant, delegator_email) {
-	return Engine.delegationFromMeOnDate(tenant, delegator_email);
+const delegationFromMe = async function (tenant, delegator_email) {
+	return delegationFromMeOnDate(tenant, delegator_email);
 };
-Engine.delegationFromMeToday = async function (tenant, delegator_email) {
-	return Engine.delegationFromMeOnDate(tenant, delegator_email, new Date());
+const delegationFromMeToday = async function (tenant, delegator_email) {
+	return delegationFromMeOnDate(tenant, delegator_email, new Date());
 };
-Engine.delegationFromMeOnDate = async function (tenant, delegator_email, onDate) {
+const delegationFromMeOnDate = async function (tenant, delegator_email, onDate = null) {
 	let filter = { tenant: tenant, delegator: delegator_email };
 	if (onDate) {
 		filter["begindate"] = { $lte: onDate };
@@ -5964,14 +5959,14 @@ Engine.delegationFromMeOnDate = async function (tenant, delegator_email, onDate)
 	return ret;
 };
 
-Engine.delegationToMe = async function (tenant, delegatee_email) {
+const delegationToMe = async function (tenant, delegatee_email) {
 	return this.delegationToMeOnDate(tenant, delegatee_email);
 };
-Engine.delegationToMeToday = async function (tenant, delegatee_email) {
+const delegationToMeToday = async function (tenant, delegatee_email) {
 	return this.delegationToMeOnDate(tenant, delegatee_email, new Date());
 };
 
-Engine.delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
+const delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
 	let filter = { tenant: tenant, delegatee: delegatee_email };
 	if (onDate) {
 		filter["begindate"] = { $lte: onDate };
@@ -5990,13 +5985,13 @@ Engine.delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
 	return ret;
 };
 
-Engine.undelegate = async function (tenant, delegator_email, ids) {
+const undelegate = async function (tenant, delegator_email, ids) {
 	let idArray = Parser.splitStringToArray(ids);
 	let filter = { tenant: tenant, delegator: delegator_email, _id: { $in: idArray } };
 	await Delegation.deleteMany(filter);
 };
 
-Engine.checkVisi = async function (tenant, tplid, email, withTpl = null) {
+const checkVisi = async function (tenant, tplid, email, withTpl = null) {
 	let ret = false;
 	let tpl = null;
 	if (withTpl === null) {
@@ -6017,7 +6012,7 @@ Engine.checkVisi = async function (tenant, tplid, email, withTpl = null) {
 			visiPeople = ["all"];
 		} else {
 			//Visi中如果要用到team，则应用T:team_id来引入
-			let tmp = await Engine.explainPds({
+			let tmp = await explainPds({
 				tenant: tenant,
 				pds: tpl.visi,
 				//调用explainPds时，不带wfid, 因为对模版的访问权限跟wfprocess无关，
@@ -6036,7 +6031,7 @@ Engine.checkVisi = async function (tenant, tplid, email, withTpl = null) {
 /**
  *  删除tenant里面所有用户的 uvt cache
  */
-Engine.clearUserVisiedTemplate = async function (tenant) {
+const clearUserVisiedTemplate = async function (tenant) {
 	let uvtKeyPrefix = "uvt_" + tenant + "_";
 	let ubtKeyPrefix = "ubt_" + tenant + "_";
 	let tmp = await User.find({ tenant: tenant }, { _id: 0, email: 1 }).lean();
@@ -6049,7 +6044,7 @@ Engine.clearUserVisiedTemplate = async function (tenant) {
 	}
 };
 
-Engine.getUserVisiedTemplate = async function (tenant, myEmail) {
+const getUserVisiedTemplate = async function (tenant, myEmail) {
 	let uvtKeyPrefix = "uvt_" + tenant + "_";
 	let uvtKey = uvtKeyPrefix + myEmail;
 	let cached = await redisClient.get(uvtKey);
@@ -6058,7 +6053,7 @@ Engine.getUserVisiedTemplate = async function (tenant, myEmail) {
 		console.log("___>Rebuild cache");
 		let allTemplates = await Template.find({ tenant }, { doc: 0 });
 		allTemplates = await asyncFilter(allTemplates, async (x) => {
-			return await Engine.checkVisi(tenant, x.tplid, myEmail, x);
+			return await checkVisi(tenant, x.tplid, myEmail, x);
 		});
 		visiedTemplatesIds = allTemplates.map((x) => x.tplid);
 		await redisClient.set(uvtKey, JSON.stringify(visiedTemplatesIds));
@@ -6102,7 +6097,7 @@ Engine.getUserVisiedTemplate = async function (tenant, myEmail) {
 	return visiedTemplatesIds;
 };
 
-Engine.getUserBannedTemplate = async function (tenant, myEmail) {
+const getUserBannedTemplate = async function (tenant, myEmail) {
 	let ubtKeyPrefix = "ubt_" + tenant + "_";
 	let ubtKey = ubtKeyPrefix + myEmail;
 	let cached = await redisClient.get(ubtKey);
@@ -6111,7 +6106,7 @@ Engine.getUserBannedTemplate = async function (tenant, myEmail) {
 		console.log("___>Rebuild cache");
 		let allTemplates = await Template.find({ tenant }, { doc: 0 });
 		allTemplates = await asyncFilter(allTemplates, async (x) => {
-			return !(await Engine.checkVisi(tenant, x.tplid, myEmail, x));
+			return !(await checkVisi(tenant, x.tplid, myEmail, x));
 		});
 		bannedTemplatesIds = allTemplates.map((x) => x.tplid);
 		await redisClient.set(ubtKey, JSON.stringify(bannedTemplatesIds));
@@ -6155,9 +6150,10 @@ Engine.getUserBannedTemplate = async function (tenant, myEmail) {
 	return bannedTemplatesIds;
 };
 
-Engine.init = Engine.once(async function () {
+const EmpContext = "Emp Server";
+const init = once(async function () {
 	if (!isMainThread) {
-		console.error("Engine.init should in main thread");
+		console.error("init should in main thread");
 	}
 	console.log(
 		`Check environment:\n`,
@@ -6194,17 +6190,17 @@ Engine.init = Engine.once(async function () {
 		await User.updateOne({ _id: users[i]._id }, { $set: { "avatarinfo.path": newPath } });
 	}
 
-	await Engine.serverInit();
+	await serverInit();
 	await Client.clientInit();
-	Engine.checkingTimer = false;
+	checkingTimer = false;
 	await Crontab.updateMany({}, { $set: { scheduled: false } });
-	await Engine.rescheduleCrons();
+	await rescheduleCrons();
 	setInterval(() => {
-		Engine.checkDelayTimer();
+		checkDelayTimer();
 	}, 1000);
-});
+}, EmpContext);
 
-Engine.formulaEval = async function (tenant, expr): Promise<string | number | ErrorReturn> {
+const formulaEval = async function (tenant, expr): Promise<string | number | ErrorReturn> {
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
@@ -6290,7 +6286,7 @@ runExpr().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 	return ret;
 };
 
-Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) {
+const calculateVote = async function (tenant, voteControl, allTodos, thisTodo) {
 	const EMPTY_RET = "";
 	const ERROR_RET = "ERROR:";
 	let result = EMPTY_RET;
@@ -6463,7 +6459,7 @@ Engine.calculateVote = async function (tenant, voteControl, allTodos, thisTodo) 
 	}
 };
 
-Engine.getNodeStatus = async function (wf) {
+const getNodeStatus = async function (wf) {
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
@@ -6496,7 +6492,7 @@ Engine.getNodeStatus = async function (wf) {
  *
  * @return {...} true if the status of all previous nodes are ST_DONE, false if the status of any previous node is not ST_DONE
  */
-Engine.checkAnd = async function (
+const checkAnd = async function (
 	tenant,
 	wfid,
 	round,
@@ -6533,7 +6529,7 @@ Engine.checkAnd = async function (
 			round: counterPartRound,
 		});
 	}
-	let fromNodeIds = await Engine._getFromNodeIds(tpRoot, theANDnodeid);
+	let fromNodeIds = await _getFromNodeIds(tpRoot, theANDnodeid);
 	let routeFilter = {
 		tenant: tenant,
 		wfid: wfid,
@@ -6599,7 +6595,7 @@ Engine.checkAnd = async function (
  *
  * @return {...} true if the status of any previous node is ST_DONE, false if none of the previous nodes has ST_DONE status.
  */
-Engine.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, route, nexts) {
+const checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, route, nexts) {
 	let ret = false;
 	/*
   let route_param = route;
@@ -6615,7 +6611,7 @@ Engine.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, ro
   */
 	let from_work = wfRoot.find("#" + from_workid);
 	let prl_id = from_work.attr("prl_id");
-	let parallel_actions = Engine._getParallelActions(tpRoot, wfRoot, from_work);
+	let parallel_actions = _getParallelActions(tpRoot, wfRoot, from_work);
 	if (parallel_actions.length > 0) {
 		for (let i = 0; i < parallel_actions.length; i++) {
 			if (parallel_actions[i].status === "ST_DONE") {
@@ -6635,9 +6631,9 @@ Engine.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, ro
 };
 
 /**
- * Engine.ignore4Or() 一个节点完成后,忽略那些未完成的兄弟节点
+ * ignore4Or() 一个节点完成后,忽略那些未完成的兄弟节点
  *
- * @param {...} Engine.ignore4tenant -
+ * @param {...} ignore4tenant -
  * @param {...} wfid -
  * @param {...} tpRoot -
  * @param {...} wfRoot -
@@ -6647,7 +6643,7 @@ Engine.checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, ro
  *
  * @return {...}
  */
-Engine.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) {
+const ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) {
 	let ret = false;
 	let route_param = route;
 	//找到指向OR的所有连接
@@ -6676,14 +6672,14 @@ Engine.ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts)
 };
 
 /**
- * Engine.__getFutureSecond()  Get the milisecond of exact expire time of delay timer
+ * __getFutureSecond()  Get the milisecond of exact expire time of delay timer
  *
- * @param {...} Engine.__wfRoot - the root node of workflow
+ * @param {...} __wfRoot - the root node of workflow
  * @param {...} delayString - delay timer configuration string
  *
  * @return {...} the exact millisecond of the expiration of a delay timer
  */
-Engine.__getFutureSecond = function (wfRoot, delayString) {
+const __getFutureSecond = function (wfRoot, delayString) {
 	let ret = 0;
 	let g = delayString.match(/^(start)?(\+?)(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+:)?(\d+)?/);
 	let t = [];
@@ -6753,17 +6749,17 @@ Engine.__getFutureSecond = function (wfRoot, delayString) {
 };
 
 /**
- * Engine.checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
+ * checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
  *
  * @param {...}
  *
  * @return {...}
  */
-Engine.checkDelayTimer = async function () {
+const checkDelayTimer = async function () {
 	//禁止同时多个线程进行检查
-	if (Engine.checkingTimer) return;
+	if (checkingTimer) return;
 	try {
-		Engine.checkingTimer = true;
+		checkingTimer = true;
 		let now = new Date();
 		//查找状态为ST_RUN,且 时间早于当前时间的DelayTimer;
 		//时间早于当前时间,表明该定时器已超时;
@@ -6774,7 +6770,7 @@ Engine.checkDelayTimer = async function () {
 		let tobeDeletedDelayTimerWfIds = [];
 		for (let i = 0; i < delayTimers.length; i++) {
 			try {
-				await Engine.runScheduled(
+				await runScheduled(
 					{
 						tenant: delayTimers[i].tenant,
 						tplid: delayTimers[i].tplid,
@@ -6800,12 +6796,12 @@ Engine.checkDelayTimer = async function () {
 	} catch (err) {
 		console.error(err);
 	} finally {
-		Engine.checkingTimer = false;
+		checkingTimer = false;
 	}
 };
 
 /**
- * Engine.endAllWorks = async() 结束全部工作项: 将工作流中所有运行中的节点设为ST_END
+ * endAllWorks = async() 结束全部工作项: 将工作流中所有运行中的节点设为ST_END
  *
  * @param {...}
  * @param {...} wfid -
@@ -6814,7 +6810,7 @@ Engine.checkDelayTimer = async function () {
  *
  * @return {...}
  */
-Engine.endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
+const endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
 	let workSelector = ".work.ST_RUN";
 	wfRoot.find(workSelector).each(async function (i, el) {
 		let work = Cheerio(el);
@@ -6837,7 +6833,7 @@ Engine.endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
 	);
 };
 
-Engine.getEmailRecipientsFromDoers = function (doers) {
+const getEmailRecipientsFromDoers = function (doers) {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
 		if (i === 0) {
@@ -6849,7 +6845,7 @@ Engine.getEmailRecipientsFromDoers = function (doers) {
 	return ret;
 };
 
-Engine.getWorkflowStatus = function (wfRoot) {
+const getWorkflowStatus = function (wfRoot) {
 	let ret = "ST_UNKNOWN";
 	let tmparr = wfRoot.attr("class").split(" ");
 	for (let i = 0; i < tmparr.length; i++) {
@@ -6857,12 +6853,12 @@ Engine.getWorkflowStatus = function (wfRoot) {
 	}
 	return ret;
 };
-Engine.getWorkflowDoneAt = function (wfRoot) {
+const getWorkflowDoneAt = function (wfRoot) {
 	return wfRoot.attr("doneat");
 };
 
 // 获取从某个节点开始往后的Routing Options
-Engine.getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
+const getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
 	let linkSelector = '.link[from="' + nodeid + '"]';
 	let routings = [];
 	tpRoot.find(linkSelector).each(function (i, el) {
@@ -6883,7 +6879,7 @@ Engine.getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) 
 	}
 	return routings;
 };
-Engine.getInstruct = function (tpRoot, nodeid) {
+const getInstruct = function (tpRoot, nodeid) {
 	let ret = "";
 	let tpNode = tpRoot.find("#" + nodeid);
 	if (tpNode) {
@@ -6892,7 +6888,7 @@ Engine.getInstruct = function (tpRoot, nodeid) {
 	return ret;
 };
 
-Engine.formatRoute = function (route) {
+const formatRoute = function (route) {
 	let ret = route;
 	if (Array.isArray(route)) return route;
 	else if (route === undefined) ret = ["DEFAULT"];
@@ -6904,20 +6900,20 @@ Engine.formatRoute = function (route) {
 
 	return ret;
 };
-Engine.procNext = async function (
-	tenant,
-	teamid,
-	tplid,
-	wfid,
-	tpRoot,
-	wfRoot,
-	this_nodeid,
-	this_workid,
-	decision,
-	nexts,
-	round,
-	rehearsal,
-	starter,
+const procNext = async function (
+	tenant: string,
+	teamid: string,
+	tplid: string,
+	wfid: string,
+	tpRoot: any,
+	wfRoot: any,
+	this_nodeid: string,
+	this_workid: string,
+	decision: string,
+	nexts: any[],
+	round: number,
+	rehearsal: boolean,
+	starter: string,
 ) {
 	let linkSelector = '.link[from="' + this_nodeid + '"]';
 	let routingOptionsInTemplate = [];
@@ -6926,7 +6922,7 @@ Engine.procNext = async function (
 	//原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
 	//但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
 	//let defiedNodes = [];
-	//await Engine.defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
+	//await defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
 	////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////
 	let linksInTemplate = tpRoot.find(linkSelector);
@@ -6944,7 +6940,7 @@ Engine.procNext = async function (
 	}
 	//routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
 	//也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
-	let routes = Engine.formatRoute(decision);
+	let routes = formatRoute(decision);
 	if (Array.isArray(routes) === false) {
 		routes = [decision];
 	}
@@ -7040,16 +7036,16 @@ Engine.procNext = async function (
 	let backPath = [];
 	let roundDoneWorks = [];
 	let allDoneWorks = [];
-	await Engine.getBackPath(tenant, round, wfid, this_workid, withouts, backPath);
-	await Engine.getRoundWork(tenant, round, wfid, roundDoneWorks);
-	await Engine.getRoundWork(tenant, -1, wfid, allDoneWorks);
+	await getBackPath(tenant, round, wfid, this_workid, withouts, backPath);
+	await getRoundWork(tenant, round, wfid, roundDoneWorks);
+	await getRoundWork(tenant, -1, wfid, allDoneWorks);
 	for (let i = 0; i < foundNexts.length; i++) {
-		await Engine.clearFollowingDoneRoute(tenant, wfid, round, tpRoot, foundNexts[i].toid, 0);
+		await clearFollowingDoneRoute(tenant, wfid, round, tpRoot, foundNexts[i].toid, 0);
 	}
 	for (let i = 0; i < ignoredNexts.length; i++) {
 		console.log(`Ignored ${JSON.stringify(ignoredNexts)}`);
 		//TODO: round?
-		await Engine.ignoreRoute(
+		await ignoreRoute(
 			tenant,
 			wfid,
 			round,
@@ -7077,7 +7073,7 @@ Engine.procNext = async function (
  *
  * @return {...}
  */
-Engine.getDoer = async function (
+const getDoer = async function (
 	tenant,
 	teamid,
 	pds,
@@ -7135,6 +7131,65 @@ Engine.getDoer = async function (
 	return ret;
 };
 
-if (isMainThread) Engine.init();
+if (isMainThread) init();
 
-export { Engine, Client };
+export default {
+	startWorkflow,
+	getNodeStatus,
+	formulaEval,
+	getUserBannedTemplate,
+	getUserVisiedTemplate,
+	clearUserVisiedTemplate,
+	checkVisi,
+	undelegate,
+	delegationToMeOnDate,
+	delegationToMeToday,
+	delegationToMe,
+	delegationFromMeOnDate,
+	delegationFromMeToday,
+	delegationFromMe,
+	delegate,
+	getTrack,
+	getActiveDelayTimers,
+	getDelayTimers,
+	getKVars,
+	resumeWorkflow,
+	resetTodosETagByWfId,
+	pauseWorkflow,
+	getWorkflowOrNodeStatus,
+	getTodosByWorkid,
+	loadWorkflowComments,
+	getComments,
+	splitMarked,
+	getWfHistory,
+	getWorkInfo,
+	workflowGetLatest,
+	workflowGetList,
+	destroyWorkflow,
+	restartWorkflow,
+	stopWorkflow,
+	clearOlderRehearsal,
+	startWorkflow_with,
+	runCode,
+	getWfLogFilename,
+	transferWork,
+	rerunNode,
+	yarkNode_internal,
+	replaceUser_child,
+	replaceUser,
+	sendback,
+	explainPds,
+	addAdhoc,
+	revokeWork,
+	doCallback,
+	postCommentForComment,
+	postCommentForTodo,
+	doWork,
+	hasPermForWork,
+	runScheduled,
+	stopCronTask,
+	scheduleCron,
+	startBatchWorkflow,
+	rescheduleCrons,
+	sendNexts,
+};

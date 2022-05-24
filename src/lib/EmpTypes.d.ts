@@ -60,6 +60,7 @@ export type ActionDef = {
 	route: string;
 	byroute: string;
 	status?: string;
+	work?: any;
 };
 export type workflowInfo = {
 	endpoint: string;

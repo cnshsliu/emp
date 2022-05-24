@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "worker_threads";
-import { Engine } from "../Engine";
+import Engine from "../Engine";
 import { Mongoose, dbConnect } from "../../database/mongodb";
 
 dbConnect();

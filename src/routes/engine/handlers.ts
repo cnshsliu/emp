@@ -36,7 +36,7 @@ import SavedSearch from "../../database/models/SavedSearch";
 import OrgChartHelper from "../../lib/OrgChartHelper";
 import replyHelper from "../../lib/helpers";
 import Tools from "../../tools/tools.js";
-import { Engine } from "../../lib/Engine";
+import Engine from "../../lib/Engine";
 import SystemPermController from "../../lib/SystemPermController";
 import EmpError from "../../lib/EmpError";
 import lodash from "lodash";
@@ -56,7 +56,7 @@ async function TemplateCreate(req, h) {
 	try {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myUid = myEmail.substring(0, myEmail.indexOf("@"));
 		let myGroup = await Cache.getMyGroup(myEmail);
@@ -104,7 +104,7 @@ async function TemplateCreate(req, h) {
 
 async function TemplateDesc(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 		let desc = req.payload.desc;
@@ -130,7 +130,7 @@ async function TemplateDesc(req, h) {
 
 async function TemplateBasic(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let tplid = req.payload.tplid;
@@ -150,7 +150,7 @@ async function TemplateBasic(req, h) {
 
 async function WorkflowUpgrade(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfs = await Workflow.find({ tenant: tenant });
 		for (let i = 0; i < wfs.length; i++) {
@@ -215,7 +215,7 @@ async function WorkflowUpgrade(req, h) {
 
 async function WorkflowGetFirstTodoid(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
 		let wfid = req.payload.wfid;
@@ -239,7 +239,7 @@ async function WorkflowGetFirstTodoid(req, h) {
 
 async function WorkflowReadlog(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
 		let wfid = req.payload.wfid;
@@ -261,7 +261,7 @@ async function SeeItWork(req, h) {
 	try {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let author = req.auth.credentials.email;
 		let doc = `
 <div class="template" id="Metatocome Learning Guide"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left: 360px; top: 200px; z-index: 0;" role="DEFAULT"><p>LG-Step1: Get familiar with metatocome</p><div class="kvars">e30=</div><div class="instruct">PGgxPkdldCBmYW1pbGlhciB3aXRoIHd3dy5tZXRhdG9jb21lLmNvbTwvaDE+Cjxici8+Ck1ldGF0b2NvbWUgcHJvdmlkZSAKPGgyPmhhaGFoYTwvaDI+CjxhIGhyZWY9Ii9kb2NzLyNpbnRyb2R1Y3Rpb24iPk1ldGF0b2NvbWUgSW50cm9kdWN0aW9uPC9hPgo8YSBocmVmPSIvZG9jcy8jdGhlc2l0ZSI+d3d3Lm1ldGF0b2NvbWUuY29tIGludHJvZHVjdGlvbjwvYT4=</div></div><div class="node END" id="end" style="left: 1240px; top: 920px; z-index: 0;"><p>END</p> </div><div id="71k3oibjJ4FQUFkva62tJo" class="node ACTION" style="top: 340px; left: 360px; z-index: 4;" role="DEFAULT"><p>LG-Step2: The site</p><div class="kvars">e30=</div><div class="instruct">PGEgaHJlZj0iL2RvY3MjdGhlc2l0ZSIgdGFyZ2V0PSJfYmxhbmsiPlRoZSBzaXRlPC9hPg==</div></div><div id="u3zuqQEruTzGGaq4PvpTsH" class="node ACTION" style="top: 440px; left: 360px; z-index: 5;" role="DEFAULT"><p>LG-step3: Key concept</p><div class="kvars">e30=</div><div class="instruct">PGEgaHJlZj0iL2RvY3Mja2V5Y29uZWNwdHMiPktleSBDb25jZXB0PC9hPg==</div></div><div id="rKvK4i2b2aKCKnp4nDBmxa" class="node ACTION" style="top: 540px; left: 360px; z-index: 6;" role="DEFAULT"><p>LG-step4: Workflow Template</p><div class="kvars">e30=</div><div class="instruct">QSB0ZW1wbGF0ZSBpcyAuLi4KCjxhIGhyZWY9Ii9kb2NzI3RlbXBsYXRlIj5TZWUgZGV0YWlscyAuLi48L2E+</div></div><div id="iVq2QorpGf2kFXq4YyTxfW" class="node ACTION" style="top: 640px; left: 360px; z-index: 7;" role="DEFAULT"><p>LG-step5: Workflow Process</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4iTURhFXJnnUTSyorQuEKE" class="node ACTION" style="top: 740px; left: 360px; z-index: 8;" role="DEFAULT"><p>LG-step6: Works</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="3XfczPQZCXHQAQ1RTEzuSG" class="node ACTION" style="top: 800px; left: 200px; z-index: 9;" role="DEFAULT"><p>LG_step7: Work Form</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="gd42tjiXY1WSn3V67B5bGf" class="node ACTION" style="top: 940px; left: 200px; z-index: 10;" role="DEFAULT"><p>LG-step8：User Choice</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4CcpXjn9e1o3wMrdBC36HV" class="node ACTION" style="top: 860px; left: 400px; z-index: 11;" role="DEFAULT"><p>LG-Step91： Approve</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="i1MnFC4Xrhub8XMR7zRTjL" class="node ACTION" style="top: 1020px; left: 400px; z-index: 13;" role="DEFAULT"><p>LG-Step92： Reject</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="w5mrnmJSGkGZ7tBgiPFhcT" class="node ACTION" style="top: 920px; left: 540px; z-index: 14;" role="DEFAULT"><p>LG-Step10: User Input</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="9t5jUp7VTCqTnq7Lx4EMEa" class="node SCRIPT" style="top: 920px; left: 700px; z-index: 15;"><p>Script</p></div><div id="ud8F2jXbKkwRPhpg6Wa7pK" class="node ACTION" style="top: 700px; left: 860px; z-index: 16;" role="DEFAULT"><p>A1</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="fKnv9oJFSmYQWnSEXSEZgu" class="node ACTION" style="top: 780px; left: 860px; z-index: 17;" role="DEFAULT"><p>A2</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4N7FVVX3KM449au8B4hUJn" class="node ACTION" style="top: 880px; left: 860px; z-index: 18;" role="DEFAULT"><p>A3</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="rjFWZpL1mbUS37ThUYSQn5" class="node ACTION" style="top: 960px; left: 860px; z-index: 19;" role="DEFAULT"><p>B1</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="n77n7D6ihMwcsMw7Jpj2N5" class="node ACTION" style="top: 1040px; left: 860px; z-index: 20;" role="DEFAULT"><p>B2</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4JRPNS5uZfkJ3Tk8zorABj" class="node ACTION" style="top: 1160px; left: 860px; z-index: 21;" role="DEFAULT"><p>B3</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="wqF5XEzdA9RgVLvgJxx6wF" class="node OR" style="top: 920px; left: 1120px; z-index: 22;"><p>OR</p></div><div id="bMi2AwsMDEssqujs39WnUE" class="node ACTION" style="top: 1260px; left: 860px; z-index: 22;" role="DEFAULT"><p>DEFAULT</p><div class="kvars">e30=</div><div class="instruct"></div></div><div class="link" from="start" to="hellohyperflow"></div><div class="link" from="hellohyperflow" to="71k3oibjJ4FQUFkva62tJo"></div><div class="link" from="71k3oibjJ4FQUFkva62tJo" to="u3zuqQEruTzGGaq4PvpTsH"></div><div class="link" from="u3zuqQEruTzGGaq4PvpTsH" to="rKvK4i2b2aKCKnp4nDBmxa"></div><div class="link" from="rKvK4i2b2aKCKnp4nDBmxa" to="iVq2QorpGf2kFXq4YyTxfW"></div><div class="link" from="iVq2QorpGf2kFXq4YyTxfW" to="4iTURhFXJnnUTSyorQuEKE"></div><div class="link" from="4iTURhFXJnnUTSyorQuEKE" to="3XfczPQZCXHQAQ1RTEzuSG"></div><div class="link" from="3XfczPQZCXHQAQ1RTEzuSG" to="gd42tjiXY1WSn3V67B5bGf"></div><div class="link" from="gd42tjiXY1WSn3V67B5bGf" to="4CcpXjn9e1o3wMrdBC36HV" case="Approve"></div><div class="link" from="gd42tjiXY1WSn3V67B5bGf" to="i1MnFC4Xrhub8XMR7zRTjL" case="Reject"></div><div class="link" from="4CcpXjn9e1o3wMrdBC36HV" to="w5mrnmJSGkGZ7tBgiPFhcT"></div><div class="link" from="i1MnFC4Xrhub8XMR7zRTjL" to="w5mrnmJSGkGZ7tBgiPFhcT"></div><div class="link" from="w5mrnmJSGkGZ7tBgiPFhcT" to="9t5jUp7VTCqTnq7Lx4EMEa"></div><div class="link" from="ud8F2jXbKkwRPhpg6Wa7pK" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="fKnv9oJFSmYQWnSEXSEZgu" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="4N7FVVX3KM449au8B4hUJn" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="rjFWZpL1mbUS37ThUYSQn5" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="n77n7D6ihMwcsMw7Jpj2N5" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="4JRPNS5uZfkJ3Tk8zorABj" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="ud8F2jXbKkwRPhpg6Wa7pK" case="A1"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="fKnv9oJFSmYQWnSEXSEZgu" case="A2"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="4N7FVVX3KM449au8B4hUJn" case="A3"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="rjFWZpL1mbUS37ThUYSQn5" case="B1"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="n77n7D6ihMwcsMw7Jpj2N5" case="B2"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="4JRPNS5uZfkJ3Tk8zorABj" case="B3"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="bMi2AwsMDEssqujs39WnUE" case="DEFAULT"></div><div class="link" from="bMi2AwsMDEssqujs39WnUE" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="wqF5XEzdA9RgVLvgJxx6wF" to="end"></div></div>
@@ -305,7 +305,7 @@ async function TemplatePut(req, h) {
 	try {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let lastUpdatedAt = req.payload.lastUpdatedAt;
 		let myEmail = req.auth.credentials.email;
 		if (Tools.isEmpty(req.payload.doc)) {
@@ -366,7 +366,7 @@ async function TemplateEditLog(req, h) {
 	try {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 
@@ -382,7 +382,7 @@ async function TemplateEditLog(req, h) {
 
 async function TemplateAddCron(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let tplid = req.payload.tplid;
@@ -443,7 +443,7 @@ async function TemplateAddCron(req, h) {
 
 async function TemplateBatchStart(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 		let starters = req.payload.starters.trim();
@@ -461,7 +461,7 @@ async function TemplateBatchStart(req, h) {
 
 async function TemplateDelCron(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 		let id = req.payload.id;
@@ -481,7 +481,7 @@ async function TemplateGetCrons(req, h) {
 	try {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 		let filter: any = { tenant: tenant, tplid: tplid, creator: myEmail };
@@ -498,7 +498,7 @@ async function TemplateGetCrons(req, h) {
  */
 async function TemplateRename(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant, tplid: req.payload.fromid };
 		let tpl = await Template.findOne(filter);
 		if (
@@ -535,7 +535,7 @@ async function TemplateRename(req, h) {
 
 async function TemplateRenameWithIid(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant, _id: req.payload._id };
 		let tpl = await Template.findOne(filter);
 		let oldTplId = tpl.tplid;
@@ -563,7 +563,7 @@ async function TemplateRenameWithIid(req, h) {
 
 async function TemplateMakeCopyOf(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let me = await User.findOne({ _id: req.auth.credentials._id });
@@ -604,7 +604,7 @@ async function TemplateCopyto(req, h) {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
 		let me = await User.findOne({ _id: req.auth.credentials._id });
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myUid = myEmail.substring(0, myEmail.indexOf("@"));
 		let filter: any = { tenant: tenant, tplid: req.payload.fromid };
@@ -645,7 +645,7 @@ async function TemplateCopyto(req, h) {
 
 async function TemplateDelete(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant, _id: req.payload._id };
 		let ret = await Template.findOne(filter, { doc: 0 });
 		let oldTplId = ret.tplid;
@@ -667,7 +667,7 @@ async function TemplateDelete(req, h) {
 
 async function TemplateDeleteByName(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant, tplid: req.payload.tplid };
 
 		let oldTplId = req.payload.tplid;
@@ -690,7 +690,7 @@ async function TemplateDeleteByName(req, h) {
 
 async function WorkflowRead(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let filter: any = { tenant, wfid: req.payload.wfid };
 		let withDoc = req.payload.withdoc;
@@ -756,7 +756,7 @@ async function WorkflowRoutes(req, h) {
 
 async function WorkflowDumpInstemplate(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
 		let wf = await Workflow.findOne(filter);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
@@ -793,7 +793,7 @@ async function WorkflowDumpInstemplate(req, h) {
 
 async function WorkflowStart(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let starter = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 		let wfid = req.payload.wfid;
@@ -839,7 +839,7 @@ async function WorkflowStart(req, h) {
 
 async function WorkflowAddFile(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let pondfiles = req.payload.pondfiles;
@@ -991,7 +991,7 @@ async function __saveCSVAsCells(tenant, myEmail, wfid, csvPondFiles) {
 
 async function WorkflowRemoveAttachment(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let attachmentsToDelete = req.payload.attachments;
@@ -1058,7 +1058,7 @@ async function WorkflowRemoveAttachment(req, h) {
 
 async function WorkflowPause(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.pauseWorkflow(tenant, myEmail, wfid);
@@ -1073,7 +1073,7 @@ async function WorkflowPause(req, h) {
 
 async function WorkflowResume(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.resumeWorkflow(tenant, myEmail, wfid);
@@ -1088,7 +1088,7 @@ async function WorkflowResume(req, h) {
 
 async function WorkflowStop(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.stopWorkflow(tenant, myEmail, wfid);
@@ -1103,7 +1103,7 @@ async function WorkflowStop(req, h) {
 
 async function WorkflowRestart(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let status = await Engine.restartWorkflow(tenant, myEmail, wfid);
@@ -1118,7 +1118,7 @@ async function WorkflowRestart(req, h) {
 
 async function WorkflowDestroy(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
@@ -1133,7 +1133,7 @@ async function WorkflowDestroy(req, h) {
 
 async function WorkflowDestroyByTitle(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wftitle = req.payload.wftitle;
 		let wfs = await Workflow.find({ tenant: tenant, wftitle: wftitle }, { _id: 0, wfid: 1 }).lean();
@@ -1151,7 +1151,7 @@ async function WorkflowDestroyByTitle(req, h) {
 
 async function WorkflowDestroyByTplid(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tplid = req.payload.tplid;
 		let wfs = await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean();
@@ -1169,7 +1169,7 @@ async function WorkflowDestroyByTplid(req, h) {
 
 async function WorkflowRestartThenDestroy(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let newWf = await Engine.restartWorkflow(tenant, myEmail, wfid);
@@ -1184,7 +1184,7 @@ async function WorkflowRestartThenDestroy(req, h) {
 
 async function WorkflowOP(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		console.log(`[Workflow OP] ${myEmail} [${req.payload.op}] ${wfid}`);
@@ -1203,7 +1203,7 @@ async function WorkflowOP(req, h) {
 				ret = { wfid: wfid, status: await Engine.restartWorkflow(tenant, myEmail, wfid) };
 				break;
 			case "destroy":
-				ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
+				ret = { wfid: wfid, status: await Engine.destroyWorkflow(tenant, myEmail, wfid) };
 				break;
 			case "restartthendestroy":
 				ret = await Engine.restartWorkflow(tenant, myEmail, wfid);
@@ -1227,7 +1227,7 @@ async function WorkflowOP(req, h) {
 
 async function WorkflowSetTitle(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wftitle = req.payload.wftitle;
 		if (wftitle.length < 3) {
@@ -1250,7 +1250,7 @@ async function WorkflowSetTitle(req, h) {
 
 async function WorkflowList(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let filter = req.payload.filter;
 		let sortDef = req.payload.sortdef;
@@ -1308,7 +1308,7 @@ async function __GetTagsFilter(tagsForFilter, myEmail) {
 }
 
 async function WorkflowSearch(req, h) {
-	let tenant = req.auth.credentials.tenant._id;
+	const tenant = req.auth.credentials.tenant._id;
 	let myEmail = req.auth.credentials.email;
 	let myGroup = await Cache.getMyGroup(myEmail);
 	try {
@@ -1473,7 +1473,7 @@ async function WorkflowSearch(req, h) {
 
 async function WorkflowGetLatest(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let filter = req.payload.filter;
 		return await Engine.workflowGetLatest(tenant, myEmail, filter);
@@ -1489,7 +1489,7 @@ async function WorkflowGetLatest(req, h) {
  */
 
 async function WorkSearch(req, h) {
-	let tenant = req.auth.credentials.tenant._id;
+	const tenant = req.auth.credentials.tenant._id;
 	let myEmail = req.auth.credentials.email;
 	let doer = req.payload.doer ? req.payload.doer : myEmail;
 	let reason = req.payload.reason ? req.payload.reason : "unknown";
@@ -1517,7 +1517,7 @@ async function WorkSearch(req, h) {
 		let filter: any = {};
 		//filter.tenant = tenant;
 		filter.tenant = new Mongoose.Types.ObjectId(tenant);
-		let hasPermForWork = await Engine.__hasPermForWork(
+		let hasPermForWork = await Engine.hasPermForWork(
 			req.auth.credentials.tenant._id,
 			req.auth.credentials.email,
 			doer,
@@ -1674,7 +1674,7 @@ async function WorkInfo(req, h) {
 
 async function CheckCoworker(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let whom = req.payload.whom;
 		let coWorkerEmail = whom;
@@ -1698,7 +1698,7 @@ async function CheckCoworker(req, h) {
 
 async function CheckCoworkers(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let uids = req.payload.uids;
 		uids = [...new Set(uids)];
@@ -1722,7 +1722,7 @@ async function CheckCoworkers(req, h) {
 
 async function TransferWork(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let whom = req.payload.whom;
 		let todoid = req.payload.todoid;
@@ -1842,7 +1842,7 @@ async function WorkExplainPds(req, h) {
 
 async function WorkReset(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
@@ -1965,7 +1965,7 @@ async function TemplateList(req, h) {
 
 async function TemplateIdList(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let ifNoneMatch = req.headers["if-none-match"];
 		let latestETag = await Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
@@ -2019,7 +2019,7 @@ async function TemplateIdList(req, h) {
 
 async function TemplateSearch_backup (req, h) {
   try {
-    let tenant = req.auth.credentials.tenant._id;
+const tenant = req.auth.credentials.tenant._id;
     let myEmail = req.auth.credentials.email;
     if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
       throw new EmpError("NO_PERM", "no permission to read template");
@@ -2109,7 +2109,7 @@ async function TemplateSearch_backup (req, h) {
 
 async function TemplateSearch(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let ifNoneMatch = req.headers["if-none-match"];
@@ -2253,7 +2253,7 @@ async function TemplateImport(req, h) {
 	try {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let author = myEmail;
 		let authorName = req.auth.credentials.username;
@@ -2298,7 +2298,7 @@ async function TemplateImport(req, h) {
 
 async function TemplateSetAuthor(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
 		let tplid = req.payload.tplid;
@@ -2335,7 +2335,7 @@ async function TemplateSetAuthor(req, h) {
 
 async function TemplateSetProp(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
 		let tplid = req.payload.tplid;
@@ -2368,7 +2368,7 @@ async function TemplateSetProp(req, h) {
 
 async function WorkflowSetPboAt(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
 		let wfid = req.payload.wfid;
@@ -2396,7 +2396,7 @@ async function WorkflowSetPboAt(req, h) {
 
 async function TemplateSetVisi(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let author = myEmail;
 
@@ -2434,7 +2434,7 @@ async function TemplateSetVisi(req, h) {
 
 async function TemplateClearVisi(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let author = myEmail;
 
@@ -2532,7 +2532,7 @@ async function GetActiveDelayTimers(req, h) {
 
 async function TeamPutDemo(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let author = req.payload.author;
 		let teamid = req.payload.teamid;
 
@@ -2552,7 +2552,7 @@ async function TeamPutDemo(req, h) {
 
 async function TeamFullInfoGet(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let team = await Team.findOne({ tenant: tenant, teamid: req.params.teamid });
 		if (!team) {
@@ -2569,7 +2569,7 @@ async function TeamFullInfoGet(req, h) {
 
 async function TeamRead(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let team = await Team.findOne({ tenant: tenant, teamid: req.payload.teamid });
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
@@ -2583,7 +2583,7 @@ async function TeamRead(req, h) {
 
 async function TeamUpload(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let author = req.auth.credentials.email;
 		let teamid = req.payload.teamid;
 		let tmap = req.payload.tmap;
@@ -2611,7 +2611,7 @@ async function TeamUpload(req, h) {
 
 async function TeamImport(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let author = req.auth.credentials.email;
 		let fileInfo = req.payload.file;
 		let csv = fs.readFileSync(fileInfo.path, "utf8");
@@ -2653,7 +2653,7 @@ async function TeamImport(req, h) {
 
 async function TeamDownload(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let teamid = req.payload.teamid;
 		let filename = req.payload.filename;
 		let teamFilter = { tenant: tenant, teamid: teamid };
@@ -2691,7 +2691,7 @@ async function TeamDownload(req, h) {
 
 async function TeamDeleteRoleMembers(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let teamid = req.payload.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
@@ -2737,7 +2737,7 @@ async function TeamDeleteRoleMembers(req, h) {
 
 async function TeamAddRoleMembers(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let teamid = req.payload.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
@@ -2790,7 +2790,7 @@ async function TeamAddRoleMembers(req, h) {
 
 async function TeamCopyRole(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let teamid = req.payload.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
@@ -2817,7 +2817,7 @@ async function TeamCopyRole(req, h) {
 
 async function TeamSetRole(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let teamid = req.payload.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
@@ -2844,7 +2844,7 @@ async function TeamSetRole(req, h) {
 
 async function TeamDeleteRole(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		let teamid = req.payload.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
@@ -2868,7 +2868,7 @@ async function TeamDeleteRole(req, h) {
 
 async function TeamDelete(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let teamid = req.payload.teamid;
 		let team = await Team.findOne({ tenant: tenant, teamid: teamid });
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "delete")))
@@ -2911,7 +2911,7 @@ async function TeamCopyto(req, h) {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create team");
 
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant, teamid: req.payload.fromid };
 		let new_objid = req.payload.teamid;
 		let oldObj = await Team.findOne(filter);
@@ -2932,7 +2932,7 @@ async function TeamCopyto(req, h) {
 
 async function TeamRename(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant, teamid: req.payload.fromid };
 		let team = await Team.findOne(filter);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
@@ -3011,7 +3011,7 @@ async function AutoRegisterOrgChartUser(tenant, administrator, staffs, myDomain,
 
 async function OrgChartImport(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myId = req.auth.credentials._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
@@ -3033,7 +3033,7 @@ async function OrgChartImport(req, h) {
 		let myDomain = Tools.getEmailDomain(myEmail);
 		/* let test_tenant = Mongoose.Types.ObjectId("61aca9f500c96d4c54ccd7aa");
 
-    let tenant = test_tenant; */
+const tenant = test_tenant; */
 		//filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
 		let csv = fs.readFileSync(filePath, "utf8");
 
@@ -3140,7 +3140,7 @@ async function OrgChartImport(req, h) {
 
 async function OrgChartAddOrDeleteEntry(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
@@ -3162,7 +3162,7 @@ async function OrgChartAddOrDeleteEntry(req, h) {
 
 async function OrgChartExport(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
@@ -3352,7 +3352,7 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 
 async function OrgChartGetLeader(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myemail = req.auth.credentials.email;
 		let uid = req.payload.uid;
 		let leader = req.payload.leader;
@@ -3375,7 +3375,7 @@ async function OrgChartGetLeader(req, h) {
 
 async function OrgChartGetStaff(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myUid = req.auth.credentials.email;
 		let qstr = req.payload.qstr;
 		let ret = await OrgChartHelper.getOrgStaff(tenant, myUid, qstr);
@@ -3388,7 +3388,7 @@ async function OrgChartGetStaff(req, h) {
 
 async function OrgChartListOu(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myemail = req.auth.credentials.email;
 		let top = req.payload.top;
 		let withTop = req.payload.withTop === "yes";
@@ -3415,7 +3415,7 @@ async function OrgChartListOu(req, h) {
 
 async function OrgChartList(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myemail = req.auth.credentials.email;
 		let ret = await OrgChart.find({ tenant: tenant });
 		return h.response(ret);
@@ -3427,7 +3427,7 @@ async function OrgChartList(req, h) {
 
 async function OrgChartExpand(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myemail = req.auth.credentials.email;
 		let ou = req.payload.ou;
 		let include = req.payload.include;
@@ -3472,7 +3472,7 @@ async function OrgChartExpand(req, h) {
 
 async function OrgChartAddPosition(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myemail = req.auth.credentials.email;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		await Parser.checkOrgChartAdminAuthorization(tenant, me);
@@ -3499,7 +3499,7 @@ async function OrgChartAddPosition(req, h) {
 
 async function OrgChartDelPosition(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myemail = req.auth.credentials.email;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		await Parser.checkOrgChartAdminAuthorization(tenant, me);
@@ -3529,7 +3529,7 @@ async function OrgChartDelPosition(req, h) {
 
 async function OrgChartAuthorizedAdmin(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		await Parser.checkOrgChartAdminAuthorization(tenant, me);
 		return h.response(true);
@@ -3540,7 +3540,7 @@ async function OrgChartAuthorizedAdmin(req, h) {
 
 async function GetCallbackPoints(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant };
 		filter = lodash.merge(filter, req.payload);
 		return await CbPoint.find(filter, {
@@ -3559,7 +3559,7 @@ async function GetCallbackPoints(req, h) {
 
 async function GetLatestCallbackPoint(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant };
 		filter = lodash.merge(filter, req.payload);
 		let ret = await CbPoint.find(filter, {
@@ -3583,7 +3583,7 @@ async function GetLatestCallbackPoint(req, h) {
 
 async function OldDoCallback(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant };
 
 		if (req.payload.cbp.tplid) filter.tplid = req.payload.cbp.tplid;
@@ -3605,7 +3605,7 @@ async function OldDoCallback(req, h) {
 
 async function DoCallback(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let filter: any = { tenant: tenant };
 
 		if (req.payload.cbpid) filter._id = req.payload.cbpid;
@@ -3664,7 +3664,7 @@ async function MemberSystemPerm(req, h) {
 	try {
 		let instance = null;
 		let member_email = req.payload.member_email;
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let member = await User.findOne({ email: member_email, tenant: tenant });
 		if (!member) {
 			throw new EmpError("MEMBER_NOT_FOUND", `member ${member.email} not found in current org`);
@@ -3707,7 +3707,7 @@ async function MemberSystemPerm(req, h) {
 
 async function CommentWorkflowLoad(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let todoid = req.payload.todoid;
@@ -3747,7 +3747,7 @@ async function CommentDelete(req, h) {
 			}
 			await Comment.deleteOne(filter);
 		};
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let commentid = req.payload.commentid;
 		let filter: any = { tenant: tenant, _id: commentid };
 		//Find the comment to be deleted.
@@ -3772,7 +3772,7 @@ async function CommentDelete(req, h) {
 
 async function CommentDeleteBeforeDays(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let beforeDays = req.payload.beforeDays;
 		let filter: any = {
@@ -3800,7 +3800,7 @@ async function CommentDeleteBeforeDays(req, h) {
 
 async function CommentDelNewTimeout(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		return h.response({ timeout: Const.DEL_NEW_COMMENT_TIMEOUT });
 	} catch (err) {
@@ -3811,7 +3811,7 @@ async function CommentDelNewTimeout(req, h) {
 
 async function CommentAddForBiz(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		if (req.payload.objtype === "TODO") {
 			let todo = await Todo.findOne({ tenant: tenant, todoid: req.payload.objid });
@@ -3844,7 +3844,7 @@ async function CommentAddForBiz(req, h) {
 
 async function CommentAddForComment(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let thisComment = await Engine.postCommentForComment(
 			tenant,
@@ -3875,7 +3875,7 @@ async function CommentAddForComment(req, h) {
 
 async function CommentLoadMorePeers(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let currentlength = req.payload.currentlength;
 		//找到当前comment
@@ -3901,7 +3901,7 @@ async function CommentLoadMorePeers(req, h) {
 
 async function CommentThumb(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let upOrDown = req.payload.thumb;
 		let cmtid = req.payload.cmtid;
@@ -3928,7 +3928,7 @@ async function CommentThumb(req, h) {
 
 async function CommentSearch(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let page = req.payload.page;
 		let pageSize = req.payload.pageSize;
@@ -4168,7 +4168,7 @@ async function CommentSearch(req, h) {
 
 async function CommentToggle(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let objtype = req.payload.objtype;
@@ -4240,7 +4240,7 @@ async function CommentToggle(req, h) {
 
 async function TagDel(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let objtype = req.payload.objtype;
 		let objid = req.payload.objid;
@@ -4278,7 +4278,7 @@ async function TagDel(req, h) {
 
 async function TagAdd(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let objtype = req.payload.objtype;
@@ -4342,7 +4342,7 @@ async function TagAdd(req, h) {
 
 async function TagList(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let objtype = req.payload.objtype;
 		let objid = req.payload.objid;
@@ -4382,7 +4382,7 @@ async function TagList(req, h) {
 
 async function TagListOrg(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
 		let ret = (await Cache.getOrgTags(tenant)).split(";");
@@ -4396,11 +4396,9 @@ async function TagListOrg(req, h) {
 
 async function GetTodosByWorkid(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
-		return h.response(
-			await Engine.__getTodosByWorkid(tenant, req.payload.workid, req.payload.full),
-		);
+		return h.response(await Engine.getTodosByWorkid(tenant, req.payload.workid, req.payload.full));
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -4409,7 +4407,7 @@ async function GetTodosByWorkid(req, h) {
 
 async function TodoSetDoer(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
@@ -4446,7 +4444,7 @@ async function TodoSetDoer(req, h) {
 
 async function ListSet(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let payloadItems = req.payload.items;
 		payloadItems = payloadItems.replace("；", ",");
@@ -4516,7 +4514,7 @@ async function ListSet(req, h) {
 
 async function ListChangeName(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let newName = req.payload.newName;
 		let filter: any = { tenant: tenant, name: req.payload.name, author: myEmail };
@@ -4530,7 +4528,7 @@ async function ListChangeName(req, h) {
 
 async function ListList(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 
 		return h.response(await List.find({ tenant: tenant }).lean());
 	} catch (err) {
@@ -4541,7 +4539,7 @@ async function ListList(req, h) {
 
 async function ListDelListOrKey(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let filter: any = {};
 		if (req.payload.key) {
@@ -4561,7 +4559,7 @@ async function ListDelListOrKey(req, h) {
 
 async function ListGetItems(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let key = "Default";
 		if (Tools.isEmpty(req.payload.key)) {
 			key = "Default";
@@ -4598,11 +4596,21 @@ async function ListGetItems(req, h) {
 
 async function CodeTry(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let retMsg = { message: "" };
 		let code = req.payload.code;
-		retMsg.message = await Engine.runCode(tenant, "codetry", "codetry", myEmail, {}, code, true);
+		retMsg.message = await Engine.runCode(
+			tenant,
+			Tools.getEmailDomain(myEmail),
+			"codetry",
+			"codetry",
+			myEmail,
+			{},
+			{},
+			code,
+			true,
+		);
 
 		return h.response(retMsg);
 	} catch (err) {
@@ -4612,7 +4620,7 @@ async function CodeTry(req, h) {
 }
 
 async function DemoAPI(req, h) {
-	let tenant = req.auth.credentials.tenant._id;
+	const tenant = req.auth.credentials.tenant._id;
 	return {
 		tenant: tenant,
 		intv: 100,
@@ -4636,7 +4644,7 @@ async function DemoPostContext(req, h) {
 
 async function FilePondProcess(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let filepond = req.payload.filepond;
 		let ids = "";
@@ -4672,7 +4680,7 @@ async function FilePondProcess(req, h) {
 
 async function FilePondRemove(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let serverId = req.payload.serverId;
 		let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
@@ -4691,7 +4699,7 @@ async function FilePondRemove(req, h) {
 
 async function FilePondRevert(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let serverId = req.payload;
 		let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
@@ -4710,7 +4718,7 @@ async function FilePondRevert(req, h) {
 
 async function WorkflowAttachmentViewer(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.params.wfid;
 		let serverId = req.params.serverId;
@@ -4745,7 +4753,7 @@ async function WorkflowAttachmentViewer(req, h) {
 
 async function FormulaEval(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let expr = req.payload.expr;
 		let ret = await Engine.formulaEval(tenant, expr);
@@ -4758,7 +4766,7 @@ async function FormulaEval(req, h) {
 
 async function WecomBotForTodoGet(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wecomBot = await Webhook.find(
 			{ tenant: tenant, owner: myEmail, webhook: "wecombot_todo" },
@@ -4773,7 +4781,7 @@ async function WecomBotForTodoGet(req, h) {
 
 async function WecomBotForTodoSet(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let setting = req.payload.setting;
 		let wecomBot = await Webhook.findOneAndUpdate(
@@ -4790,7 +4798,7 @@ async function WecomBotForTodoSet(req, h) {
 
 async function TemplateSetCover(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let author = req.auth.credentials.email;
 		let blobInfo = req.payload.blob;
 		let tplid = req.payload.tplid;
@@ -4822,7 +4830,7 @@ async function TemplateSetCover(req, h) {
 
 async function TemplateGetCover(req, h) {
 	try {
-		let tenant = req.params.tenant;
+		const tenant = req.params.tenant;
 		let tplid = req.params.tplid;
 		let tmp = null;
 
@@ -4848,7 +4856,7 @@ async function TemplateGetCover(req, h) {
 
 async function TemplateGetWecomBot(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tpl = await Template.findOne(
 			{ tenant: tenant, tplid: req.payload.tplid, author: myEmail },
@@ -4863,7 +4871,7 @@ async function TemplateGetWecomBot(req, h) {
 
 async function TemplateSetWecomBot(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let tpl = await Template.findOneAndUpdate(
 			{ tenant: tenant, tplid: req.payload.tplid, author: myEmail },
@@ -4879,7 +4887,7 @@ async function TemplateSetWecomBot(req, h) {
 
 async function CellsRead(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let fileId = req.payload.fileId;
 
@@ -4926,7 +4934,7 @@ async function CellsRead(req, h) {
 
 async function NodeRerun(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
 		let nodeid = req.payload.nodeid;
@@ -4969,7 +4977,7 @@ async function Fix1 (req, h) {
 */
 async function ListUsersNotStaff(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
@@ -4992,7 +5000,7 @@ async function ListUsersNotStaff(req, h) {
 
 async function ReplaceUserSucceed(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
@@ -5029,7 +5037,7 @@ async function ReplaceUserSucceed(req, h) {
 
 async function ReplaceUserPrepare(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
@@ -5065,7 +5073,7 @@ async function ReplaceUserPrepare(req, h) {
 
 async function ReplaceUserPrepareResult(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
@@ -5094,7 +5102,7 @@ async function ReplaceUserPrepareResult(req, h) {
 
 async function ReplaceUserExecute(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
@@ -5116,7 +5124,7 @@ async function ReplaceUserExecute(req, h) {
 
 async function SavedSearchSave(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let { objtype, name, ss } = req.payload;
@@ -5147,7 +5155,7 @@ async function SavedSearchSave(req, h) {
 
 async function SavedSearchList(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let ifNoneMatch = req.headers["if-none-match"];
@@ -5186,7 +5194,7 @@ async function SavedSearchList(req, h) {
 
 async function SavedSearchGetOne(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		return h.response(
@@ -5203,7 +5211,7 @@ async function SavedSearchGetOne(req, h) {
 
 async function Fix(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let wfs = await Workflow.find({});
 		for (let i = 0; i < wfs.length; i++) {
 			for (let a = 0; a < wfs[i].attachments.length; a++) {
@@ -5259,10 +5267,10 @@ async function Version(req, h) {
 
 async function FlexibleStart(req, h) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 
-		let innerTpl: TemplateObj = {
+		let innerTpl: Emp.TemplateObj = {
 			tplid: `Flexible tpl of ${myEmail}`,
 			pboat: "ANY_RUNNING",
 			doc: `<div class="template"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left:300px; top:300px;" role="DEFAULT" wecom="false" transferable="no" sr="no" sb="no" rvk="no" adhoc="yes" cmt="yes"><p>${req.payload.name}</p><div class="kvars">e30=</div><div class="instruct">6K+35Zyo6L+Z6YeM54G15rS75Y+R6LW35LiA5Yiw5aSa5Liq54us56uL5bel5L2c5Lu75Yqh44CCCuWcqOehruWumuaVtOS4quS6i+mhue+8iOmhueebru+8ieWujOaIkOS7peWQju+8jOaCqOWPr+S7peWFs+mXreW9k+WJjeeBtea0u+S6i+mhue+8iOivt+azqOaEj++8jOWFs+mXreW9k+WJjeW3peS9nOS7u+WKoeWQju+8jOaJgOacieW3suWPkeWHuuS9huacquWujOaIkOeahOeLrOeri+W3peS9nOS7u+WKoeS5n+WwhuiHquWKqOWkseaViO+8iQ==</div><code>Ly8gcmVhZCBIeXBlcmZsb3cgRGV2ZWxvcGVyJ3MgR3VpZGUgZm9yIGRldGFpbHMKcmV0PSdERUZBVUxUJzs=</code></div><div class="node END" id="end" style="left: 600px; top: 240px; z-index: 0;"><p>END</p> </div><div class="link" from="start" to="hellohyperflow"  >link</div><div class="link" from="hellohyperflow" to="end" case="关闭本灵活事项" >link</div></div>`,

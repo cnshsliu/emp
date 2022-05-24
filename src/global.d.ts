@@ -1,8 +1,26 @@
-interface TemplateObj {
-	tplid: string;
-	doc: string;
-	pboat: string;
-	endpoint: string;
-	endpointmode: string;
-	allowdiscuss: boolean;
+declare namespace Emp {
+	interface TemplateObj {
+		tplid: string;
+		doc: string;
+		pboat: string;
+		endpoint: string;
+		endpointmode: string;
+		allowdiscuss: boolean;
+	}
+
+	interface KVarDef {
+		name: string;
+		value: string | number | string[];
+		label: string;
+		type?: string;
+		breakrow?: boolean;
+		placeholder?: string;
+		required?: boolean;
+		when?: string;
+		id?: string;
+		options?: string;
+		coldef?: string;
+		visi?: string;
+		formula?: string;
+	}
 }

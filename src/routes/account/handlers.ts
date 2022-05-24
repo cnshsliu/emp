@@ -23,7 +23,7 @@ import suuid from "short-uuid";
 import Jimp from "jimp";
 import SystemPermController from "../../lib/SystemPermController";
 import EmpError from "../../lib/EmpError";
-import { Engine, Client } from "../../lib/Engine";
+import Engine from "../../lib/Engine";
 import Cache from "../../lib/Cache";
 
 const buildSessionResponse = (user, tenant) => {
