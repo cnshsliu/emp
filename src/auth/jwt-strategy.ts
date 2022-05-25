@@ -15,7 +15,7 @@
 import ServerConfig from "../../secret/keep_secret";
 //the authentication package
 import Jwt from "jsonwebtoken";
-import redisClient from "../database/redis";
+import { redisClient } from "../database/redis";
 //mongoose user object
 import User from "../database/models/User";
 

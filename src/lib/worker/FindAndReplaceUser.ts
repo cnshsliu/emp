@@ -1,14 +1,18 @@
 import { parentPort, workerData } from "worker_threads";
 import Engine from "../Engine";
 import { Mongoose, dbConnect } from "../../database/mongodb";
-
-dbConnect();
+import { redisClient, redisConnect, redisDisconnect } from "../../database/redis";
 
 const workerLog = (msg) => {
 	parentPort.postMessage({ cmd: "worker_log", msg: msg });
 };
 
-Engine.replaceUser_child(workerData).then((res) => {
-	Mongoose.connection.close();
-	parentPort.postMessage("YarkNodeWorker Worker Done.");
+dbConnect().then(() => {
+	redisConnect().then(() => {
+		Engine.replaceUser_child(workerData).then(async (res) => {
+			await redisDisconnect();
+			await Mongoose.connection.close();
+			parentPort.postMessage("YarkNodeWorker Worker Done.");
+		});
+	});
 });

@@ -41,8 +41,9 @@ const Exec = util.promisify(require("child_process").exec);
 import Podium from "@hapi/podium";
 import EmpError from "./EmpError";
 import Const from "./Const";
+import RCL from "./RedisCacheLayer";
 
-import redisClient from "../database/redis";
+import { redisClient, redisConnect } from "../database/redis";
 
 import type {
 	NextDef,
@@ -393,18 +394,12 @@ const stopCronTask = async function (cronId) {
 	}
 };
 
-const runScheduled = async function (obj, cleanUpIds, isCron = false) {
-	let wffilter = {
-		tenant: obj.tenant,
-		wfid: obj.wfid,
-		status: "ST_RUN",
-	};
+const runScheduled = async function (obj, isCron = false) {
 	//打开对应的Workflow
-	let wf = await Workflow.findOne(wffilter);
-	// Delete this delayTimer is running workflow object is absent.
-	if (!wf) {
-		cleanUpIds.push(obj.wfid);
-		return;
+	let wf = await RCL.getWorkflow({ tenant: obj.tenant, wfid: obj.wfid }, "Engine.runScheduled");
+	if (!wf) throw new EmpError("WORKFLOW_NOT_FOUND", "Workflow does not exist");
+	if (wf.status !== "ST_RUN") {
+		throw new EmpError("WF_STATUS_NOT_ST_RUN", "Workflow status is not ST_RUN");
 	}
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
@@ -609,8 +604,7 @@ const __doneTodo = async function (
 		todo.decision = userDecision;
 	}
 
-	let wf_filter = { tenant: tenant, wfid: todo.wfid };
-	let wf = await Workflow.findOne(wf_filter);
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.__doneTodo");
 	if (Tools.isEmpty(wf.wftitle)) {
 		throw new EmpError("WORK_WFTITLE_IS_EMPTY", "Todo wftitle is empty unexpectedly", {
 			wfid,
@@ -996,12 +990,11 @@ const __doneTodo = async function (
 	//////////////////////////////////////////////////
 	// 修改Workflow对象
 	wfUpdate["doc"] = wfIO.html();
-	await Workflow.updateOne(
+	wf = await RCL.updateWorkflow(
 		{ tenant: tenant, wfid: wf.wfid },
 		{ $set: wfUpdate },
-		{ upsert: false, new: true },
+		"Engine.__doneTodo",
 	);
-	let wf_without_doc = await Workflow.findOne({ tenant: tenant, wfid: wf.wfid }, { doc: 0 }).lean();
 
 	//////////////////////////////////////////////////
 	// 修改TODO对象， 完成TODO
@@ -1045,8 +1038,8 @@ const __doneTodo = async function (
 	////////////////////////////////////////////////////
 	// 调用endpoint
 	////////////////////////////////////////////////////
-	let theEndpoint = wf_without_doc.endpoint;
-	let theEndpointMode = wf_without_doc.endpointmode;
+	let theEndpoint = wf.endpoint;
+	let theEndpointMode = wf.endpointmode;
 	if (
 		theEndpoint &&
 		theEndpoint.trim() &&
@@ -1057,7 +1050,7 @@ const __doneTodo = async function (
 		let ALL_KVARS_WITHOUT_VISI_SET = await Parser.userGetVars(
 			tenant,
 			Const.VISI_FOR_NOBODY, //check visi for doer
-			wf_without_doc.wfid,
+			wf.wfid,
 			Const.FOR_WHOLE_PROCESS,
 			[],
 			[],
@@ -1478,15 +1471,12 @@ const __postComment = async function (
 };
 
 //workflow/docallback: 回调， 也就是从外部应用中回调工作流引擎
-const doCallback = async function (cbp, payload) {
+const doCallback = async function (tenant: string, cbp: any, payload: any) {
 	//test/callback.js
 	if (typeof payload.kvars === "string")
 		payload.kvars = Tools.hasValue(payload.kvars) ? JSON.parse(payload.kvars) : {};
 	let isoNow = Tools.toISOString(new Date());
-	let nodeid = cbp.nodeid;
-	let wf_filter = { wfid: cbp.wfid };
-	let wf = await Workflow.findOne(wf_filter);
-	let tenant = wf.tenant;
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: cbp.wfid }, "Engine.doCallback");
 	let teamid = wf.teamid;
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
@@ -1541,10 +1531,10 @@ const doCallback = async function (cbp, payload) {
 		wfUpdate["pworkid"] = wf.pworkid;
 		wfUpdate["cselector"] = wf.cselector;
 	}
-	wf = await Workflow.findOneAndUpdate(
+	wf = await RCL.updateWorkflow(
 		{ tenant: tenant, wfid: wf.wfid },
 		{ $set: wfUpdate },
-		{ upsert: false, new: true },
+		"Engine.doCallback",
 	);
 
 	await cbp.delete();
@@ -1570,7 +1560,7 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 	if (old_todo.rehearsal) email = old_todo.doer;
 	if (!SystemPermController.hasPerm(email, "work", old_todo, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this work");
-	let wf = await Workflow.findOne({ wfid: wfid });
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.revokeWork");
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
@@ -1696,10 +1686,10 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 		wfUpdate["pworkid"] = wf.pworkid;
 		wfUpdate["cselector"] = wf.cselector;
 	}
-	wf = await Workflow.findOneAndUpdate(
+	wf = await RCL.updateWorkflow(
 		{ tenant: tenant, wfid: wf.wfid },
 		{ $set: wfUpdate },
-		{ upsert: false, new: true },
+		"Engine.revokeWork",
 	);
 	try {
 		if (comment.trim().length > 0) await postCommentForTodo(tenant, email, old_todo, comment);
@@ -1713,8 +1703,7 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 };
 
 const addAdhoc = async function (payload) {
-	let filter = { tenant: payload.tenant, wfid: payload.wfid };
-	let wf = await Workflow.findOne(filter);
+	let wf = await RCL.getWorkflow({ tenant: payload.tenant, wfid: payload.wfid }, "Engine.addAdhoc");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
 	let workid = IdGenerator();
@@ -1788,8 +1777,10 @@ const explainPds = async function (payload) {
 		wfRoot = null;
 	//使用哪个theTeam， theUser？ 如果有wfid，则
 	if (payload.wfid) {
-		let filter = { tenant: payload.tenant, wfid: payload.wfid };
-		let wf = await Workflow.findOne(filter);
+		let wf = await RCL.getWorkflow(
+			{ tenant: payload.tenant, wfid: payload.wfid },
+			"Engine.explainPds",
+		);
 		if (wf) {
 			theTeamid = wf.teamid;
 			theUser = wf.starter;
@@ -1859,7 +1850,7 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 
 	if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
 	let isoNow = Tools.toISOString(new Date());
-	let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.sendback");
 	let wfUpdate = {};
 	if (!SystemPermController.hasPerm(fact_email, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
@@ -1956,7 +1947,11 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 		wfUpdate["cselector"] = nexts.map((x) => x.selector);
 	}
 	wfUpdate["doc"] = wfIO.html();
-	wf = await Workflow.findOneAndUpdate({ tenant: tenant, wfid: wfid }, { $set: wfUpdate });
+	wf = await RCL.updateWorkflow(
+		{ tenant: tenant, wfid: wfid },
+		{ $set: wfUpdate },
+		"Engine.sendback",
+	);
 
 	//如果没有下面两句话，则退回的todo的comment没有了
 
@@ -2315,7 +2310,7 @@ const replaceUser_child = async function (msg) {
 							update["starter"] = wf.starter.replace(regex, tempsubset.wf.to);
 						}
 						update["doc"] = wf.doc.replace(regex, tempsubset.wf.to);
-						await Workflow.updateOne({ tenant: msg.tenant, wfid: wf.wfid }, { $set: update });
+						await RCL.updateWorkflow({ tenant: msg.tenant, wfid: wf.wfid }, { $set: update });
 					}
 				}
 				*/
@@ -2341,13 +2336,17 @@ const yarkNode_internal = async function (obj) {
 	let parent_nexts = [];
 	if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
 
-	console.log((isMainThread ? "" : "\t") + "Begin yarkNode -----> " + obj.selector + " <--------");
+	console.log(
+		(isMainThread ? "" : "ChildThread:") + "Begin yarkNode -----> " + obj.selector + " <--------",
+	);
 
 	let tenant = obj.tenant;
-	let filter = { tenant: obj.tenant, wfid: obj.wfid };
 	let teamid = obj.teamid;
 	let wfUpdate = {};
-	let wf = await Workflow.findOne(filter);
+	let wf = await RCL.getWorkflow(
+		{ tenant: obj.tenant, wfid: obj.wfid },
+		"Engine.yarkNode_internal",
+	);
 	if (wf.status !== "ST_RUN") {
 		console.error("Workflow", wf.wfid, " status is not ST_RUN");
 		return;
@@ -3018,8 +3017,10 @@ const yarkNode_internal = async function (obj) {
 		let parent_wfid = wfRoot.attr("pwfid");
 		let parent_workid = wfRoot.attr("pworkid");
 		if (Tools.hasValue(parent_wfid) && Tools.hasValue(parent_workid) && wf.runmode === "sub") {
-			let filter = { wfid: parent_wfid };
-			let parent_wf = await Workflow.findOne(filter);
+			let parent_wf = await RCL.getWorkflow(
+				{ tenant: obj.tenant, wfid: parent_wfid },
+				"Engine.yarkNode_internal",
+			);
 			let parent_tplid = parent_wf.tplid;
 			let parent_wfIO = await Parser.parse(parent_wf.doc);
 			let parent_tpRoot = parent_wfIO(".template");
@@ -3299,10 +3300,10 @@ const yarkNode_internal = async function (obj) {
 		wfUpdate["cselector"] = nexts.map((x) => x.selector);
 		//以上需要记录到workflow对象上
 	}
-	wf = await Workflow.findOneAndUpdate(
+	wf = await RCL.updateWorkflow(
 		{ tenant: obj.tenant, wfid: wf.wfid },
 		{ $set: wfUpdate },
-		{ upsert: false, new: true },
+		"Engine.yarkNode_internal",
 	);
 
 	await sendNexts(nexts);
@@ -3319,9 +3320,8 @@ const yarkNode_internal = async function (obj) {
 };
 
 //Only SCRIPT is supported at this moment.
-const rerunNode = async function (tenant, wfid, nodeid) {
-	let wf_filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(wf_filter);
+const rerunNode = async function (tenant: string, wfid: string, nodeid: string) {
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.rerunNode");
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
@@ -3985,7 +3985,7 @@ const log = function (tenant, wfid, txt, json = null, withConsole = false) {
 	}
 };
 
-const getWfLogFilename = function (tenant, wfid) {
+const getWfLogFilename = function (tenant: string, wfid: string) {
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_log_folder = emp_runtime_folder + "/" + tenant + "/log";
@@ -4413,6 +4413,8 @@ const startWorkflow_with = async function (
 		console.log("Old script clearing finished");
 	});
 
+	//TODO: put wf.doc to cache
+
 	return wf;
 };
 
@@ -4427,10 +4429,12 @@ const clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit:
 		rehearsal: true,
 		updatedAt: { $lt: new Date(theMoment.toDate()) },
 	};
+	//TODO: keep using Mongoose instead of Redis?
 	let wfids = await Workflow.find(wfFilter, { wfid: 1, _id: 0 }).lean();
 	wfids = wfids.map((x) => x.wfid);
 	if (wfids.length > 0) {
 		for (let i = 0; i < wfids.length; i++) {
+			//TODO: deelte from redis also
 			__destroyWorkflow(tenant, wfids[i]).then((ret) => {
 				console.log(`Garbage rm rehearsal: ${wfids[i]} `);
 			});
@@ -4490,8 +4494,7 @@ const clearOlderScripts = async function (tenant) {
 };
 
 const stopWorkflow = async function (tenant, myEmail, wfid) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter);
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.stopWorkflow");
 	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
@@ -4516,7 +4519,11 @@ const stopWorkflow = async function (tenant, myEmail, wfid) {
 	}
 	let ret = "ST_STOP";
 	if (Object.keys(wfUpdate).length > 0) {
-		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
+		wf = await RCL.updateWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			{ $set: wfUpdate },
+			"Engine.stopWorkflow",
+		);
 		stopWorks(tenant, wfid);
 		stopDelayTimers(tenant, wfid);
 		ret = "ST_STOP";
@@ -4538,7 +4545,7 @@ const restartWorkflow = async function (
 	wftitle = null,
 ) {
 	let old_wfid = wfid;
-	let old_wf = await Workflow.findOne({ tenant: tenant, wfid: old_wfid });
+	let old_wf = await RCL.getWorkflow({ tenant: tenant, wfid: old_wfid }, "Engine.restartWorkflow");
 	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, old_wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let old_wfIO = await Parser.parse(old_wf.doc);
@@ -4614,7 +4621,7 @@ const restartWorkflow = async function (
 };
 
 const destroyWorkflow = async function (tenant, myEmail, wfid) {
-	let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid });
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.destroyWorkflow");
 	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "delete"))
 		throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
 	let myGroup = await Cache.getMyGroup(myEmail);
@@ -4696,7 +4703,7 @@ const __destroyWorkflow = async function (tenant, wfid) {
 		//NO ENTRY 错误无须提示
 		if (err.code !== "ENOENT") console.log("\t\t", err);
 	}
-	let wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { attachments: 1 });
+	let wf = await RCL.delWorkflow({ tenant: tenant, wfid: wfid }, "Engine.__destroyWorkflow");
 	if (wf) {
 		process.stdout.write("\tDestroy attached files\r");
 		for (let i = 0; i < wf.attachments.length; i++) {
@@ -4709,17 +4716,15 @@ const __destroyWorkflow = async function (tenant, wfid) {
 				console.log("\tDestroy attached: ", err.message);
 			}
 		}
-		let ret = await Workflow.deleteOne({ tenant: tenant, wfid: wfid });
 		console.log("Destroy workflow:", wfid, ", Done");
-		return ret;
+		return wf;
 	} else {
 		return null;
 	}
 };
 
 const setPboByWfId = async function (email, tenant, wfid, pbos) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter);
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.setPboByWfId");
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let attachments = wf.attachments;
@@ -4741,8 +4746,7 @@ const getPboByWfId = async function (tenant, wfid) {
 	return attachments;
 };
 const getAttachmentsByWfId = async function (tenant, wfid) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter, { attachments: 1 }).lean();
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getAttachmentsByWfId");
 	return wf.attachments;
 };
 
@@ -4756,6 +4760,7 @@ const workflowGetList = async function (tenant, email, filter, sortdef) {
 	filter.tenant = tenant;
 	let option: any = {};
 	if (sortdef) option.sort = sortdef;
+	//TODO: this is not findOne, but find, should we keep it in mongoose?
 	let wfs = await Workflow.find(filter, { doc: 0 }, option).lean();
 	for (let i = 0; i < wfs.length; i++) {
 		wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter);
@@ -4817,8 +4822,7 @@ const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	if (!SystemPermController.hasPerm(shouldDoer, "work", todo, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this work");
-	let filter = { tenant: tenant, wfid: todo.wfid };
-	let wf = await Workflow.findOne(filter);
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.getWorkInfo");
 	if (!wf) {
 		await Todo.deleteOne(todo_filter);
 
@@ -5042,13 +5046,13 @@ const loadWorkflowComments = async function (tenant, wfid) {
  * @return {...}
  */
 const __getWorkFullInfo = async function (
-	tenant,
-	peopleInBrowser,
-	theWf,
-	tpRoot,
-	wfRoot,
-	wfid,
-	todo,
+	tenant: string,
+	peopleInBrowser: string,
+	theWf: any,
+	tpRoot: any,
+	wfRoot: any,
+	wfid: string,
+	todo: any,
 ) {
 	//////////////////////////////////////
 	// Attention: TodoOwner确定设为todo.doer？
@@ -5670,9 +5674,13 @@ const getStatusFromClass = function (node) {
  *
  * @return {...} status of workid is present, status of workflow if workid is absent
  */
-const getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid = null) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter);
+const getWorkflowOrNodeStatus = async function (
+	email: string,
+	tenant: string,
+	wfid: string,
+	workid = null,
+) {
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getWorkflowOrNodeStatus");
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 	let wfIO = await Parser.parse(wf.doc);
@@ -5693,9 +5701,8 @@ const getWorkflowOrNodeStatus = async function (email, tenant, wfid, workid = nu
  *
  * @return {...}
  */
-const pauseWorkflow = async function (tenant, email, wfid) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter);
+const pauseWorkflow = async function (tenant: string, email: string, wfid: string) {
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.pauseWorkflow");
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
@@ -5715,7 +5722,11 @@ const pauseWorkflow = async function (tenant, email, wfid) {
 	}
 	let ret = "ST_PAUSE";
 	if (Object.keys(wfUpdate).length > 0) {
-		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
+		wf = await RCL.updateWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			{ $set: wfUpdate },
+			"Engine.pauseWorkflow",
+		);
 		await pauseWorksForPausedWorkflow(tenant, wfid);
 		await pauseDelayTimers(tenant, wfid);
 		ret = "ST_PAUSE";
@@ -5742,8 +5753,7 @@ const resetTodosETagByWfId = async function (tenant: string, wfid: string) {
  * @return {...}
  */
 const resumeWorkflow = async function (tenant, email, wfid) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter);
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.resumeWorkflow");
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
@@ -5763,7 +5773,11 @@ const resumeWorkflow = async function (tenant, email, wfid) {
 	}
 	let ret = "ST_RUN";
 	if (Object.keys(wfUpdate).length > 0) {
-		wf = await Workflow.findOneAndUpdate(filter, { $set: wfUpdate });
+		wf = await RCL.updateWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			{ $set: wfUpdate },
+			"Engine.resumeWorkflow",
+		);
 		await resumeWorksForWorkflow(tenant, wfid);
 		await resumeDelayTimers(tenant, wfid);
 		ret = "ST_RUN";
@@ -5838,9 +5852,8 @@ const resumeDelayTimers = async function (tenant, wfid) {
  * 如果忽略workid,则取工作流的变量
  * 如果有workID, 则取工作项的变量
  */
-const getKVars = async function (tenant, email, wfid, workid) {
-	let filter = { tenant: tenant, wfid: wfid };
-	let wf = await Workflow.findOne(filter, { doc: 0 });
+const getKVars = async function (tenant: string, email: string, wfid: string, workid: string) {
+	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getKVars");
 	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 	if (workid) {
@@ -5883,10 +5896,9 @@ const getActiveDelayTimers = async function (tenant, wfid) {
  *
  * @return {...}  Array :[ {from_workid, from_nodeid} ]
  */
-const getTrack = async function (email, tenant, wfid, workid) {
+const getTrack = async function (email: string, tenant: string, wfid: string, workid: string) {
 	try {
-		let wf_filter = { wfid: wfid };
-		let wf = await Workflow.findOne(wf_filter);
+		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getTrack");
 		if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
 			throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 		let wfIO = await Parser.parse(wf.doc);
@@ -5909,7 +5921,13 @@ const getTrack = async function (email, tenant, wfid, workid) {
 	}
 };
 
-const delegate = async function (tenant, delegator, delegatee, begindate, enddate) {
+const delegate = async function (
+	tenant: string,
+	delegator: string,
+	delegatee: string,
+	begindate: string,
+	enddate: string,
+) {
 	if (delegator === delegatee) {
 		throw new EmpError("DELEGATE_FAILED", `${delegator} and ${delegatee} are the same one`);
 	}
@@ -6175,8 +6193,8 @@ const init = once(async function () {
 		"\n",
 	);
 
-	let regexp = new RegExp("avatar/avatar_");
-	let users = await User.find({ "avatarinfo.path": regexp });
+	/* let regexp = new RegExp("avatar/avatar_");
+	 let users = await User.find({ "avatarinfo.path": regexp });
 	for (let i = 0; i < users.length; i++) {
 		let tenant = users[i].tenant.toString();
 		let oldPath = users[i].avatarinfo.path;
@@ -6188,7 +6206,7 @@ const init = once(async function () {
 		}
 		console.log(tenant, newPath);
 		await User.updateOne({ _id: users[i]._id }, { $set: { "avatarinfo.path": newPath } });
-	}
+	} */
 
 	await serverInit();
 	await Client.clientInit();
@@ -6767,7 +6785,6 @@ const checkDelayTimer = async function () {
 		let filter = { wfstatus: "ST_RUN", time: { $lt: now.getTime() } };
 		let delayTimers = await DelayTimer.find(filter);
 		let nexts = [];
-		let tobeDeletedDelayTimerWfIds = [];
 		for (let i = 0; i < delayTimers.length; i++) {
 			try {
 				await runScheduled(
@@ -6779,7 +6796,6 @@ const checkDelayTimer = async function () {
 						nodeid: delayTimers[i].nodeid,
 						workid: delayTimers[i].workid,
 					},
-					tobeDeletedDelayTimerWfIds,
 					false,
 				);
 			} catch (e) {
@@ -6787,12 +6803,6 @@ const checkDelayTimer = async function () {
 			}
 			await DelayTimer.deleteOne({ _id: delayTimers[i]._id });
 		}
-
-		//////////////////////////////////////////////////
-		//DelayTimer每次都会被删除，因此无须最后再次清理
-		//tobeDeletedDelayTimerWfIds = [...new Set(tobeDeletedDelayTimerWfIds)];
-		//await DelayTimer.deleteMany({ wfid: { $in: tobeDeletedDelayTimerWfIds } });
-		//////////////////////////////////////////////////
 	} catch (err) {
 		console.error(err);
 	} finally {
@@ -7186,7 +7196,6 @@ export default {
 	postCommentForTodo,
 	doWork,
 	hasPermForWork,
-	runScheduled,
 	stopCronTask,
 	scheduleCron,
 	startBatchWorkflow,

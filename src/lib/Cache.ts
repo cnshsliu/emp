@@ -6,7 +6,7 @@ import Template from "../database/models/Template";
 import Tenant from "../database/models/Tenant";
 import OrgChart from "../database/models/OrgChart";
 import Site from "../database/models/Site";
-import redisClient from "../database/redis";
+import { redisClient } from "../database/redis";
 
 import type { CoverInfo, AvatarInfo } from "./EmpTypes";
 const PERM_EXPIRE_SECONDS = 60;

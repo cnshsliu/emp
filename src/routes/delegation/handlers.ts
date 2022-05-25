@@ -1,6 +1,6 @@
 "use strict";
 import replyHelper from "../../lib/helpers";
-import { Engine } from "../../lib/Engine";
+import Engine from "../../lib/Engine";
 import Cache from "../../lib/Cache";
 
 async function Delegate(req, h) {

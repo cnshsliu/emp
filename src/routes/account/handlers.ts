@@ -11,7 +11,7 @@ import JasonWebToken from "jsonwebtoken";
 import JwtAuth from "../../auth/jwt-strategy";
 import replyHelper from "../../lib/helpers";
 import Mailman from "../../lib/Mailman";
-import redisClient from "../../database/redis";
+import { redisClient } from "../../database/redis";
 import Site from "../../database/models/Site";
 import User from "../../database/models/User";
 import Todo from "../../database/models/Todo";

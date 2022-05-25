@@ -23,4 +23,19 @@ declare namespace Emp {
 		visi?: string;
 		formula?: string;
 	}
+
+	interface CallbackDef {
+		tenant: string;
+		tplid: string;
+		round: number;
+		wfid: string;
+		nodeid: string;
+		workid: string;
+		delete: () => void;
+	}
+
+	type WfFilter = {
+		tenant: string;
+		wfid: string;
+	};
 }

@@ -2,6 +2,10 @@
 "use strict";
 import HapiServer from "./config/hapi";
 import { Mongoose, dbConnect } from "./database/mongodb";
+import { redisConnect } from "./database/redis";
 
-dbConnect();
-HapiServer.starter();
+dbConnect().then(() => {
+	redisConnect().then(() => {
+		HapiServer.starter();
+	});
+});

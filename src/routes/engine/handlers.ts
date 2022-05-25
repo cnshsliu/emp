@@ -43,6 +43,7 @@ import lodash from "lodash";
 import Cache from "../../lib/Cache";
 import Const from "../../lib/Const";
 import Mongoose from "mongoose";
+import RCL from "../../lib/RedisCacheLayer";
 
 const EmailSchema = Joi.string().email();
 const asyncFilter = async (arr, predicate) => {
@@ -243,8 +244,11 @@ async function WorkflowReadlog(req, h) {
 		let myEmail = req.auth.credentials.email;
 
 		let wfid = req.payload.wfid;
-		let filter: any = { tenant: tenant, wfid: wfid };
-		let wf = await Workflow.findOne(filter, { doc: 0 });
+		//TODO: change to perm cache
+		let wf = await RCL.getWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			"engine/handler.WorkflowReadlog",
+		);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
 			return "You don't have permission to read this workflow";
 
@@ -692,9 +696,11 @@ async function WorkflowRead(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
-		let filter: any = { tenant, wfid: req.payload.wfid };
 		let withDoc = req.payload.withdoc;
-		let wf = await Workflow.findOne(filter).lean();
+		let wf = await RCL.getWorkflow(
+			{ tenant, wfid: req.payload.wfid },
+			"engine/handler.WorkflowRead",
+		);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		if (wf) {
@@ -716,8 +722,13 @@ async function WorkflowRead(req, h) {
 async function WorkflowCheckStatus(req, h) {
 	try {
 		let myEmail = req.auth.credentials.email;
-		let filter: any = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
-		let wf = await Workflow.findOne(filter).lean();
+		let wf = await RCL.getWorkflow(
+			{
+				tenant: req.auth.credentials.tenant._id,
+				wfid: req.payload.wfid,
+			},
+			"engine/handler.WorkflowCheckStatus",
+		);
 		let ret = {};
 		if (!wf) {
 			ret = "NOTFOUND";
@@ -757,8 +768,13 @@ async function WorkflowRoutes(req, h) {
 async function WorkflowDumpInstemplate(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
-		let wf = await Workflow.findOne(filter);
+		let wf = await RCL.getWorkflow(
+			{
+				tenant: req.auth.credentials.tenant._id,
+				wfid: req.payload.wfid,
+			},
+			"engine/handler.WorkflowDumpInstemplate",
+		);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		let wfIO = await Parser.parse(wf.doc);
@@ -856,11 +872,13 @@ async function WorkflowAddFile(req, h) {
 			//非csv_开头的文件，加入workflowAttachment
 			//csv_开头的文件，单独处理
 			if (attachFiles.length > 0) {
-				await Workflow.findOneAndUpdate(
+				let workflow = await RCL.updateWorkflow(
 					{ tenant, wfid },
-					{ $addToSet: { attachments: { $each: attachFiles } } },
+					{
+						$addToSet: { attachments: { $each: attachFiles } },
+					},
+					"engine/handler.WorkflowAddFile",
 				);
-				let workflow = await Workflow.findOne({ tenant, wfid }, { doc: 0 });
 				return h.response(workflow.attachments);
 			}
 
@@ -997,8 +1015,10 @@ async function WorkflowRemoveAttachment(req, h) {
 		let attachmentsToDelete = req.payload.attachments;
 		if (attachmentsToDelete.length <= 0) return h.response("Done");
 
-		let filter: any = { tenant: tenant, wfid: wfid };
-		let wf = await Workflow.findOne(filter);
+		let wf = await RCL.getWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			"engine/handler.WorkflowRemoveAttachment",
+		);
 
 		let me = await User.findOne({ tenant: tenant, email: myEmail }).populate("tenant").lean();
 		let canDeleteAll = false;
@@ -1043,10 +1063,10 @@ async function WorkflowRemoveAttachment(req, h) {
 			}
 		}
 
-		wf = await Workflow.findOneAndUpdate(
+		wf = await RCL.updateWorkflow(
 			{ tenant, wfid },
 			{ $set: { attachments: wfAttachments } },
-			{ new: true },
+			"engine/handler.WorkflowRemoveAttachment",
 		);
 
 		return h.response(wfAttachments);
@@ -1235,11 +1255,18 @@ async function WorkflowSetTitle(req, h) {
 		}
 
 		let wfid = req.payload.wfid;
-		let filter: any = { tenant: tenant, wfid: wfid };
-		let wf = await Workflow.findOne(filter);
+		//TODO: should check hasPerm with new Mechanism
+		let wf = await RCL.getWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			"engine/handler.WorkflowSetTitle",
+		);
 		if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "update"))
 			throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
-		wf = await Workflow.updateOne(filter, { $set: { wftitle: wftitle } });
+		wf = await RCL.updateWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			{ $set: { wftitle: wftitle } },
+			"engine/handler.WorkflowSetTitle",
+		);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(wf.wftitle);
 	} catch (err) {
@@ -1853,8 +1880,7 @@ async function WorkReset(req, h) {
 		let workid = req.payload.workid;
 		let workFilter = { tenant: tenant, wfid: wfid, workid: workid };
 		let theWork = await Work.findOne(workFilter);
-		let wf_filter = { tenant: tenant, wfid: wfid };
-		let wf = await Workflow.findOne(wf_filter);
+		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "engine/handler.WorkReset");
 		let wfIO = await Parser.parse(wf.doc);
 		let tpRoot = wfIO(".template");
 		let wfRoot = wfIO(".workflow");
@@ -1865,10 +1891,10 @@ async function WorkReset(req, h) {
 		workNode.removeClass("ST_DONE");
 		workNode.addClass("ST_RUN");
 		workNode.attr("decision", "");
-		wf = await Workflow.updateOne(
+		wf = await RCL.updateWorkflow(
 			{ tenant: tenant, wfid: wfid },
 			{ $set: { doc: wfIO.html() } },
-			{ upsert: false, new: true },
+			"engine/handler.WorkReset",
 		);
 
 		//Reset Work
@@ -2370,21 +2396,23 @@ async function WorkflowSetPboAt(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
 
 		let wfid = req.payload.wfid;
 
-		let filter: any = { tenant: tenant, wfid: wfid };
-		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") filter["starter"] = myEmail;
-		let wf = await Workflow.findOneAndUpdate(
-			filter,
-			{ $set: { pboat: req.payload.pboat } },
-			{ upsert: false, new: true },
+		//TODO: huge change
+		let wf = await RCL.getWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			"engine/handler.WorkflowSetPboAt",
 		);
-		if (!wf) {
+		if (!wf || (myGroup !== "ADMIN" && wf.starter !== myEmail)) {
 			throw new EmpError("NO_AUTH", `Not admin or owner`);
 		}
-		wf = await Workflow.findOne({ tenant: tenant, wfid: wfid }, { doc: 0 });
+		wf = await RCL.updateWorkflow(
+			{ tenant: tenant, wfid: wfid },
+			{ $set: { pboat: req.payload.pboat } },
+			"engine/handler.WorkflowSetPboAt",
+		);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 
 		return h.response(wf);
@@ -2483,8 +2511,13 @@ async function TemplateDownload(req, h) {
 
 async function WorkflowDownload(req, h) {
 	try {
-		let filter: any = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
-		let wf = await Workflow.findOne(filter);
+		let wf = await RCL.getWorkflow(
+			{
+				tenant: req.auth.credentials.tenant._id,
+				wfid: req.payload.wfid,
+			},
+			"engine/handler.WorkflowDownload",
+		);
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 		return wf;
@@ -3595,7 +3628,7 @@ async function OldDoCallback(req, h) {
 		options.route = req.payload.route ? req.payload.route : "DEFAULT";
 		if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
 		if (lodash.isEmpty(req.payload.atts) === false) options.atts = req.payload.atts;
-		let ret = await Engine.doCallback(cbp, options);
+		let ret = await Engine.doCallback(tenant, cbp, options);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -3613,7 +3646,7 @@ async function DoCallback(req, h) {
 		let options: any = {};
 		options.decision = req.payload.decision ? req.payload.decision : "DEFAULT";
 		if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
-		let ret = await Engine.doCallback(cbp, options);
+		let ret = await Engine.doCallback(tenant, cbp, options);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -3633,6 +3666,7 @@ async function MySystemPerm(req, h) {
 					instance = await Todo.findOne({ _id: req.payload.instance_id });
 					break;
 				case "workflow":
+					//TODO: need huge optimization
 					instance = await Workflow.findOne({ _id: req.payload.instance_id });
 					break;
 				case "team":
@@ -3642,6 +3676,7 @@ async function MySystemPerm(req, h) {
 					throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
 			}
 		}
+		//TODO： 性能天坑
 		let perm = await SystemPermController.hasPerm(
 			req.auth.credentials.email,
 			req.payload.what,
@@ -3682,6 +3717,7 @@ async function MemberSystemPerm(req, h) {
 					instance = await Todo.findOne({ _id: req.payload.instance_id });
 					break;
 				case "workflow":
+					//TODO: need huge optimization
 					instance = await Workflow.findOne({ _id: req.payload.instance_id });
 					break;
 				case "team":
@@ -4143,15 +4179,6 @@ async function CommentSearch(req, h) {
 				}
 			}
 		}
-		/* await Template.updateMany(
-      { tenant: tenant, allowdiscuss: { $exists: false } },
-      { $set: { allowdiscuss: true } }
-    );
-    await Workflow.updateMany(
-      { tenant: tenant, allowdiscuss: { $exists: false } },
-      { $set: { allowdiscuss: true } }
-    ); */
-		////////////////////////////
 		return h
 			.response({ total, cmts })
 			.header("Content-Type", "application/json; charset=utf-8;")
@@ -4199,10 +4226,10 @@ async function CommentToggle(req, h) {
 				if (myGroup !== "ADMIN") {
 					filter.starter = myEmail;
 				}
-				let aWf = await Workflow.findOneAndUpdate(
+				let aWf = await RCL.updateWorkflow(
 					filter,
 					[{ $set: { allowdiscuss: { $eq: [false, "$allowdiscuss"] } } }],
-					{ upsert: false, new: true },
+					"engine/handler.CommentToggle",
 				);
 				ret = aWf.allowdiscuss;
 				break;
@@ -4722,13 +4749,15 @@ async function WorkflowAttachmentViewer(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.params.wfid;
 		let serverId = req.params.serverId;
-		let wfFilter = { tenant, wfid, "attachments.serverId": serverId };
-		let wf = await Workflow.findOne(wfFilter, { attachments: 1 });
+		let wf = await RCL.getWorkflow({ tenant, wfid }, "engine/handler.WrokflowAttachmentViewer");
 		let attach = null;
 		for (let i = 0; i < wf.attachments.length; i++) {
 			if (wf.attachments[i].serverId === serverId) {
 				attach = wf.attachments[i];
 			}
+		}
+		if (!attach) {
+			throw new EmpError("ATTACH_NOT_FOUND", "Attachment not found");
 		}
 		let author = attach.author;
 		let contentType = attach.contentType;
@@ -4946,35 +4975,6 @@ async function NodeRerun(req, h) {
 	}
 }
 
-/*
-
-async function Fix1 (req, h) {
-  let tplid = "周报";
-  let wfs = await Workflow.find({ tplid: tplid, status: "ST_RUN" });
-  for (let i = 0; i < wfs.length; i++) {
-    let doc = wfs[i].doc;
-    if (
-      doc.indexOf(
-        `role="DEFAULT" wecom="false" cmt="yes" g="2"><p>[cn_usr_liu_executor]已提交"[liu_module]"跟进处理结果，请您审阅</p>`
-      ) > 0
-    ) {
-      doc = doc.replace(
-        `role="DEFAULT" wecom="false" cmt="yes" g="2"><p>[cn_usr_liu_executor]已提交"[liu_module]"跟进处理结果，请您审阅</p>`,
-        `role="@lucas" wecom="false" cmt="yes" g="2"><p>[cn_usr_liu_executor]已提交"[liu_module]"跟进处理结果，请您审阅</p>`
-      );
-      let wf = await Workflow.findOneAndUpdate(
-        { wfid: wfs[i].wfid },
-        { $set: { doc: doc } },
-        { upsert: false, new: true }
-      );
-      if (wf.doc.indexOf(`role="@lucas" wecom`) > -1) {
-        console.log(wfs[i].wfid, "success");
-      }
-    }
-  }
-  return "done";
-};
-*/
 async function ListUsersNotStaff(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
