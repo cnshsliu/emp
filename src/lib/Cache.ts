@@ -31,13 +31,13 @@ const internals = {
 				{
 					let ewToSet = JSON.stringify(user.ew ? user.ew : { email: true, wecom: false });
 					await redisClient.set("ew_" + email, ewToSet);
-					await redisClient.expire("ew_" + email, expire);
+					//await redisClient.expire("ew_" + email, expire);
 				}
 			}
 		}
 		if (username) {
 			await redisClient.set("name_" + email, username);
-			await redisClient.expire("name_" + email, expire);
+			//await redisClient.expire("name_" + email, expire);
 		}
 		return username;
 	},
@@ -86,7 +86,7 @@ const internals = {
 				if (user.signature) setTo = user.signature;
 
 				await redisClient.set("signature_" + email, setTo);
-				await redisClient.expire("signature_" + email, 60);
+				//await redisClient.expire("signature_" + email, 60);
 				return setTo;
 			} else {
 				return "";
@@ -178,7 +178,7 @@ const internals = {
 			let theStaff = await OrgChart.findOne(filter);
 			if (theStaff) {
 				await redisClient.set(key, theStaff.ou);
-				await redisClient.expire(key, 60);
+				//await redisClient.expire(key, 60);
 				return theStaff.ou;
 			} else {
 				console.warn("Cache.getUserOU from orgchart, Email:", email, " not found");
@@ -195,7 +195,7 @@ const internals = {
 			if (theTenant) {
 				let siteId = theTenant.site;
 				await redisClient.set(theKey, siteId);
-				await redisClient.expire(theKey, 30 * 24 * 60 * 60);
+				//await redisClient.expire(theKey, 30 * 24 * 60 * 60);
 				ret = siteId;
 			}
 		}
@@ -223,13 +223,8 @@ const internals = {
 		value: string = "v",
 		expire: number = 60,
 	): Promise<boolean> {
-		let oldV = await redisClient.get(key);
-		if (oldV) {
-			await redisClient.expire(key, expire);
-			return false;
-		}
 		await redisClient.set(key, value);
-		await redisClient.expire(key, expire);
+		//await redisClient.expire(key, expire);
 		return true;
 	},
 
@@ -242,7 +237,7 @@ const internals = {
 			let user = await User.findOne(filter, { group: 1 });
 			if (user) {
 				await redisClient.set(mygroup_redis_key, user.group);
-				await redisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
+				//await redisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
 				mygroup = user.group;
 			} else {
 				console.error("Get My Group: User not found: filter", filter);
@@ -260,7 +255,7 @@ const internals = {
 			if (org) {
 				ret = org.timezone;
 				await redisClient.set(theKey, ret);
-				await redisClient.expire(theKey, 30 * 60);
+				//await redisClient.expire(theKey, 30 * 60);
 			} else {
 				//use default Timezone
 				ret = "CST China";
@@ -278,7 +273,7 @@ const internals = {
 				ret = org.smtp;
 				if (ret) {
 					await redisClient.set(theKey, JSON.stringify(ret));
-					await redisClient.expire(theKey, 30 * 60);
+					//await redisClient.expire(theKey, 30 * 60);
 				}
 			}
 		} else {
@@ -300,7 +295,7 @@ const internals = {
 				ret = org.tags;
 				if (ret) {
 					await redisClient.set(theKey, ret);
-					await redisClient.expire(theKey, 30 * 60);
+					//await redisClient.expire(theKey, 30 * 60);
 				}
 			}
 		}
@@ -325,7 +320,7 @@ const internals = {
 			if (site) {
 				let domain = site.owner.substring(site.owner.indexOf("@"));
 				await redisClient.set(theKey, domain);
-				await redisClient.expire(theKey, 30 * 24 * 60 * 60);
+				//await redisClient.expire(theKey, 30 * 24 * 60 * 60);
 				ret = domain;
 			}
 		}
@@ -340,7 +335,7 @@ const internals = {
 			if (theTenant) {
 				let domain = theTenant.owner.substring(theTenant.owner.indexOf("@"));
 				await redisClient.set(theKey, domain);
-				await redisClient.expire(theKey, 30 * 24 * 60 * 60);
+				//await redisClient.expire(theKey, 30 * 24 * 60 * 60);
 				ret = domain;
 			}
 		}
@@ -353,7 +348,7 @@ const internals = {
 	},
 	setMyPerm: async function (permKey: string, perm: string): Promise<string> {
 		await redisClient.set(permKey, perm);
-		await redisClient.expire(permKey, PERM_EXPIRE_SECONDS);
+		//await redisClient.expire(permKey, PERM_EXPIRE_SECONDS);
 		return perm;
 	},
 	removeKey: async function (key: string): Promise<string> {
@@ -395,7 +390,7 @@ const internals = {
 		let visiKey = "visi_" + tplid;
 		if (visiPeople.length > 0) {
 			await redisClient.set(visiKey, visiPeople);
-			await redisClient.expire(visiKey, 24 * 60 * 60);
+			//await redisClient.expire(visiKey, 24 * 60 * 60);
 		}
 		return visiKey;
 	},
@@ -409,6 +404,7 @@ const internals = {
 	setRstPwdVerificationCode: async function (email: string, vrfCode: string): Promise<string> {
 		let rstPwdKey = "rstpwd_" + email;
 		await redisClient.set(rstPwdKey, vrfCode);
+		//Keep this expire, don't delete it
 		await redisClient.expire(rstPwdKey, 15 * 60);
 		return rstPwdKey;
 	},
