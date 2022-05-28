@@ -1548,9 +1548,11 @@ async function WorkSearch(req, h) {
 		}
 		//如果有wfid，则找只属于这个wfid工作流的workitems
 		let kicked = await Kicklist.findOne({ email: myEmail }).lean();
+		/*
 		if (kicked) {
 			throw new EmpError("KICKOUT", "your session is kicked out");
 		}
+		*/
 
 		let filter: any = {};
 		//filter.tenant = tenant;
