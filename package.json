@@ -52,6 +52,7 @@
     "hapi-plugin-websocket": "^2.3.8",
     "jimp": "^0.16.1",
     "joi": "^17.5.0",
+    "lru-cache": "^7.10.1",
     "marked": "^4.0.12",
     "metaflow": "^1.0.1",
     "moment": "^2.29.3",

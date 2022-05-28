@@ -1,4 +1,4 @@
-import { isMainThread } from "worker_threads";
+import { isMainThread, parentPort } from "worker_threads";
 import fs from "fs";
 import Tools from "../tools/tools";
 import User from "../database/models/User";
@@ -7,8 +7,11 @@ import Tenant from "../database/models/Tenant";
 import OrgChart from "../database/models/OrgChart";
 import Site from "../database/models/Site";
 import { redisClient } from "../database/redis";
+import LRU from "lru-cache";
 
-import type { CoverInfo, AvatarInfo } from "./EmpTypes";
+const lruCache = new LRU({ max: 10000 });
+
+import type { CoverInfo, AvatarInfo, SmtpInfo } from "./EmpTypes";
 const PERM_EXPIRE_SECONDS = 60;
 
 const asyncFilter = async (arr: any[], predicate: any) => {
@@ -30,39 +33,31 @@ const internals = {
 				username = user.username;
 				{
 					let ewToSet = JSON.stringify(user.ew ? user.ew : { email: true, wecom: false });
-					await redisClient.set("ew_" + email, ewToSet);
-					//await redisClient.expire("ew_" + email, expire);
+					lruCache.set(`EW:${email}`, ewToSet);
 				}
 			}
 		}
 		if (username) {
-			await redisClient.set("name_" + email, username);
-			//await redisClient.expire("name_" + email, expire);
+			lruCache.set(`USERNAME:${email}`, username);
 		}
 		return username;
 	},
 
-	getUserEw: async function (email: string): Promise<any> {
-		email = email.toLowerCase().trim();
-		let ew = await redisClient.get("ew_" + email);
-		if (ew) {
-			return JSON.parse(ew);
-		} else {
-			await internals.setUserName(email, null, 60);
-			ew = await redisClient.get("ew_" + email);
-			return JSON.parse(ew);
-		}
-	},
-
-	getUserName: async function (tenant: string, email: string): Promise<string> {
+	getUserName: async function (
+		tenant: string,
+		email: string,
+		where: string = "unknown",
+	): Promise<string> {
 		email = await internals.ensureTenantEmail(tenant, email);
-		let username = await redisClient.get("name_" + email);
+		//let username = await redisClient.get("USERNAME:" + email);
+		let username = lruCache.get(`USERNAME:${email}`) as string;
 		if (username) {
 			return username;
 		} else {
 			let user = await User.findOne({ tenant: tenant, email: email }, { username: 1, ew: 1 });
 			if (user) {
 				await internals.setUserName(email, user.username, 60);
+				console.log(`[Cache 3️⃣ ] 👤 getUserName ${email}  ${user.username} in ${where}`);
 				return user.username;
 			} else {
 				console.warn(
@@ -75,18 +70,34 @@ const internals = {
 		}
 	},
 
+	getUserEw: async function (email: string): Promise<any> {
+		email = email.toLowerCase().trim();
+		const key = `EW:${email}`;
+		let ew = lruCache.get(key);
+		if (ew) {
+			//console.log(`[Cache 1️⃣ ] ✉️  getUserEw ${email}  ${ew}`);
+			return ew;
+		} else {
+			await internals.setUserName(email, null, 60);
+			ew = lruCache.get(key);
+			return ew;
+		}
+	},
+
 	getUserSignature: async function (tenant: string, email: string): Promise<string> {
-		let signature = await redisClient.get("signature_" + email);
+		let key = "SIGNATURE:" + email;
+		let signature = lruCache.get(key) as string;
 		if (signature) {
 			return signature;
 		} else {
 			let user = await User.findOne({ tenant: tenant, email: email }, { signature: 1 });
 			if (user) {
 				let setTo = "";
-				if (user.signature) setTo = user.signature;
+				if (user.signature) {
+					setTo = user.signature;
+				}
 
-				await redisClient.set("signature_" + email, setTo);
-				//await redisClient.expire("signature_" + email, 60);
+				lruCache.set(key, setTo);
 				return setTo;
 			} else {
 				return "";
@@ -94,36 +105,40 @@ const internals = {
 		}
 	},
 
-	getETag: async function (key) {
-		let cached = await redisClient.get(key);
+	getETag: function (key: string): string {
+		let cached = lruCache.get(key) as string;
 		if (cached) {
 			return cached;
 		} else {
 			let etag = new Date().getTime().toString();
-			await redisClient.set(key, etag);
+			lruCache.set(key, etag);
 			return etag;
 		}
 	},
 
 	resetETag: async function (key: string) {
-		await redisClient.del(key);
 		let etag = new Date().getTime().toString();
-		await redisClient.set(key, etag);
+		lruCache.set(key, etag);
+
+		if (!isMainThread) {
+			parentPort.postMessage({ cmd: "worker_reset_etag", msg: key });
+		}
+
 		return etag;
 	},
 
 	delETag: async function (key: string) {
-		await redisClient.del(key);
-	},
-
-	delTplCoverInfo: async function (tplid: string) {
-		await redisClient.del("tplcover_" + tplid);
+		lruCache.delete(key);
+		if (!isMainThread) {
+			parentPort.postMessage({ cmd: "worker_del_etag", msg: key });
+		}
 	},
 
 	getTplCoverInfo: async function (tenant: string, tplid: string): Promise<CoverInfo> {
-		let cached = await redisClient.get("tplcover_" + tplid);
+		let key = "TPLCOVER:" + tplid;
+		let cached = lruCache.get(key) as CoverInfo;
 		if (cached) {
-			return JSON.parse(cached);
+			return cached;
 		} else {
 			let ret = null;
 			let theTpl = await Template.findOne(
@@ -136,40 +151,41 @@ const internals = {
 				media: "image/png",
 				etag: theTpl.coverTag,
 			};
-			await redisClient.set("tplcover_" + tplid, JSON.stringify(coverinfo));
+			lruCache.set(key, coverinfo);
 			return coverinfo;
 		}
 	},
+	delTplCoverInfo: async function (tplid: string) {
+		let key = "TPLCOVER:" + tplid;
+		lruCache.delete(key);
+	},
 
 	getUserAvatarInfo: async function (tenant: string, email: string): Promise<AvatarInfo> {
-		let cached = await redisClient.get("avatar_" + email);
+		let key = "AVATAR:" + email;
+		let cached = lruCache.get(key) as AvatarInfo;
 		if (cached) {
-			console.log("===>Avatar USECACHE:", email, cached);
-			return JSON.parse(cached);
+			return cached;
 		} else {
 			let ret = null;
 			let user = await User.findOne({ tenant: tenant, email: email }, { avatarinfo: 1 });
 			if (user && user.avatarinfo && user.avatarinfo.path) {
 				if (fs.existsSync(user.avatarinfo.path)) {
-					console.log("===>Avatar EXIST:", user.avatarinfo.path, "exists");
 					ret = user.avatarinfo;
 				} else {
-					console.log("===>Avatar NOENT:", user.avatarinfo.path);
 					ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
-					console.log("===>Avatar USEDEFAULT:", user.avatarinfo.path);
 				}
 			} else {
 				ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
 			}
-			await redisClient.set("avatar_" + email, JSON.stringify(ret));
-			//await redisClient.expire("avatar_" + email, 600);
+			lruCache.set(key, ret);
 			return ret;
 		}
 	},
 
 	getUserOU: async function (tenant: string, email: string): Promise<string> {
-		let key = "ou_" + tenant + email;
-		let ouCode = await redisClient.get(key);
+		//TODO: where is the updateing?
+		let key = "OU:" + tenant + email;
+		let ouCode = lruCache.get(key) as string;
 		if (ouCode) {
 			return ouCode;
 		} else {
@@ -177,29 +193,13 @@ const internals = {
 			let filter = { tenant: tenant, uid: email };
 			let theStaff = await OrgChart.findOne(filter);
 			if (theStaff) {
-				await redisClient.set(key, theStaff.ou);
-				//await redisClient.expire(key, 60);
+				lruCache.set(key, theStaff.ou);
 				return theStaff.ou;
 			} else {
 				console.warn("Cache.getUserOU from orgchart, Email:", email, " not found");
 				return "USER_NOT_FOUND_OC";
 			}
 		}
-	},
-
-	getTenantSiteId: async function (tenant_id: string): Promise<string> {
-		let theKey = "TNTSITEID_" + tenant_id;
-		let ret = await redisClient.get(theKey);
-		if (!ret) {
-			let theTenant = await Tenant.findOne({ _id: tenant_id });
-			if (theTenant) {
-				let siteId = theTenant.site;
-				await redisClient.set(theKey, siteId);
-				//await redisClient.expire(theKey, 30 * 24 * 60 * 60);
-				ret = siteId;
-			}
-		}
-		return ret;
 	},
 
 	ensureTenantEmail: async function (tenant: string, email: string): Promise<string> {
@@ -223,21 +223,21 @@ const internals = {
 		value: string = "v",
 		expire: number = 60,
 	): Promise<boolean> {
-		await redisClient.set(key, value);
+		lruCache.set(key, value);
 		//await redisClient.expire(key, expire);
 		return true;
 	},
 
 	getMyGroup: async function (email: string): Promise<string> {
 		if (email[0] === "@") email = email.substring(1);
-		let mygroup_redis_key = "e2g_" + email.toLowerCase();
-		let mygroup = await redisClient.get(mygroup_redis_key);
+		let key = "USRGRP:" + email.toLowerCase();
+		let mygroup = lruCache.get(key) as string;
 		if (!mygroup) {
 			let filter = { email: email };
 			let user = await User.findOne(filter, { group: 1 });
 			if (user) {
-				await redisClient.set(mygroup_redis_key, user.group);
-				//await redisClient.expire(mygroup_redis_key, PERM_EXPIRE_SECONDS);
+				lruCache.set(key, user.group);
+				//await redisClient.expire(key, PERM_EXPIRE_SECONDS);
 				mygroup = user.group;
 			} else {
 				console.error("Get My Group: User not found: filter", filter);
@@ -247,55 +247,55 @@ const internals = {
 		return mygroup;
 	},
 
-	getOrgTimeZone: async function (orgid: string): Promise<string> {
-		let theKey = "otz_" + orgid;
-		let ret = await redisClient.get(theKey);
+	getOrgTimeZone: async function (tenant: string): Promise<string> {
+		let key = "OTZ:" + tenant;
+		let ret = lruCache.get(key) as string;
 		if (!ret) {
-			let org = await Tenant.findOne({ _id: orgid });
+			let org = await Tenant.findOne({ _id: tenant });
 			if (org) {
 				ret = org.timezone;
-				await redisClient.set(theKey, ret);
-				//await redisClient.expire(theKey, 30 * 60);
+				lruCache.set(key, ret);
 			} else {
-				//use default Timezone
 				ret = "CST China";
 			}
 		}
 		return ret;
 	},
 
-	getOrgSmtp: async function (orgid: string): Promise<string> {
-		let theKey = "smtp_" + orgid;
-		let ret = await redisClient.get(theKey);
+	getOrgSmtp: async function (tenant: string): Promise<SmtpInfo> {
+		let key = "SMTP:" + tenant;
+		let ret = lruCache.get(key) as SmtpInfo;
 		if (!ret) {
-			let org = await Tenant.findOne({ _id: orgid });
+			let org = await Tenant.findOne({ _id: tenant });
 			if (org) {
 				ret = org.smtp;
 				if (ret) {
-					await redisClient.set(theKey, JSON.stringify(ret));
-					//await redisClient.expire(theKey, 30 * 60);
+					lruCache.set(key, ret);
 				}
 			}
-		} else {
-			ret = JSON.parse(ret);
 		}
 		if (!ret) {
-			//ue default;
-			ret = "smtp.google.com";
+			ret = {
+				from: "fake@fake.com",
+				host: "smtp.google.com",
+				port: 1234,
+				secure: true,
+				username: "fake_name",
+				password: "unknown",
+			};
 		}
 		return ret;
 	},
 
-	getOrgTags: async function (orgid: string): Promise<string> {
-		let theKey = "orgtags_" + orgid;
-		let ret = await redisClient.get(theKey);
+	getOrgTags: async function (tenant: string): Promise<string> {
+		let key = "ORGTAGS:" + tenant;
+		let ret = lruCache.get(key) as string;
 		if (!ret) {
-			let org = await Tenant.findOne({ _id: orgid });
+			let org = await Tenant.findOne({ _id: tenant });
 			if (org) {
 				ret = org.tags;
 				if (ret) {
-					await redisClient.set(theKey, ret);
-					//await redisClient.expire(theKey, 30 * 60);
+					lruCache.set(key, ret);
 				}
 			}
 		}
@@ -313,29 +313,29 @@ const internals = {
 	//
 	//该方法在 account/handler中被使用，当用户登录时只使用用户ID时，调用本方法
 	getSiteDomain: async function (siteid: string): Promise<string> {
-		let theKey = "SD_" + siteid;
-		let ret = await redisClient.get(theKey);
+		let key = "SITEDOMAIN:" + siteid;
+		let ret = lruCache.get(key) as string;
 		if (!ret) {
 			let site = await Site.findOne({ siteid: siteid });
 			if (site) {
 				let domain = site.owner.substring(site.owner.indexOf("@"));
-				await redisClient.set(theKey, domain);
-				//await redisClient.expire(theKey, 30 * 24 * 60 * 60);
+				lruCache.set(key, domain);
+				//await redisClient.expire(key, 30 * 24 * 60 * 60);
 				ret = domain;
 			}
 		}
 		//console.log(`Domain of ${siteid} is ${ret}`);
 		return ret;
 	},
+
 	getTenantDomain: async function (tenant: string): Promise<string> {
-		let theKey = "TNTD_" + tenant;
-		let ret = await redisClient.get(theKey);
+		let key = "TNTD:" + tenant;
+		let ret = lruCache.get(key) as string;
 		if (!ret) {
 			let theTenant = await Tenant.findOne({ _id: tenant }, { owner: 1, name: 1 });
 			if (theTenant) {
 				let domain = theTenant.owner.substring(theTenant.owner.indexOf("@"));
-				await redisClient.set(theKey, domain);
-				//await redisClient.expire(theKey, 30 * 24 * 60 * 60);
+				lruCache.set(key, domain);
 				ret = domain;
 			}
 		}
@@ -344,65 +344,66 @@ const internals = {
 	},
 
 	getMyPerm: async function (permKey: string): Promise<string> {
-		return await redisClient.get(permKey);
+		console.log("YYYYYYYYYYYYYYYYYYESSSSSSSSSSS");
+		return lruCache.get(permKey);
 	},
 	setMyPerm: async function (permKey: string, perm: string): Promise<string> {
-		await redisClient.set(permKey, perm);
-		//await redisClient.expire(permKey, PERM_EXPIRE_SECONDS);
+		lruCache.set(permKey, perm);
 		return perm;
 	},
 	removeKey: async function (key: string): Promise<string> {
-		await redisClient.del(key);
+		lruCache.delete(key);
 		return key;
 	},
 
 	removeKeyByEmail: async function (email: string, cacheType: string = null): Promise<string> {
 		let emailKey = email.toLowerCase().trim();
 		if (cacheType) {
-			await redisClient.del(cacheType + "_" + emailKey);
+			lruCache.delete(cacheType + ":" + emailKey);
 		} else {
-			await redisClient.del("e2g_" + emailKey);
-			await redisClient.del("perm_" + emailKey);
-			await redisClient.del("name_" + emailKey);
-			await redisClient.del("ew_" + emailKey);
-			await redisClient.del("avatar_" + emailKey);
-			await redisClient.del("signature_" + emailKey);
+			lruCache.delete("USRGRP:" + emailKey);
+			lruCache.delete("PERM:" + emailKey);
+			lruCache.delete("USERNAME:" + emailKey);
+			lruCache.delete("EW:" + emailKey);
+			lruCache.delete("OU:" + emailKey);
+			lruCache.delete("AVATAR:" + emailKey);
+			lruCache.delete("SIGNATURE:" + emailKey);
 		}
 		return email;
 	},
 
-	removeOrgRelatedCache: async function (orgid: string, cacheType: string): Promise<string> {
-		if (cacheType) await redisClient.del(cacheType + "_" + orgid);
+	removeOrgRelatedCache: async function (tenant: string, cacheType: string): Promise<string> {
+		if (cacheType) lruCache.delete(cacheType + ":" + tenant);
 		else {
-			await redisClient.del("otz_" + orgid);
-			await redisClient.del("smtp_" + orgid);
-			await redisClient.del("orgtags_" + orgid);
+			lruCache.delete("OTZ:" + tenant);
+			lruCache.delete("SMTP:" + tenant);
+			lruCache.delete("ORGTAGS:" + tenant);
 		}
-		return orgid;
+		return tenant;
 	},
 
 	getVisi: async function (tplid: string): Promise<string> {
-		let visiKey = "visi_" + tplid;
-		let visiPeople = await redisClient.get(visiKey);
+		let visiKey = "VISI:" + tplid;
+		let visiPeople = lruCache.get(visiKey) as string;
 		return visiPeople;
 	},
 	setVisi: async function (tplid: string, visiPeople: string): Promise<string> {
-		let visiKey = "visi_" + tplid;
+		let visiKey = "VISI:" + tplid;
 		if (visiPeople.length > 0) {
-			await redisClient.set(visiKey, visiPeople);
-			//await redisClient.expire(visiKey, 24 * 60 * 60);
+			lruCache.set(visiKey, visiPeople);
 		}
 		return visiKey;
 	},
 	removeVisi: async function (tplid: string): Promise<string> {
-		let visiKey = "visi_" + tplid;
-		await redisClient.del(visiKey);
+		let visiKey = "VISI:" + tplid;
+		lruCache.delete(visiKey);
 		return visiKey;
 	},
 
 	//设置重置密码的Token
 	setRstPwdVerificationCode: async function (email: string, vrfCode: string): Promise<string> {
-		let rstPwdKey = "rstpwd_" + email;
+		//这里要用Redis的expire机制，lru-cache也有，但没有用过, 直接用 redis保险
+		let rstPwdKey = "RSTPWD:" + email;
 		await redisClient.set(rstPwdKey, vrfCode);
 		//Keep this expire, don't delete it
 		await redisClient.expire(rstPwdKey, 15 * 60);
@@ -410,7 +411,7 @@ const internals = {
 	},
 	//取得重置密码的Token
 	getRstPwdVerificationCode: async function (email: string): Promise<string> {
-		let rstPwdKey = "rstpwd_" + email;
+		let rstPwdKey = "RSTPWD:" + email;
 		let ret = await redisClient.get(rstPwdKey);
 		return ret;
 	},

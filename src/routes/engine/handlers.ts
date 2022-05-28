@@ -275,7 +275,7 @@ async function SeeItWork(req, h) {
 			update = {
 				$set: {
 					author: author,
-					authorName: await Cache.getUserName(tenant, author),
+					authorName: await Cache.getUserName(tenant, author, "SeeItWork"),
 					doc: doc,
 					ins: false,
 				},
@@ -342,7 +342,7 @@ async function TemplatePut(req, h) {
 				tenant: tenant,
 				tplid: tplid,
 				author: myEmail,
-				authorName: await Cache.getUserName(tenant, myEmail),
+				authorName: await Cache.getUserName(tenant, myEmail, "TemplatePut"),
 
 				doc: req.payload.doc,
 				lastUpdateBy: myEmail,
@@ -356,7 +356,7 @@ async function TemplatePut(req, h) {
 			objtype: "Template",
 			objid: obj.tplid,
 			editor: myEmail,
-			editorName: await Cache.getUserName(tenant, myEmail),
+			editorName: await Cache.getUserName(tenant, myEmail, "TemplatePut"),
 		});
 		edittingLog = await edittingLog.save();
 		return h.response({ _id: obj._id, tplid: obj.tplid, updatedAt: obj.updatedAt });
@@ -511,7 +511,7 @@ async function TemplateRename(req, h) {
 			throw new EmpError("NO_PERM", "You don't have permission to rename this template");
 		tpl.tplid = req.payload.tplid;
 		if (Tools.isEmpty(tpl.authorName)) {
-			tpl.authorName = await Cache.getUserName(tenant, tpl.author);
+			tpl.authorName = await Cache.getUserName(tenant, tpl.author, "TemplateRename");
 		}
 		let oldTplId = req.payload.fromid;
 		let newTplId = req.payload.tplid;
@@ -704,15 +704,17 @@ async function WorkflowRead(req, h) {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		if (wf) {
-			wf.beginat = wf.createdAt;
-			wf.history = await Engine.getWfHistory(myEmail, tenant, req.payload.wfid, wf);
-			if (withDoc === false) delete wf.doc;
-			if (wf.status === "ST_DONE") wf.doneat = wf.updatedAt;
-			wf.starterCN = await Cache.getUserName(tenant, wf.starter);
+			let retWf = JSON.parse(JSON.stringify(wf));
+			retWf.beginat = retWf.createdAt;
+			retWf.history = await Engine.getWfHistory(myEmail, tenant, req.payload.wfid, wf);
+			if (withDoc === false) delete retWf.doc;
+			if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
+			retWf.starterCN = await Cache.getUserName(tenant, wf.starter, "WorkflowRead");
+
+			return retWf;
 		} else {
-			wf = { wftitle: "Not Found" };
+			return { wftitle: "Not Found" };
 		}
-		return wf;
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -792,7 +794,11 @@ async function WorkflowDumpInstemplate(req, h) {
 					tenant: tenant,
 					tplid: tplid,
 					author: req.auth.credentials.email,
-					authorName: await Cache.getUserName(tenant, req.auth.credentials.email),
+					authorName: await Cache.getUserName(
+						tenant,
+						req.auth.credentials.email,
+						"WorkflowDumpInstemplate",
+					),
 					doc: theTemplateDoc,
 					ins: true,
 				},
@@ -1081,8 +1087,8 @@ async function WorkflowPause(req, h) {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
-		let status = await Engine.pauseWorkflow(tenant, myEmail, wfid);
 		await Engine.resetTodosETagByWfId(tenant, wfid);
+		let status = await Engine.pauseWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1096,8 +1102,8 @@ async function WorkflowResume(req, h) {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
-		let status = await Engine.resumeWorkflow(tenant, myEmail, wfid);
 		await Engine.resetTodosETagByWfId(tenant, wfid);
+		let status = await Engine.resumeWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1111,8 +1117,8 @@ async function WorkflowStop(req, h) {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
-		let status = await Engine.stopWorkflow(tenant, myEmail, wfid);
 		await Engine.resetTodosETagByWfId(tenant, wfid);
+		let status = await Engine.stopWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1126,8 +1132,8 @@ async function WorkflowRestart(req, h) {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
-		let status = await Engine.restartWorkflow(tenant, myEmail, wfid);
 		await Engine.resetTodosETagByWfId(tenant, wfid);
+		let status = await Engine.restartWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1141,8 +1147,8 @@ async function WorkflowDestroy(req, h) {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
-		let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
 		await Engine.resetTodosETagByWfId(tenant, wfid);
+		let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(ret);
 	} catch (err) {
@@ -1158,8 +1164,8 @@ async function WorkflowDestroyByTitle(req, h) {
 		let wftitle = req.payload.wftitle;
 		let wfs = await Workflow.find({ tenant: tenant, wftitle: wftitle }, { _id: 0, wfid: 1 }).lean();
 		for (let i = 0; i < wfs.length; i++) {
-			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
 			await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
+			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
 		}
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Done");
@@ -1176,8 +1182,8 @@ async function WorkflowDestroyByTplid(req, h) {
 		let tplid = req.payload.tplid;
 		let wfs = await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean();
 		for (let i = 0; i < wfs.length; i++) {
-			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
 			await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
+			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
 		}
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Done");
@@ -1192,7 +1198,9 @@ async function WorkflowRestartThenDestroy(req, h) {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let wfid = req.payload.wfid;
+		await Engine.resetTodosETagByWfId(tenant, wfid);
 		let newWf = await Engine.restartWorkflow(tenant, myEmail, wfid);
+		await Engine.resetTodosETagByWfId(tenant, newWf.wfid);
 		await Engine.destroyWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(newWf);
@@ -1236,7 +1244,6 @@ async function WorkflowOP(req, h) {
 					req.payload,
 				);
 		}
-		await Engine.resetTodosETagByWfId(tenant, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(ret);
 	} catch (err) {
@@ -1340,7 +1347,7 @@ async function WorkflowSearch(req, h) {
 	let myGroup = await Cache.getMyGroup(myEmail);
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:WORKFLOWS:${tenant}`);
+		let latestETag = Cache.getETag(`ETAG:WORKFLOWS:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response({})
@@ -1350,9 +1357,6 @@ async function WorkflowSearch(req, h) {
 				.header("X-Content-Type-Options", "nosniff")
 				.header("ETag", latestETag);
 		}
-		let starter = req.payload.starter;
-		//starter = starter ? starter : myEmail;
-		if (starter) starter = Tools.makeEmailSameDomain(starter, myEmail);
 		//检查当前用户是否有读取进程的权限
 		let me = await User.findOne({ _id: req.auth.credentials._id });
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
@@ -1371,14 +1375,6 @@ async function WorkflowSearch(req, h) {
 			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
 		}
-		if (starter) {
-			filter["starter"] = starter;
-			todoFilter["starter"] = starter;
-		}
-		if (Tools.hasValue(req.payload.status)) {
-			filter["status"] = req.payload.status;
-			todoFilter["wfstatus"] = req.payload.status;
-		}
 		//如果指定了tplid,则使用所指定的tplid
 		if (Tools.hasValue(req.payload.tplid)) {
 			filter["tplid"] = req.payload.tplid;
@@ -1394,6 +1390,11 @@ async function WorkflowSearch(req, h) {
 		if (req.payload.wfid) {
 			filter["wfid"] = req.payload.wfid;
 			todoFilter["wfid"] = req.payload.wfid;
+		}
+
+		if (Tools.hasValue(req.payload.status)) {
+			filter["status"] = req.payload.status;
+			todoFilter["wfstatus"] = req.payload.status;
 		}
 
 		if (Tools.isEmpty(filter.tplid)) {
@@ -1432,6 +1433,12 @@ async function WorkflowSearch(req, h) {
       { $group: { _id: "$tplid", count: { $sum: 1 } } },
     ]);
      */
+		let starter = req.payload.starter;
+		if (starter) {
+			starter = Tools.makeEmailSameDomain(starter, myEmail);
+			filter["starter"] = starter;
+			todoFilter["starter"] = starter;
+		}
 		//如果当前用户不是ADMIN, 则需要检查进程是否与其相关
 		if (me.group !== "ADMIN") {
 			todoFilter.doer = myEmail;
@@ -1473,7 +1480,7 @@ async function WorkflowSearch(req, h) {
 		let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
 
 		for (let i = 0; i < retObjs.length; i++) {
-			retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter);
+			retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter, "WorkflowSearch");
 			retObjs[i].commentCount = await Comment.countDocuments({
 				tenant,
 				"context.wfid": retObjs[i].wfid,
@@ -1517,14 +1524,19 @@ async function WorkflowGetLatest(req, h) {
 
 async function WorkSearch(req, h) {
 	const tenant = req.auth.credentials.tenant._id;
-	let myEmail = req.auth.credentials.email;
+	const myEmail = req.auth.credentials.email;
+	const myGroup = await Cache.getMyGroup(myEmail);
+
 	let doer = req.payload.doer ? req.payload.doer : myEmail;
 	let reason = req.payload.reason ? req.payload.reason : "unknown";
 	let sortBy = req.payload.sortby;
 	doer = Tools.makeEmailSameDomain(doer, myEmail);
+	if (myGroup !== "ADMIN" && doer !== myEmail) {
+		doer = myEmail;
+	}
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:TODOS:${doer}`);
+		let latestETag = Cache.getETag(`ETAG:TODOS:${doer}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response({})
@@ -1535,7 +1547,6 @@ async function WorkSearch(req, h) {
 				.header("ETag", latestETag);
 		}
 		//如果有wfid，则找只属于这个wfid工作流的workitems
-		let myGroup = await Cache.getMyGroup(myEmail);
 		let kicked = await Kicklist.findOne({ email: myEmail }).lean();
 		if (kicked) {
 			throw new EmpError("KICKOUT", "your session is kicked out");
@@ -1733,7 +1744,11 @@ async function CheckCoworkers(req, h) {
 		let ret = "";
 		for (let i = 0; i < uids.length; i++) {
 			let uid = uids[i][0] === "@" ? uids[i].substring(1) : uids[i];
-			let cn = await Cache.getUserName(tenant, Tools.makeEmailSameDomain(uid, myEmail));
+			let cn = await Cache.getUserName(
+				tenant,
+				Tools.makeEmailSameDomain(uid, myEmail),
+				"CheckCoworkers",
+			);
 			if (cn === "USER_NOT_FOUND") {
 				ret += "<span class='text-danger'>" + uids[i] + "</span> ";
 			} else {
@@ -1993,7 +2008,7 @@ async function TemplateIdList(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
+		let latestETag = Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -2139,7 +2154,7 @@ async function TemplateSearch(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
+		let latestETag = Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -2152,9 +2167,6 @@ async function TemplateSearch(req, h) {
 		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
 			throw new EmpError("NO_PERM", "no permission to read template");
 
-		let author = req.payload.author;
-		if (!author) author = myEmail;
-		else author = Tools.makeEmailSameDomain(author, myEmail);
 		let myBannedTemplatesIds = [];
 		if (myGroup !== "ADMIN") {
 			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
@@ -2206,7 +2218,9 @@ async function TemplateSearch(req, h) {
 			};
 		}
 
-		filter["author"] = author;
+		if (req.payload.author) {
+			filter["author"] = Tools.makeEmailSameDomain(req.payload.author, myEmail);
+		}
 
 		//let tspan = req.payload.tspan;
 		let tspan = "any";
@@ -2233,7 +2247,7 @@ async function TemplateSearch(req, h) {
 		console.log(
 			`[Template Search] ${myEmail} [${total}] filter: ${JSON.stringify(
 				filter,
-			)} sortBy: ${sortBy} limit: ${limit}`,
+			)} sortBy: ${sortBy} limit: ${limit}\nGot ${total}`,
 		);
 		return h
 			.response({ total, objs: ret, version: Const.VERSION })
@@ -2304,7 +2318,7 @@ async function TemplateImport(req, h) {
 			update = {
 				$set: {
 					author: author,
-					authorName: await Cache.getUserName(tenant, author),
+					authorName: await Cache.getUserName(tenant, author, "TemplateImport"),
 					ins: false,
 					doc: doc,
 				},
@@ -3483,7 +3497,7 @@ async function OrgChartExpand(req, h) {
 			let user = await User.findOne({ tenant: tenant, email: tmp[i].uid });
 			if (user && user.active === false) {
 				tmp[i].uid = user.succeed;
-				tmp[i].cn = await Cache.getUserName(tenant, user.succeed);
+				tmp[i].cn = await Cache.getUserName(tenant, user.succeed, "OrgChartExpand");
 			}
 		}
 		ret = ret.concat(tmp);
@@ -3749,7 +3763,7 @@ async function CommentWorkflowLoad(req, h) {
 		let todoid = req.payload.todoid;
 
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:WF:FORUM:${tenant}:${wfid}`);
+		let latestETag = Cache.getETag(`ETAG:WF:FORUM:${tenant}:${wfid}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -3972,7 +3986,7 @@ async function CommentSearch(req, h) {
 		let q = req.payload.q;
 
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:FORUM:${tenant}`);
+		let latestETag = Cache.getETag(`ETAG:FORUM:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response({})
@@ -4085,7 +4099,7 @@ async function CommentSearch(req, h) {
 		}
 
 		for (let i = 0; i < cmts.length; i++) {
-			cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
+			cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who, "CommentSearch");
 			if (cmts[i].context) {
 				let todo = await Todo.findOne(
 					{
@@ -4098,7 +4112,7 @@ async function CommentSearch(req, h) {
 				if (todo) {
 					cmts[i].todoTitle = todo.title;
 					cmts[i].todoDoer = todo.doer;
-					cmts[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+					cmts[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer, "CommentSearch");
 				}
 			}
 			cmts[i].upnum = await Thumb.countDocuments({
@@ -4128,6 +4142,7 @@ async function CommentSearch(req, h) {
 					cmts[i].latestReply[r].whoCN = await Cache.getUserName(
 						tenant,
 						cmts[i].latestReply[r].who,
+						"commentSearch",
 					);
 					cmts[i].latestReply[r].mdcontent2 = (
 						await Engine.splitMarked(tenant, cmts[i].latestReply[r])
@@ -4461,7 +4476,7 @@ async function TodoSetDoer(req, h) {
 
 		return h.response({
 			newdoer: newDoerEmail,
-			newcn: await Cache.getUserName(tenant, newDoerEmail),
+			newcn: await Cache.getUserName(tenant, newDoerEmail, "TodoSetDoer"),
 		});
 	} catch (err) {
 		console.error(err);
@@ -4826,11 +4841,11 @@ async function WecomBotForTodoSet(req, h) {
 }
 
 async function TemplateSetCover(req, h) {
+	const tenant = req.auth.credentials.tenant._id;
+	let author = req.auth.credentials.email;
+	let blobInfo = req.payload.blob;
+	let tplid = req.payload.tplid;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let author = req.auth.credentials.email;
-		let blobInfo = req.payload.blob;
-		let tplid = req.payload.tplid;
 		let ext = ".png";
 		switch (blobInfo["content-type"]) {
 			case "image/png":
@@ -5108,7 +5123,6 @@ async function ReplaceUserExecute(req, h) {
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
-		console.log(req.payload);
 		Engine.replaceUser({
 			tenant,
 			domain: Tools.getEmailDomain(myEmail),
@@ -5159,7 +5173,7 @@ async function SavedSearchList(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag(`ETAG:SAVEDSEARCH:${myEmail}`);
+		let latestETag = Cache.getETag(`ETAG:SAVEDSEARCH:${myEmail}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -5341,6 +5355,7 @@ export default {
 	WorkflowResume,
 	WorkflowStop,
 	WorkflowRestart,
+	WorkflowRestartThenDestroy,
 	WorkflowDestroy,
 	WorkflowDestroyByTitle,
 	WorkflowDestroyByTplid,
@@ -5355,7 +5370,6 @@ export default {
 	WorkflowUpgrade,
 	WorkflowAddFile,
 	WorkflowRemoveAttachment,
-	WorkflowRestartThenDestroy,
 	WorkflowSetPboAt,
 	WorkflowGetFirstTodoid,
 	WorkflowReadlog,

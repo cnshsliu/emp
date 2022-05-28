@@ -50,7 +50,7 @@ async function DelegationFromMe(req, h) {
 	let myEmail = req.auth.credentials.email;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag("ETAG:DELEGATION:" + myEmail);
+		let latestETag = Cache.getETag("ETAG:DELEGATION:" + myEmail);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -77,7 +77,7 @@ async function DelegationFromMeToday(req, h) {
 	let tenant = req.auth.credentials.tenant._id;
 	let myEmail = req.auth.credentials.email;
 	let ifNoneMatch = req.headers["if-none-match"];
-	let latestETag = await Cache.getETag("ETAG:DELEGATION:" + myEmail);
+	let latestETag = Cache.getETag("ETAG:DELEGATION:" + myEmail);
 	if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 		return h
 			.response([])
@@ -105,7 +105,7 @@ async function DelegationFromMeOnDate(req, h) {
 	let myEmail = req.auth.credentials.email;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag("ETAG:DELEGATION:" + myEmail);
+		let latestETag = Cache.getETag("ETAG:DELEGATION:" + myEmail);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -132,7 +132,7 @@ async function DelegationToMe(req, h) {
 	let myEmail = req.auth.credentials.email;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag("ETAG:DELEGATION:" + myEmail);
+		let latestETag = Cache.getETag("ETAG:DELEGATION:" + myEmail);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -159,7 +159,7 @@ async function DelegationToMeToday(req, h) {
 	let myEmail = req.auth.credentials.email;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag("ETAG:DELEGATION:" + myEmail);
+		let latestETag = Cache.getETag("ETAG:DELEGATION:" + myEmail);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -186,7 +186,7 @@ async function DelegationToMeOnDate(req, h) {
 	let myEmail = req.auth.credentials.email;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = await Cache.getETag("ETAG:DELEGATION:" + myEmail);
+		let latestETag = Cache.getETag("ETAG:DELEGATION:" + myEmail);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])

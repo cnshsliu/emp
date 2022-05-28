@@ -2,9 +2,18 @@
 import Tools from "../tools/tools";
 import nodemailer from "nodemailer";
 import ServerConfig from "../../secret/keep_secret";
+import { SmtpInfo } from "./EmpTypes";
 
 const Mailman = {
-	mail: async function (smtp, from, toemail, cc, bcc, subject, mailbody) {
+	mail: async function (
+		smtp: SmtpInfo,
+		from: string,
+		toemail: string | string[],
+		cc: string | string[],
+		bcc: string | string[],
+		subject: string,
+		mailbody: string,
+	) {
 		/* console.log(
     `mail from ${from} to ${toemail} via host ${smtp.host} port ${smtp.port} secure${smtp.secure} auth: ${smtp.username} pwd:... body ${mailbody} `
   ); */

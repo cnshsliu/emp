@@ -52,6 +52,7 @@ import type {
 	workFullInfo,
 	workflowInfo,
 	ActionDef,
+	SmtpInfo,
 } from "./EmpTypes";
 const asyncFilter = async (arr, predicate) => {
 	const results = await Promise.all(arr.map(predicate));
@@ -100,6 +101,10 @@ const callYarkNodeWorker = function (msg) {
 				let smtp = await Cache.getOrgSmtp(message.msg.tenant);
 				message.msg.smtp = smtp;
 				await callSendMailWorker(message.msg);
+			} else if (message.msg && message.cmd === "worker_reset_etag") {
+				await Cache.resetETag(message.msg);
+			} else if (message.msg && message.cmd === "worker_del_etag") {
+				await Cache.delETag(message.msg);
 			} else {
 				console.log("\t" + message);
 				console.log("\t====>Now Resolve YarkNodeWorker ");
@@ -333,14 +338,15 @@ const startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
 		null, //kvarString
 		false,
 	); //
-	let directorCN = await Cache.getUserName(tenant, directorEmail);
+	let directorCN = await Cache.getUserName(tenant, directorEmail, "startBatchWorkflow");
 	console.log(directorCN, " start Workflow for ", doers.length, " people");
 	let emails = doers.map((x) => x.uid);
 	await __batchStartWorkflow(tenant, tplid, emails, directorCN);
 };
 const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 	for (let i = 0; i < emails.length; i++) {
-		let processTitle = (await Cache.getUserName(tenant, emails[i])) + ": " + tplid;
+		let processTitle =
+			(await Cache.getUserName(tenant, emails[i], "__batchStartWorkflow")) + ": " + tplid;
 		let msgToSend = {
 			CMD: "CMD_startWorkflow",
 			rehearsal: false,
@@ -624,6 +630,7 @@ const __doneTodo = async function (
 	let tpNode = tpRoot.find("#" + todo.nodeid);
 	let workNode = wfRoot.find("#" + todo.workid);
 	//let workNodeText = workNode.toString();
+	/*
 	if (workNode.hasClass("ST_RUN") === false) {
 		try {
 			let st = getStatusFromClass(workNode);
@@ -641,6 +648,7 @@ const __doneTodo = async function (
 			console.error(e);
 		}
 	}
+	*/
 
 	let workResultRoute = userDecision;
 
@@ -829,7 +837,6 @@ const __doneTodo = async function (
 		//////////////////////////////////////////////////
 		if (workNode.hasClass("ADHOC") === false) {
 			let activityCode = tpNode.find("code").first().text().trim();
-			debugger;
 			if (activityCode.length > 0) {
 				////////////////////////////////////////////////////
 				// process Script -- START
@@ -1108,7 +1115,7 @@ const __doneTodo = async function (
 	let recipients = [];
 	for (let i = 0; i < someone.length; i++) {
 		const email = Tools.makeEmailSameDomain(someone[i], todo.doer);
-		const userName = await Cache.getUserName(tenant, email);
+		const userName = await Cache.getUserName(tenant, email, "__doneTodo");
 		if (userName !== "USER_NOT_FOUND") recipients.push(email);
 	}
 	if (recipients.length > 0) {
@@ -1243,7 +1250,7 @@ const buildWorkDoneMarkdownMessage = async function (
 		msgtype: "markdown",
 		markdown: {
 			content: `# ${theWork.title} 已完成
-Last done by ${await Cache.getUserName(tenant, doer)}
+Last done by ${await Cache.getUserName(tenant, doer, "buildWorkDoneMarkdownMessage")}
 # 节点决策: ${workDecision}
 ${comment ? comment : ""}
 # 工作项：
@@ -1269,7 +1276,7 @@ const setPeopleFromContent = async function (
 	let tmp = Tools.getUidsFromText(content);
 	for (let i = 0; i < tmp.length; i++) {
 		let toWhomEmail = Tools.makeEmailSameDomain(tmp[i], emailDomainReferenceUser);
-		let receiverCN = await Cache.getUserName(tenant, toWhomEmail);
+		let receiverCN = await Cache.getUserName(tenant, toWhomEmail, "setPeopleFromContent");
 		if (receiverCN !== "USER_NOT_FOUND") {
 			people.push(tmp[i]);
 			emails.push(toWhomEmail);
@@ -1286,7 +1293,7 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 	if (content.trim().length === 0) return;
 	let emails = [todo.wfstarter];
 	let people = [Tools.getEmailPrefix(todo.wfstarter)];
-	let doerCN = await Cache.getUserName(tenant, doer);
+	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForTodo");
 	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
 	let msg = {
 		tenant: todo.tenant,
@@ -1320,9 +1327,10 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 	);
 	ret.todoTitle = todo.title;
 	ret.todoDoer = todo.doer;
-	ret.todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+	ret.todoDoerCN = await Cache.getUserName(tenant, todo.doer, "postCommentForTodo");
 	return ret;
 };
+
 const postCommentForComment = async function (tenant, doer, cmtid, content, threadid) {
 	let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
 
@@ -1330,7 +1338,7 @@ const postCommentForComment = async function (tenant, doer, cmtid, content, thre
 	let people = cmt.people;
 	people.push(Tools.getEmailPrefix(cmt.who));
 	let emails = people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
-	let doerCN = await Cache.getUserName(tenant, doer);
+	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForComment");
 	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
 	let msg = {
 		tenant: tenant,
@@ -1415,7 +1423,7 @@ const __postComment = async function (
 							console.log("Bypass: comment's author email to him/herself");
 							continue;
 						}
-						let receiverCN = await Cache.getUserName(tenant, emails[i]);
+						let receiverCN = await Cache.getUserName(tenant, emails[i], "__postComment");
 						if (receiverCN === "USER_NOT_FOUND") continue;
 						let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
 						let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
@@ -1444,8 +1452,8 @@ const __postComment = async function (
 			//}, 1000);
 		}
 		comment = JSON.parse(JSON.stringify(comment));
-		comment.whoCN = await Cache.getUserName(tenant, comment.who);
-		comment.towhomCN = await Cache.getUserName(tenant, toWhom);
+		comment.whoCN = await Cache.getUserName(tenant, comment.who, "__postComment");
+		comment.towhomCN = await Cache.getUserName(tenant, toWhom, "__postComment");
 		comment.splitted = splitComment(comment.content);
 		let tmpret = await splitMarked(tenant, comment);
 		comment.mdcontent = tmpret.mdcontent;
@@ -1728,7 +1736,12 @@ const addAdhoc = async function (payload) {
 			payload.comment,
 		)}</div></div>`,
 	);
-	wf.doc = wfIO.html();
+	let wfUpdate = { doc: wfIO.html() };
+	wf = await RCL.updateWorkflow(
+		{ tenant: payload.tenant, wfid: wf.wfid },
+		{ $set: wfUpdate },
+		"Engine.revokeWork",
+	);
 	await wf.save();
 	let todoObj = {
 		tenant: payload.tenant,
@@ -2071,6 +2084,11 @@ Client.onYarkNode = async function (obj) {
 	try {
 		//await yarkNode_internal(obj);
 		await callYarkNodeWorker(obj);
+		await RCL.resetCache(
+			{ tenant: obj.tenant, wfid: obj.wfid },
+			"Engine.onYarkNode",
+			RCL.CACHE_ELEVEL_MEM,
+		);
 
 		/* callYarkNodeWorker(obj).then((res) => {
 			console.log("++++", res);
@@ -2492,7 +2510,7 @@ const yarkNode_internal = async function (obj) {
 					for (let ri = 1; ri < cells.length; ri++) {
 						let recipient = cells[ri][0];
 						recipient = await Tools.makeEmailSameDomain(recipient, obj.starter);
-						let doerCN = await Cache.getUserName(tenant, recipient);
+						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
 						try {
 							KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
 							let tmp_subject = tpNode.find("subject").first().text();
@@ -2551,7 +2569,7 @@ const yarkNode_internal = async function (obj) {
 				try {
 					for (let i = 0; i < doers.length; i++) {
 						let recipient = doers[i].uid;
-						let doerCN = await Cache.getUserName(tenant, recipient);
+						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
 						try {
 							let tmp_subject = tpNode.find("subject").first().text();
 							let tmp_body = tpNode.find("content").first().text();
@@ -2944,7 +2962,7 @@ const yarkNode_internal = async function (obj) {
 			[],
 			Const.VAR_IS_EFFICIENT,
 		);
-		let pbo = await getPboByWfId(obj.tenant, obj.wfid);
+		let pbo = getWfPbo(wf);
 		let sub_tpl_id = tpNode.attr("sub").trim();
 		let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
 		let sub_wf_id = IdGenerator();
@@ -3090,7 +3108,7 @@ const yarkNode_internal = async function (obj) {
 		let ew = await Cache.getUserEw(sendEmailTo);
 		let withEmail = ew && ew.email;
 		if (withEmail) {
-			let cn = await Cache.getUserName(tenant, sendEmailTo);
+			let cn = await Cache.getUserName(tenant, sendEmailTo, "yarkNode_internal");
 			let mail_body = `Hello, ${cn}, <br/>
           <br/>
           The workflow you started as <br/>
@@ -3160,7 +3178,10 @@ const yarkNode_internal = async function (obj) {
 			if (cells && Array.isArray(cells) && cells.length > 0) {
 				for (let ri = 1; ri < cells.length; ri++) {
 					let doerEmail = Tools.makeEmailSameDomain(cells[ri][0], obj.starter);
-					doerOrDoers.push({ uid: doerEmail, cn: await Cache.getUserName(tenant, doerEmail) });
+					doerOrDoers.push({
+						uid: doerEmail,
+						cn: await Cache.getUserName(tenant, doerEmail, "yarkNode_internal"),
+					});
 				}
 			}
 		} else {
@@ -3178,6 +3199,7 @@ const yarkNode_internal = async function (obj) {
 		if (Array.isArray(doerOrDoers) === false) {
 			throw new EmpError("DOER_ARRAY_ERROR", "Doer is not array");
 		}
+		debugger;
 		let doer_string = Parser.codeToBase64(JSON.stringify(doerOrDoers));
 
 		let roleInNode = tpNode.attr("role");
@@ -3400,7 +3422,7 @@ const createTodo = async function (obj) {
 		}
 		let doerName = "";
 		if (obj.doer[i].cn) doerName = obj.doer[i].cn;
-		else doerName = await Cache.getUserName(obj.tenant, doerEmail);
+		else doerName = await Cache.getUserName(obj.tenant, doerEmail, "createTodo");
 
 		if (Tools.isEmpty(doerName)) {
 			console.warn(`increateTodo: doer: ${doerEmail} does not exist.`);
@@ -3667,8 +3689,8 @@ const transferWork = async function (tenant, whom, myEmail, todoid) {
 		return whomUser;
 	}
 
-	let fromCN = await Cache.getUserName(tenant, myEmail);
-	let newCN = await Cache.getUserName(tenant, newDoer);
+	let fromCN = await Cache.getUserName(tenant, myEmail, "transferWork");
+	let newCN = await Cache.getUserName(tenant, newDoer, "transferWork");
 	await informUserOnNewTodo({
 		tenant: tenant,
 		doer: newDoer,
@@ -3708,7 +3730,7 @@ const sendTenantMail = async function (
 			subject: subject,
 			html: Parser.codeToBase64(mail_body),
 			reason: reason,
-			smtp: "",
+			smtp: {} as SmtpInfo,
 		};
 		if (isMainThread) {
 			let smtp = await Cache.getOrgSmtp(msg.tenant);
@@ -3733,7 +3755,7 @@ const informUserOnNewTodo = async function (inform) {
 			withEmail = false;
 		}
 		withEmail = ew && ew.email;
-		let cn = await Cache.getUserName(inform.tenant, inform.doer);
+		let cn = await Cache.getUserName(inform.tenant, inform.doer, "informUserOnNewTodo");
 		let mail_body = `Hello, ${cn}, new task is comming in:
 <br/><a href="${frontendUrl}/work/@${inform.todoid}">${inform.title} </a><br/>
 in Workflow: <br/>
@@ -4311,7 +4333,7 @@ const startWorkflow_with = async function (
 		name: "starter",
 	};
 	parent_vars["starterCN"] = {
-		value: await Cache.getUserName(tenant, starter),
+		value: await Cache.getUserName(tenant, starter, "startWorkflow_with"),
 		label: "StarterCN",
 		type: "plaintext",
 		name: "starterCN",
@@ -4558,7 +4580,7 @@ const restartWorkflow = async function (
 	starter = Tools.defaultValue(starter, old_wf.starter);
 	teamid = Tools.defaultValue(teamid, old_wf.teamid);
 	wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
-	pbo = Tools.defaultValue(pbo, await getPboByWfId(tenant, old_wfid));
+	pbo = Tools.defaultValue(pbo, getWfPbo(old_wf));
 	await resetTodosETagByWfId(tenant, old_wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	let new_wfid = IdGenerator();
@@ -4589,7 +4611,7 @@ const restartWorkflow = async function (
 		runmode: old_wf.runmode ? old_wf.runmode : "standalone",
 		allowdiscuss: old_wf.allowdiscuss,
 	});
-	wf.attachments = await getPbo(old_wf);
+	wf.attachments = await getWfPbo(old_wf);
 	wf = await wf.save();
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	await Parser.copyVars(
@@ -4735,23 +4757,10 @@ const setPboByWfId = async function (email, tenant, wfid, pbos) {
 	return wf.attachments;
 };
 
-const getPbo = async function (wf) {
+const getWfPbo = function (wf) {
 	let attachments = wf.attachments;
 	attachments = attachments.filter((x) => x.forKey === "pbo");
 	return attachments;
-};
-const getPboByWfId = async function (tenant, wfid) {
-	let attachments = await getAttachmentsByWfId(tenant, wfid);
-	attachments = attachments.filter((x) => x.forKey === "pbo");
-	return attachments;
-};
-const getAttachmentsByWfId = async function (tenant, wfid) {
-	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getAttachmentsByWfId");
-	return wf.attachments;
-};
-
-const getWorkflowPbo = async function (email, tenant, wfid) {
-	return await getPboByWfId(tenant, wfid);
 };
 
 const workflowGetList = async function (tenant, email, filter, sortdef) {
@@ -4763,7 +4772,7 @@ const workflowGetList = async function (tenant, email, filter, sortdef) {
 	//TODO: this is not findOne, but find, should we keep it in mongoose?
 	let wfs = await Workflow.find(filter, { doc: 0 }, option).lean();
 	for (let i = 0; i < wfs.length; i++) {
-		wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter);
+		wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter, "workflowGetList");
 	}
 	return wfs;
 };
@@ -4872,6 +4881,7 @@ const splitMarked = async function (tenant, cmt) {
 				splittedMd[c] = `<span class="comment_uid">${await Cache.getUserName(
 					tenant,
 					splittedMd[c].substring(1),
+					"splitMarked",
 				)}(${splittedMd[c]})</span>`;
 			}
 		}
@@ -4930,8 +4940,8 @@ const getComments = async function (tenant, objtype, objid, depth = -1, skip = -
 	}
 	if (cmts) {
 		for (let i = 0; i < cmts.length; i++) {
-			cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
-			cmts[i].towhomCN = await Cache.getUserName(tenant, cmts[i].towhom);
+			cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who, "getComments");
+			cmts[i].towhomCN = await Cache.getUserName(tenant, cmts[i].towhom, "getComments");
 			cmts[i].splitted = splitComment(cmts[i].content);
 			let tmpret = await splitMarked(tenant, cmts[i]);
 			cmts[i].mdcontent = tmpret.mdcontent;
@@ -4990,7 +5000,11 @@ const loadWorkflowComments = async function (tenant, wfid) {
 		if (todo) {
 			workComments[i].todoTitle = todo.title;
 			workComments[i].todoDoer = todo.doer;
-			workComments[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer);
+			workComments[i].todoDoerCN = await Cache.getUserName(
+				tenant,
+				todo.doer,
+				"loadWorkflowComments",
+			);
 		}
 		workComments[i].upnum = await Thumb.countDocuments({
 			tenant,
@@ -5007,7 +5021,7 @@ const loadWorkflowComments = async function (tenant, wfid) {
 	cmts = workComments;
 
 	for (let i = 0; i < cmts.length; i++) {
-		cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who);
+		cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who, "loadWorkflowComments");
 		cmts[i].splitted = splitComment(cmts[i].content);
 		let tmpret = await splitMarked(tenant, cmts[i]);
 		cmts[i].mdcontent = tmpret.mdcontent;
@@ -5092,7 +5106,7 @@ const __getWorkFullInfo = async function (
 	ret.todoid = todo.todoid;
 	ret.tenant = todo.tenant;
 	ret.doer = todo.doer;
-	ret.doerCN = await Cache.getUserName(tenant, todo.doer);
+	ret.doerCN = await Cache.getUserName(tenant, todo.doer, "__getWorkFullInfo");
 	ret.wfid = todo.wfid;
 	ret.nodeid = todo.nodeid;
 	ret.byroute = todo.byroute;
@@ -5138,7 +5152,7 @@ const __getWorkFullInfo = async function (
 					{
 						doer: todo.doer,
 						comment: todo.comment.trim(),
-						cn: await Cache.getUserName(tenant, todo.doer),
+						cn: await Cache.getUserName(tenant, todo.doer, "__getWorkFullInfo"),
 						splitted: splitComment(todo.comment.trim()),
 					},
 			  ];
@@ -5153,7 +5167,7 @@ const __getWorkFullInfo = async function (
 		wftitle: wfRoot.attr("wftitle"),
 		pwfid: wfRoot.attr("pwfid"),
 		pworkid: wfRoot.attr("pworkid"),
-		attachments: await getAttachmentsByWfId(tenant, wfid),
+		attachments: theWf.attachments,
 		status: getWorkflowStatus(wfRoot),
 		beginat: wfRoot.attr("at"),
 		doneat: getWorkflowDoneAt(wfRoot),
@@ -5275,7 +5289,7 @@ const __getWorkflowWorksHistory = async function (
 		}
 
 		let todoEntry: histroyTodoEntry = {} as histroyTodoEntry;
-		let doerCN = await Cache.getUserName(tenant, todos[i].doer);
+		let doerCN = await Cache.getUserName(tenant, todos[i].doer, "__getWorkflowWorksHistory");
 		todoEntry.workid = todos[i].workid;
 		todoEntry.todoid = todos[i].todoid;
 		todoEntry.nodeid = todos[i].nodeid;
@@ -5312,7 +5326,7 @@ const __getWorkflowWorksHistory = async function (
 			tmpRet[i].doers = [];
 			tmpRet[i].doers.push({
 				uid: tmpRet[i].doer,
-				cn: await Cache.getUserName(tenant, tmpRet[i].doer),
+				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
 				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
 				doneat: tmpRet[i].doneat,
@@ -5333,7 +5347,7 @@ const __getWorkflowWorksHistory = async function (
       */
 			ret[existing_index].doers.push({
 				uid: tmpRet[i].doer,
-				cn: await Cache.getUserName(tenant, tmpRet[i].doer),
+				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
 				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
 				doneat: tmpRet[i].doneat,
@@ -5362,7 +5376,7 @@ const getTodosByWorkid = async function (tenant, workid, full) {
 			.sort("-updatedAt")
 			.lean();
 	for (let i = 0; i < todos.length; i++) {
-		todos[i].cn = await Cache.getUserName(tenant, todos[i].doer);
+		todos[i].cn = await Cache.getUserName(tenant, todos[i].doer, "getTodosByWorkid");
 	}
 	return todos;
 };
@@ -5977,13 +5991,6 @@ const delegationFromMeOnDate = async function (tenant, delegator_email, onDate =
 	return ret;
 };
 
-const delegationToMe = async function (tenant, delegatee_email) {
-	return this.delegationToMeOnDate(tenant, delegatee_email);
-};
-const delegationToMeToday = async function (tenant, delegatee_email) {
-	return this.delegationToMeOnDate(tenant, delegatee_email, new Date());
-};
-
 const delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
 	let filter = { tenant: tenant, delegatee: delegatee_email };
 	if (onDate) {
@@ -6001,6 +6008,13 @@ const delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
 		},
 	);
 	return ret;
+};
+
+const delegationToMe = async function (tenant, delegatee_email) {
+	return delegationToMeOnDate(tenant, delegatee_email, null);
+};
+const delegationToMeToday = async function (tenant, delegatee_email) {
+	return delegationToMeOnDate(tenant, delegatee_email, new Date());
 };
 
 const undelegate = async function (tenant, delegator_email, ids) {
@@ -6873,7 +6887,11 @@ const getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
 	let routings = [];
 	tpRoot.find(linkSelector).each(function (i, el) {
 		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
-		if (routings.indexOf(option) < 0) routings.push(option);
+		if (
+			!(option.startsWith("h:") || option.startsWith("h_") || option.startsWith("h-")) &&
+			routings.indexOf(option) < 0
+		)
+			routings.push(option);
 	});
 	if (routings.length > 1 && routings.includes("DEFAULT")) {
 		routings = routings.filter((x) => x !== "DEFAULT");
@@ -7095,7 +7113,7 @@ const getDoer = async function (
 ) {
 	let ret = [];
 	if (!pds || (pds && pds === "DEFAULT")) {
-		return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+		return [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	//先吧kvarString变为kvar对象
 	let kvars = {};
@@ -7136,7 +7154,7 @@ const getDoer = async function (
 	);
 	//如果返回为空，并且需要插入缺省starter，则返回缺省starter
 	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
-		ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+		ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	return ret;
 };

@@ -4,6 +4,15 @@ export type AvatarInfo = {
 	etag: string;
 };
 
+export type SmtpInfo = {
+	from: string;
+	host: string;
+	port: number;
+	secure: boolean;
+	username: string;
+	password: string;
+};
+
 export type CoverInfo = {
 	path: string;
 	media: string;

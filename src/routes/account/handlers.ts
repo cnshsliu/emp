@@ -206,7 +206,6 @@ async function SetMyUserName(req, h) {
 			{ $set: { username: req.payload.username } },
 			{ new: true },
 		);
-		//await redisClient.set("name_" + payload.doer, req.payload.username);
 		await Cache.setUserName(payload.user, req.payload.username);
 		return {
 			objectId: req.auth.credentials._id,
@@ -336,6 +335,7 @@ async function LoginUser(req, h) {
 					await redisClient.del(`logout_${user._id}`);
 					console.log(`[Login] ${user.email}`);
 					let ret = buildSessionResponse(user, user.tenant);
+					await Cache.removeKeyByEmail(user.email);
 					return h.response(ret);
 				}
 			}
@@ -1187,7 +1187,7 @@ async function UploadAvatar(req, h) {
 			{ $set: { avatarinfo: avatarinfo } },
 			{ new: true },
 		);
-		await Cache.removeKey("avatar_" + payload.email);
+		await Cache.removeKeyByEmail(payload.email, "AVATAR");
 		return { result: "Upload Avatar OK" };
 	} catch (err) {
 		console.error(err);

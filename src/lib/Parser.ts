@@ -687,14 +687,14 @@ const Parser = {
 	 * @return {...}
 	 */
 	getDoer: async function (
-		tenant,
-		teamid,
-		pds,
-		starter,
-		wfid,
-		wfRoot,
-		kvars,
-		insertDefaultStarter = true,
+		tenant: string,
+		teamid: string,
+		pds: string,
+		starter: string,
+		wfid: string,
+		wfRoot: any,
+		kvars: any,
+		insertDefaultStarter: boolean = true,
 	): Promise<DoersArray> {
 		//If there is team definition in PDS, use it.
 		//if PDS is empty, always use starter
@@ -1026,7 +1026,6 @@ const Parser = {
 	},
 
 	clearSTClass: function (jq) {
-		debugger;
 		Parser.removeSTClasses(jq, Const.supportedSTStatus);
 	},
 };

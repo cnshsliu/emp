@@ -27,5 +27,14 @@ const schema = new Mongoose.Schema({
 	succeed: { type: String, default: "" },
 	succeedname: { type: String, default: "" },
 });
+schema.pre("find", function () {
+	this._startTime = Date.now();
+});
+
+schema.post("find", function () {
+	if (this._startTime != null) {
+		console.log("Runtime find User in MS: ", Date.now() - this._startTime);
+	}
+});
 
 export default Mongoose.model("User", schema);
