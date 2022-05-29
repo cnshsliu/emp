@@ -1,5 +1,6 @@
 import Mongoose from "mongoose";
 
+let _startTime = null;
 const schema = new Mongoose.Schema(
 	{
 		wfid: {
@@ -34,12 +35,12 @@ const schema = new Mongoose.Schema(
 	{ timestamps: true },
 );
 schema.pre("find", function () {
-	this._startTime = Date.now();
+	_startTime = Date.now();
 });
 
 schema.post("find", function () {
-	if (this._startTime != null) {
-		console.log("Runtime find Workflow in MS: ", Date.now() - this._startTime);
+	if (_startTime != null) {
+		console.log("Runtime find Workflow in MS: ", Date.now() - _startTime);
 	}
 });
 

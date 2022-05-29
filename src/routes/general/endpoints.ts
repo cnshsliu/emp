@@ -16,28 +16,28 @@ import Handlers from "./handlers";
  * both are simple gets
  */
 let internals = {
-  endpoints: [
-    {
-      method: "GET",
-      path: "/",
-      handler: Handlers.index,
-      config: {
-        description: "Get the default/home template.",
-        notes: "Renders the /docs/home.md file as HTML.",
-        tags: ["api"],
-      },
-    },
-    {
-      method: "GET",
-      path: "/server/status",
-      handler: Handlers.status,
-      config: {
-        description: "Show the status.",
-        notes: "renders json if server is running",
-        tags: ["api"],
-      },
-    },
-    {
+	endpoints: [
+		{
+			method: "GET",
+			path: "/",
+			handler: Handlers.index,
+			config: {
+				description: "Get the default/home template.",
+				notes: "Renders the /docs/home.md file as HTML.",
+				tags: ["api"],
+			},
+		},
+		{
+			method: "GET",
+			path: "/server/status",
+			handler: Handlers.status,
+			config: {
+				description: "Show the status.",
+				notes: "renders json if server is running",
+				tags: ["api"],
+			},
+		},
+		/* {
       method: "GET",
       path: "/server/env",
       handler: Handlers.env,
@@ -46,8 +46,8 @@ let internals = {
         notes: "Renders the variables known to the server",
         tags: ["api"],
       },
-    },
-  ],
+    }, */
+	],
 };
 
 export default internals;

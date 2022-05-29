@@ -1547,8 +1547,8 @@ async function WorkSearch(req, h) {
 				.header("ETag", latestETag);
 		}
 		//如果有wfid，则找只属于这个wfid工作流的workitems
-		let kicked = await Kicklist.findOne({ email: myEmail }).lean();
 		/*
+		let kicked = await Kicklist.findOne({ email: myEmail }).lean();
 		if (kicked) {
 			throw new EmpError("KICKOUT", "your session is kicked out");
 		}
@@ -3004,24 +3004,26 @@ async function AutoRegisterOrgChartUser(tenant, administrator, staffs, myDomain,
 		//If user already registered, if yes, send invitation, if not, register this user and add this user to my current org automatically.
 		let existing_staff_user = await User.findOne({ email: staff_email });
 		//If this email is already registered, send enter org invitation
-		if (
-			existing_staff_user &&
-			existing_staff_user.tenant.toString() !== administrator.tenant._id.toString()
-		) {
-			//如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
-			let frontendUrl = Tools.getFrontEndUrl();
-			var mailbody = `<p>${administrator.username} (email: ${administrator.email}) </p> <br/> invite you to join his organization, <br/>
+		if (existing_staff_user) {
+			if (existing_staff_user.username !== staff_cn) {
+				await User.updateOne({ email: staff_email }, { $set: { username: staff_cn } });
+			}
+			if (existing_staff_user.tenant.toString() !== administrator.tenant._id.toString()) {
+				//如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
+				let frontendUrl = Tools.getFrontEndUrl();
+				var mailbody = `<p>${administrator.username} (email: ${administrator.email}) </p> <br/> invite you to join his organization, <br/>
        Please login to Metatocome to accept <br/>
       <a href='${frontendUrl}'>${frontendUrl}</a>`;
-			Engine.sendNexts([
-				{
-					CMD: "CMD_sendSystemMail",
-					recipients: process.env.TEST_RECIPIENTS || staff_email,
-					subject: `[EMP] Invitation from ${administrator.username}`,
-					html: Tools.codeToBase64(mailbody),
-				},
-			]);
-		} else if (!existing_staff_user) {
+				Engine.sendNexts([
+					{
+						CMD: "CMD_sendSystemMail",
+						recipients: process.env.TEST_RECIPIENTS || staff_email,
+						subject: `[EMP] Invitation from ${administrator.username}`,
+						html: Tools.codeToBase64(mailbody),
+					},
+				]);
+			}
+		} else {
 			//If this email is not registered, auto register and auto enter org
 			//1. Create personal tenant.
 			let staffTenant = new Tenant({
@@ -3086,65 +3088,76 @@ const tenant = test_tenant; */
 		//filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
 		let csv = fs.readFileSync(filePath, "utf8");
 
-		let lines = csv.split("\n");
 		let orgChartArr = [];
 		let currentOU = "";
 		let currentPOU = "";
 		let currentCN = "";
 		let isOU = false;
 		let errors = [];
-		for (let i = 0; i < lines.length; i++) {
-			lines[i] = lines[i].replace(/[\r|\n]/g, "");
-			if (lines[i].trim().length === 0) continue;
-			let fields = lines[i].split(",");
-			if (!Tools.isArray(fields)) {
-				errors.push(`line ${i + 1}: not csv`);
-				continue;
-			}
-			if (fields.length < 2) {
-				errors.push(`line ${i + 1}: should be at least 2 columns`);
-				continue;
-			}
-			//第一列是编号
-			//编号要么为空，要么是五个的整数倍
-			if (fields[0].length > 0 && fields[0] !== "root" && fields[0].length % 5 !== 0) {
-				errors.push(`line ${i + 1}: ou id ${fields[0]} format is wrong`);
-				continue;
-			}
-			//如果第三列为邮箱
-			let emailValiidationResult = EmailSchema.validate(fields[2]);
-			if (!emailValiidationResult.error) {
-				isOU = false;
-				if (fields[0].trim().length > 0) {
-					currentOU = fields[0];
-				}
-			} else {
-				if (fields[0].trim().length > 0) {
-					currentOU = fields[0];
-					isOU = true;
+
+		const workbook = new Excel.Workbook();
+		await workbook.xlsx.readFile(filePath);
+		const worksheet = workbook.getWorksheet(1);
+
+		worksheet.eachRow(function (row, rowIndex) {
+			let rowSize = row.cellCount;
+			let numValues = row.actualCellCount;
+
+			let cols = [];
+			row.eachCell(function (cell, colIndex) {
+				if (cell.type === 6) {
+					cols.push(cell.result);
 				} else {
-					errors.push(`line: ${i + 1} bypass, not valid OU format`);
+					cols.push(cell.value);
 				}
+			});
+
+			if (rowSize < 2) {
+				errors.push(`line ${rowIndex + 1}: should be at least 2 columns`);
+				return;
 			}
 
-			currentCN = fields[1];
-			if (isOU === false && Tools.getEmailDomain(fields[2]) !== myDomain) {
-				// 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
-				errors.push(`line: ${i + 1} bypass doamin:[${fields[2]}] not my same domain  ${myDomain}`);
-				continue;
+			if (rowIndex === 0 && cols[0] === "OU") return;
+
+			if (cols[0].length > 0 && cols[0] != "root" && cols[0].length % 5 !== 0) {
+				errors.push(`line ${rowIndex + 1}: ou id ${cols[0]} format is wrong`);
+				return;
 			}
-			orgChartArr.push({
-				tenant: tenant,
-				ou: currentOU,
-				cn: currentCN,
-				//如果不是OU， 则fields[2]为邮箱名
-				uid: isOU ? "OU---" : fields[2],
-				//如果isOU，则position为空[]即可
-				//如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
-				position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
-				line: i + 1,
-			});
-		}
+
+			let emailValiidationResult = EmailSchema.validate(cols[2]);
+			if (!emailValiidationResult.error && emailValiidationResult.value) {
+				isOU = false;
+				if (cols[0].trim().length > 0) {
+					currentOU = cols[0];
+				}
+			} else {
+				if (cols[0].trim().length > 0) {
+					currentOU = cols[0];
+					isOU = true;
+				} else {
+					errors.push(`line: ${rowIndex + 1} bypass, not valid OU format`);
+				}
+			}
+			currentCN = cols[1];
+			if (isOU === false && Tools.getEmailDomain(cols[2]) !== myDomain) {
+				// 如果是用户，但邮箱域名跟管理员的不一样，则直接跳过
+				errors.push(
+					`line: ${rowIndex + 1} bypass doamin:[${cols[2]}] not my same domain  ${myDomain}`,
+				);
+			} else {
+				orgChartArr.push({
+					tenant: tenant,
+					ou: currentOU,
+					cn: currentCN,
+					//如果不是OU， 则cols[2]为邮箱名
+					uid: isOU ? "OU---" : cols[2],
+					//如果isOU，则position为空[]即可
+					//如果是用户，则position为第4列（cols[3]）所定义的内容用：分割的字符串数组
+					position: isOU ? [] : cols[3] ? cols[3].split(":") : ["staff"],
+					line: rowIndex + 1,
+				});
+			} //is same domain;
+		}); //eachRow;
 
 		//先清空Orgchart
 		await OrgChart.deleteMany({ tenant: tenant });
@@ -3223,13 +3236,18 @@ async function OrgChartExport(req, h) {
 			let filter: any = { tenant: tenant, ou: ou, uid: "OU---" };
 			let entry = await OrgChart.findOne(filter);
 			if (entry) {
-				entries.push(`${entry.ou},${entry.cn},,,,`);
+				entries.push({ ou: entry.ou, cn: entry.cn, email: "", pos: "" });
 
 				filter = { tenant: tenant, ou: ou, uid: { $ne: "OU---" } };
 				let users = await OrgChart.find(filter);
 				for (let i = 0; i < users.length; i++) {
 					let usrPos = users[i].position.filter((x) => x !== "staff");
-					entries.push(`${users[i].ou},${users[i].cn},${users[i].uid},${usrPos.join(":")},,`);
+					entries.push({
+						ou: users[i].ou,
+						cn: users[i].cn,
+						email: users[i].uid,
+						pos: usrPos.join(":"),
+					});
 				}
 
 				let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
@@ -3242,8 +3260,46 @@ async function OrgChartExport(req, h) {
 		};
 		await getEntriesUnder(entries, tenant, "root");
 
-		console.log(entries);
-		return h.response(entries);
+		//return h.response(entries);
+		//// write to a file
+		const workbook = new Excel.Workbook();
+		workbook.creator = "Metatocome";
+		const worksheet = workbook.addWorksheet("Orgchart");
+		/*
+		worksheet.columns = [
+			{ header: "Id", key: "id", width: 10 },
+			{ header: "Name", key: "name", width: 32 },
+			{ header: "D.O.B.", key: "dob", width: 15 },
+		];
+
+		worksheet.addRow({ id: 1, name: "John Doe", dob: new Date(1970, 1, 1) });
+		worksheet.addRow({ id: 2, name: "Jane Doe", dob: new Date(1965, 1, 7) });
+		worksheet.addRow({ id: 3, name: "Jane Doe", dob: new Date(1965, 1, 7) });
+		 */
+		worksheet.columns = [
+			{ header: "OU", key: "ou", width: 30 },
+			{ header: "Name", key: "cn", width: 30 },
+			{ header: "Email", key: "email", width: 30 },
+			{ header: "Position", key: "pos", width: 30 },
+		];
+
+		for (let i = 0; i < entries.length; i++) {
+			worksheet.addRow(entries[i]);
+		}
+
+		// write to a new buffer
+		//await workbook.xlsx.writeFile("/Users/lucas/tst.xlsx");
+		const buffer = (await workbook.xlsx.writeBuffer()) as Buffer;
+
+		//const response = h.response(buffer);
+		//var readStream = fs.createReadStream("/Users/lucas/tst.xlsx");
+		return h
+			.response(buffer)
+			.header("cache-control", "no-cache")
+			.header("Pragma", "no-cache")
+			.header("Access-Control-Allow-Origin", "*")
+			.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+			.header("Content-Disposition", `attachment;filename="orgchart.xlsx"`);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -5043,7 +5099,7 @@ async function ReplaceUserSucceed(req, h) {
 		//Delete cache of reassigned user's credential cache from Redis,
 		//THis cause credential verifcation failed: no cache, EMP get user info
 		//from database and required the user's active value must be true.
-		await Cache.removeKey(`cred_${aUser._id}`);
+		if (aUser) await Cache.removeKey(`cred_${aUser._id}`);
 
 		return h.response("Done");
 	} catch (err) {

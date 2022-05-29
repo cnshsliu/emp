@@ -18,7 +18,7 @@
  */
 import Hoek from "@hapi/hoek";
 import Inert from "@hapi/inert";
-import Marked from "marked";
+import { marked as Marked } from "marked";
 import Path from "path";
 import Vision from "@hapi/vision";
 import Handlebars from "handlebars";
@@ -34,27 +34,27 @@ import Handlebars from "handlebars";
  *
  */
 const Views = {
-  init: async function (server) {
-    /**
-     * ### vision
-     *
-     * this establishes where the html is located
-     * and the engine to parse it
-     */
-    await server
-      .register({
-        plugin: Vision,
-      })
-      .then(() => {
-        server.views({
-          engines: {
-            html: Handlebars,
-            md: {
-              module: {
-                compile: function (template: string) {
-                  return function (context) {
-                    var html = Marked.marked(template, context);
-                    return `<link rel="stylesheet" href="/assets/github-markdown.css">
+	init: async function (server) {
+		/**
+		 * ### vision
+		 *
+		 * this establishes where the html is located
+		 * and the engine to parse it
+		 */
+		await server
+			.register({
+				plugin: Vision,
+			})
+			.then(() => {
+				server.views({
+					engines: {
+						html: Handlebars,
+						md: {
+							module: {
+								compile: function (template: string) {
+									return function (context) {
+										var html = Marked.parse(template, context);
+										return `<link rel="stylesheet" href="/assets/github-markdown.css">
 <style>
     .markdown-body {
         box-sizing: border-box;
@@ -67,49 +67,49 @@ const Views = {
 <article class="markdown-body">
     ${html}
 </article>`;
-                  };
-                },
-              },
-              contentType: "text/html",
-            },
-          },
-          relativeTo: __dirname,
-          path: [Path.join(__dirname, "../views"), Path.join(__dirname, "../docs")],
-        });
-      })
-      .catch((err) => {
-        Hoek.assert(!err, err);
-      });
-    /**
-     * ### inert
-     *
-     * this says that any request for /assest/* will
-     * be served from the ../assests dir
-     *
-     * The resetpassword.js is located in ../assests
-     *
-     */
-    await server
-      .register({
-        plugin: Inert,
-      })
-      .then(() => {
-        //Load files located in ../assets
-        server.route({
-          method: "GET",
-          path: "/assets/{param*}",
-          handler: {
-            directory: {
-              path: Path.join(__dirname, "../assets"),
-            },
-          },
-        });
-      })
-      .catch((err) => {
-        //Confirm no err
-        Hoek.assert(!err, err);
-      });
-  },
+									};
+								},
+							},
+							contentType: "text/html",
+						},
+					},
+					relativeTo: __dirname,
+					path: [Path.join(__dirname, "../views"), Path.join(__dirname, "../docs")],
+				});
+			})
+			.catch((err) => {
+				Hoek.assert(!err, err);
+			});
+		/**
+		 * ### inert
+		 *
+		 * this says that any request for /assest/* will
+		 * be served from the ../assests dir
+		 *
+		 * The resetpassword.js is located in ../assests
+		 *
+		 */
+		await server
+			.register({
+				plugin: Inert,
+			})
+			.then(() => {
+				//Load files located in ../assets
+				server.route({
+					method: "GET",
+					path: "/assets/{param*}",
+					handler: {
+						directory: {
+							path: Path.join(__dirname, "../assets"),
+						},
+					},
+				});
+			})
+			.catch((err) => {
+				//Confirm no err
+				Hoek.assert(!err, err);
+			});
+	},
 };
 
 export default Views;
