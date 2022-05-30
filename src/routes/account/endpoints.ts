@@ -476,6 +476,26 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/tnt/set/regfree",
+			handler: Handlers.MyOrgSetRegFree,
+			config: {
+				tags: ["api"],
+				description: "Toggle allow regfree",
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						password: Joi.string().required().error(new Error("Admin password must be provided")),
+						regfree: Joi.boolean().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/tnt/joincode/new",
 			handler: Handlers.GenerateNewJoinCode,
 			config: {

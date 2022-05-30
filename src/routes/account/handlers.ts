@@ -737,6 +737,7 @@ async function MyOrg(req, h) {
 		tnt.menu = me.tenant.menu;
 		tnt.tags = me.tenant.tags;
 		tnt.orgchartadminpds = me.tenant.orgchartadminpds;
+		tnt.regfree = me.tenant.regfree;
 		return h.response(tnt);
 	} catch (err) {
 		console.error(err);
@@ -747,16 +748,48 @@ async function MyOrg(req, h) {
 async function MyOrgSetOrgmode(req, h) {
 	try {
 		let tenant_id = req.auth.credentials.tenant._id;
-		let tenant = await Tenant.findOne({ _id: tenant_id });
 		let me = await User.findOne({ _id: req.auth.credentials._id });
 		if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("WRONG_PASSWORD", "You are using a wrong password");
 		}
-		tenant.orgmode = req.payload.orgmode;
-		tenant = await tenant.save();
+		let tenant = await Tenant.findOneAndUpdate(
+			{ _id: tenant_id },
+			{ $set: { orgmode: req.payload.orgmode } },
+			{ upsert: false, new: true },
+		);
 
 		//我所在的tenant是个组织，而且我是管理员
 		return h.response(tenant.orgmode);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function MyOrgSetRegFree(req, h) {
+	try {
+		let tenant_id = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let me = await User.findOne({ _id: req.auth.credentials._id });
+		if (Crypto.decrypt(me.password) != req.payload.password) {
+			throw new EmpError("WRONG_PASSWORD", "You are using a wrong password");
+		}
+		const { regfree } = req.payload;
+
+		let myGroup = await Cache.getMyGroup(myEmail);
+		if (myGroup !== "ADMIN") {
+			throw new EmpError("NOT_ADMIN", "You are not admin");
+		}
+
+		let tenant = await Tenant.findOneAndUpdate(
+			{
+				_id: tenant_id,
+			},
+			{ $set: { regfree: regfree } },
+			{ upsert: false, new: true },
+		);
+
+		return h.response({ regfree: tenant.regfree });
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -784,19 +817,20 @@ async function MyOrgSetSmtp(req, h) {
 			throw new EmpError("NO_BRUTE", "Please wait a moment");
 		}
 		let tenant_id = req.auth.credentials.tenant._id;
-		let tenant = await Tenant.findOne({ _id: tenant_id });
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("WRONG_PASSWORD", "You are using a wrong password");
 		}
 		await Parser.isAdmin(me);
-		tenant.smtp = req.payload.smtp;
-		tenant.markModified("smtp");
-		tenant = await tenant.save();
+		let tenant = await Tenant.findOneAndUpdate(
+			{ _id: tenant_id },
+			{ $set: { smtp: req.payload.smtp } },
+			{ upsert: false, new: true },
+		);
 		Cache.removeOrgRelatedCache(tenant_id, "smtp");
 
 		//我所在的tenant是个组织，而且我是管理员
-		return h.response(tenant.orgmode);
+		return h.response(tenant.smtp);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1346,6 +1380,7 @@ export default {
 	MyOrgSetOrgmode,
 	MyOrgGetSmtp,
 	MyOrgSetSmtp,
+	MyOrgSetRegFree,
 	GenerateNewJoinCode,
 	OrgSetJoinCode,
 	OrgSetName,
