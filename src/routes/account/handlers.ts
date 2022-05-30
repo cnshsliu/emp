@@ -16,6 +16,7 @@ import Site from "../../database/models/Site";
 import User from "../../database/models/User";
 import Todo from "../../database/models/Todo";
 import Tenant from "../../database/models/Tenant";
+import OrgChart from "../../database/models/OrgChart";
 import Delegation from "../../database/models/Delegation";
 import JoinApplication from "../../database/models/JoinApplication";
 import Tools from "../../tools/tools";
@@ -118,52 +119,26 @@ async function RegisterUser(req, h) {
 		}
 
 		var tokenData = {
-			username: user.username,
+			email: user.email,
 			id: user._id,
 		};
 
-		let frontServerUrl = Tools.getFrontEndUrl();
-		let verifyToken = JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey);
-		var mailbody =
-			"<p>Welcome to HyperFlow. </p>" +
-			" " +
-			" <p>Please verify your email by click the link below<br/> " +
-			" The link is only available for 15 minutes.<br/>" +
-			"<a href='" +
-			frontServerUrl +
-			"/account/verifyEmail/" +
-			verifyToken +
-			"'>Verify Email</a></p>";
-
-		await Engine.sendNexts([
-			{
-				CMD: "CMD_sendSystemMail",
-				recipients: process.env.TEST_RECIPIENTS || user.email,
-				subject: "[EMP] Please verify your email",
-				html: Parser.codeToBase64(mailbody),
-			},
-		]);
+		const verifyToken = JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey);
+		await redisClient.set("evc_" + user.email, verifyToken);
+		await redisClient.expire("evc_" + user.email, ServerConfig.verify?.email?.verifyin || 15 * 60);
+		try {
+			Mailman.sendMailVerificationLink(user, verifyToken);
+		} catch (error) {
+			console.error(error);
+		}
 
 		let token = JwtAuth.createToken({ id: user._id });
 		return {
 			objectId: user._id,
 			verifyToken: verifyToken,
-			sessionToken: token,
 			user: {
 				userid: user._id,
 				username: user.username,
-				email: user.email,
-				group: user.group,
-				sessionToken: token,
-				tenant: {
-					css: tenant.css,
-					name: tenant.name,
-					orgmode: tenant.orgmode,
-					timezone: tenant.timezone,
-				},
-				perms: SystemPermController.getMyGroupPerm(user.group),
-				avatar: "",
-				signature: "",
 			},
 		};
 	} catch (err) {
@@ -268,15 +243,21 @@ async function Evc(req, h) {
 				return h.response("user not found");
 			} else {
 				var tokenData = {
-					username: user.username,
+					email: user.email,
 					id: user._id,
 				};
 
+				const verifyToken = JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey);
+				await redisClient.set("evc_" + user.email, verifyToken);
+				await redisClient.expire(
+					"evc_" + user.email,
+					ServerConfig.verify?.email?.verifyin || 15 * 60,
+				);
+
+				console.log(verifyToken);
+
 				try {
-					Mailman.sendMailVerificationLink(
-						user,
-						JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey),
-					);
+					Mailman.sendMailVerificationLink(user, verifyToken);
 				} catch (error) {
 					console.error(error);
 				}
@@ -330,7 +311,7 @@ async function LoginUser(req, h) {
 				if (user.emailVerified === false) {
 					await redisClient.set("resend_" + user.email, "sent");
 					await redisClient.expire("resend_" + user.email, 6);
-					throw new EmpError("login_emailVerified_false", "Email not verified");
+					throw new EmpError("LOGIN_EMAILVERIFIED_FALSE", "Email not verified");
 				} else {
 					await redisClient.del(`logout_${user._id}`);
 					console.log(`[Login] ${user.email}`);
@@ -400,7 +381,7 @@ async function LogoutUser(req, h) {
 }
 
 /**
- * ## verifyEmail
+ * ## verify your email
  *
  * If the token is verified, find the user using the decoded info
  * from the token.
@@ -411,7 +392,7 @@ async function LogoutUser(req, h) {
 async function VerifyEmail(req, h) {
 	try {
 		let frontendUrl = Tools.getFrontEndUrl();
-		let decoded;
+		let decoded: any;
 		let method_GET = true;
 		if (req.params.token) {
 			decoded = JasonWebToken.verify(req.params.token, ServerConfig.crypto.privateKey);
@@ -421,26 +402,51 @@ async function VerifyEmail(req, h) {
 			method_GET = false;
 		}
 		if (decoded === undefined) {
-			return Boom.forbidden("invalid verification link");
+			throw new EmpError("INVALID_VERIFICATION_CODE", "Invalid verification code");
+		}
+
+		let evc_redis_key = "evc_" + decoded.email;
+		if (!(await redisClient.get(evc_redis_key))) {
+			throw new EmpError("VERIFICATION_CODE_EXPIRED", "verification code expired", decoded.email);
 		}
 
 		let user = await User.findOne({ _id: decoded.id });
 		if (user === null) {
-			throw new EmpError("ACCOUNT_USER_NOT_FOUND", "User account not found");
+			throw new EmpError("ACCOUNT_USER_NOT_FOUND", "User account not found", decoded.email);
 		}
 
 		if (user.emailVerified === true) {
-			if (method_GET) return h.redirect(frontendUrl + "/message/email_already_verified");
-			else throw new EmpError("account_already_verified", `email ${user.email} already verified`);
+			throw new EmpError(
+				"ACCOUNT_ALREADY_VERIFIED",
+				`email ${user.email} already verified`,
+				decoded.email,
+			);
 		}
 
+		//检查这个邮箱后缀的Tenant是否已存在，存在就把用户加进去
+		let domain = Tools.getEmailDomain(user.email);
+		let orgTenant = await Tenant.findOne({ orgmode: true, owner: new RegExp(`${domain}$`) });
+		if (orgTenant) {
+			user.tenant = new Mongoose.Types.ObjectId(orgTenant._id);
+			//再看OrgChart
+			await OrgChart.findOneAndUpdate(
+				{ tenant: orgTenant._id, ou: "ARR00", uid: "OU---", position: [] },
+				{
+					$set: { cn: "New Users" },
+				},
+				{ upsert: true, new: true },
+			);
+			await OrgChart.findOneAndUpdate(
+				{ tenant: orgTenant._id, ou: "ARR00", uid: user.email },
+				{
+					$set: { cn: user.username, position: ["staff"] },
+				},
+				{ upsert: true, new: true },
+			);
+		}
 		user.emailVerified = true;
 		user = await user.save();
-		if (method_GET) {
-			return h.redirect(frontendUrl + "/message/email_verify_successfully");
-		} else {
-			return h.response("emailVerified");
-		}
+		return h.response("EMAIL_VERIFIED");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);

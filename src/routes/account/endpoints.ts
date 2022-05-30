@@ -140,7 +140,7 @@ const internals = {
 			handler: Handlers.VerifyEmail,
 			config: {
 				tags: ["api"],
-				description: "Users email is verified",
+				description: "Verify User email",
 				notes: "User clicks link in email sent during registration",
 				validate: {
 					params: {
@@ -156,7 +156,7 @@ const internals = {
 			handler: Handlers.VerifyEmail,
 			config: {
 				tags: ["api"],
-				description: "Users email is verified",
+				description: "Verify user email",
 				notes: "User clicks link in email sent during registration",
 				validate: {
 					payload: {

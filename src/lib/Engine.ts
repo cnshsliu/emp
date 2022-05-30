@@ -101,6 +101,8 @@ const callYarkNodeWorker = function (msg) {
 				let smtp = await Cache.getOrgSmtp(message.msg.tenant);
 				message.msg.smtp = smtp;
 				await callSendMailWorker(message.msg);
+			} else if (message.cmd && message.cmd === "worker_sendSystemMail") {
+				await callSendMailWorker(message.msg);
 			} else if (message.msg && message.cmd === "worker_reset_etag") {
 				await Cache.resetETag(message.msg);
 			} else if (message.msg && message.cmd === "worker_del_etag") {
@@ -2035,6 +2037,7 @@ Client.onSendTenantMail = async function (msg) {
 			bcc: msg.bcc,
 			subject: msg.subject,
 			html: msg.html,
+			reason: msg.reason,
 		});
 	} catch (error) {
 		console.error(error);
@@ -2048,6 +2051,7 @@ Client.onSendSystemMail = async function (msg) {
 			recipients: msg.recipients,
 			subject: msg.subject,
 			html: msg.html,
+			reason: msg.reason,
 		});
 	} catch (error) {
 		console.error(error);
@@ -3738,6 +3742,37 @@ const sendTenantMail = async function (
 			await callSendMailWorker(msg);
 		} else {
 			parentPort.postMessage({ cmd: "worker_sendTenantMail", msg: msg });
+		}
+	} catch (error) {
+		console.error(error);
+	}
+};
+
+const sendSystemMail = async function (
+	recipients: string | string[],
+	subject: string,
+	mail_body: string,
+	reason = "DEFAULT",
+) {
+	console.log(
+		`\t==>sendSystemMail ${reason} to`,
+		recipients,
+		"in ",
+		isMainThread ? "Main Thread" : "Child Thread",
+	);
+	try {
+		let msg = {
+			CMD: "CMD_sendSystemMail",
+			recipients: recipients,
+			subject: subject,
+			html: Parser.codeToBase64(mail_body),
+			smtp: "System",
+		};
+		if (isMainThread) {
+			await callSendMailWorker(msg);
+		} else {
+			//注意，不能在sendMailWorker中调用 sendSystemMail， 会造成死循环
+			parentPort.postMessage({ cmd: "worker_sendSystemMail", msg: msg });
 		}
 	} catch (error) {
 		console.error(error);
@@ -7219,4 +7254,6 @@ export default {
 	startBatchWorkflow,
 	rescheduleCrons,
 	sendNexts,
+	sendTenantMail,
+	sendSystemMail,
 };

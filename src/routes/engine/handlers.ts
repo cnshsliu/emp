@@ -3014,14 +3014,13 @@ async function AutoRegisterOrgChartUser(tenant, administrator, staffs, myDomain,
 				var mailbody = `<p>${administrator.username} (email: ${administrator.email}) </p> <br/> invite you to join his organization, <br/>
        Please login to Metatocome to accept <br/>
       <a href='${frontendUrl}'>${frontendUrl}</a>`;
-				Engine.sendNexts([
-					{
-						CMD: "CMD_sendSystemMail",
-						recipients: process.env.TEST_RECIPIENTS || staff_email,
-						subject: `[EMP] Invitation from ${administrator.username}`,
-						html: Tools.codeToBase64(mailbody),
-					},
-				]);
+				Engine.sendTenantMail(
+					tenant,
+					staff_email,
+					`[MTC] Invitation from ${administrator.username}`,
+					mailbody,
+					"Invitation",
+				).then();
 			}
 		} else {
 			//If this email is not registered, auto register and auto enter org
@@ -3300,6 +3299,69 @@ async function OrgChartExport(req, h) {
 			.header("Access-Control-Allow-Origin", "*")
 			.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 			.header("Content-Disposition", `attachment;filename="orgchart.xlsx"`);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function OrgChartGetAllOUs(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+
+		let entries = [];
+
+		const getEntriesUnder = async function (entries, tenant, ou, level) {
+			let filter: any = { tenant: tenant, ou: ou, uid: "OU---" };
+			let entry = await OrgChart.findOne(filter);
+			if (entry) {
+				entries.push({ ou: entry.ou, cn: entry.cn, email: "", pos: "", level: level });
+				let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
+				filter = { tenant: tenant, ou: ouFilter, uid: "OU---" };
+				let ous = await OrgChart.find(filter);
+				for (let i = 0; i < ous.length; i++) {
+					await getEntriesUnder(entries, tenant, ous[i].ou, level + 1);
+				}
+			}
+		};
+		await getEntriesUnder(entries, tenant, "root", 0);
+
+		return h.response(entries);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function OrgChartCopyOrMoveStaff(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+
+		const { action, uid, from, to, cn } = req.payload;
+
+		if (action === "delete") {
+			let entriesNum = await OrgChart.countDocuments({ tenant: tenant, uid: uid });
+			if (entriesNum > 1) {
+				await OrgChart.deleteOne({ tenant: tenant, ou: from, uid: uid });
+			} else {
+				throw new EmpError("ORGCHART_ENTRY_KEEP_LAST_ONE", "This is the last entry");
+			}
+		} else {
+			let newEntry = new OrgChart({ tenant: tenant, ou: to, cn: cn, uid: uid, position: [] });
+			await newEntry.save();
+
+			if (action === "move") {
+				await OrgChart.deleteOne({ tenant: tenant, ou: from, uid: uid });
+			}
+		}
+
+		return h.response("Done");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -5465,6 +5527,8 @@ export default {
 	OrgChartImport,
 	OrgChartAddOrDeleteEntry,
 	OrgChartExport,
+	OrgChartGetAllOUs,
+	OrgChartCopyOrMoveStaff,
 	OrgChartGetLeader,
 	OrgChartGetStaff,
 	OrgChartList,

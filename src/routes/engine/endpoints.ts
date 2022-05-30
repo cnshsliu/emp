@@ -1984,6 +1984,46 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/orgchart/allous",
+			handler: Handlers.OrgChartGetAllOUs,
+			config: {
+				description: "Get all ous from orgchart",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/copyormovestaff",
+			handler: Handlers.OrgChartCopyOrMoveStaff,
+			config: {
+				description: "Copy or move staff",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						action: Joi.string().required(),
+						uid: Joi.string().required(),
+						from: Joi.string().required(),
+						to: Joi.string().required(),
+						cn: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/orgchart/getleader",
 			handler: Handlers.OrgChartGetLeader,
 			config: {

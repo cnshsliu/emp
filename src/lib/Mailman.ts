@@ -45,11 +45,12 @@ const Mailman = {
 			/* Hoek.assert(!error, error); */
 		});
 	},
+
 	sendMailVerificationLink: function (user, token) {
 		var url = Tools.getFrontEndUrl();
 		var from = ServerConfig.email.smtp.from;
 		var mailbody =
-			"<p>Thanks for Registering EMP" +
+			"<p>Thanks for Registering Metatocome" +
 			" " +
 			" </p><p>Please verify your email by clicking on the" +
 			" verification link below.<br/><a href='" +
@@ -63,10 +64,9 @@ const Mailman = {
 			user.email,
 			null,
 			null,
-			"Account Verification",
+			"[MTC] Account Verification",
 			mailbody,
 		);
-		//console.log(mailbody);
 	},
 
 	SimpleSend: function (recipients, cc, bcc, title, mailbody) {
