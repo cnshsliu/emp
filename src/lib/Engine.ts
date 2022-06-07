@@ -27,6 +27,7 @@ import KVar from "../database/models/KVar";
 import Cell from "../database/models/Cell";
 import TempSubset from "../database/models/TempSubset";
 import DelayTimer from "../database/models/DelayTimer";
+import KsTpl from "../database/models/KsTpl";
 import OrgChartHelper from "./OrgChartHelper";
 import lodash from "lodash";
 import Tools from "../tools/tools.js";
@@ -6217,6 +6218,49 @@ const getUserBannedTemplate = async function (tenant, myEmail) {
 	return bannedTemplatesIds;
 };
 
+const scanKShares = async function () {
+	try {
+		const getFiles = (path) => {
+			const files = [];
+			for (const file of fs.readdirSync(path)) {
+				const fullPath = path + "/" + file;
+				if (fs.lstatSync(fullPath).isDirectory())
+					getFiles(fullPath).forEach((x) => files.push(file + "/" + x));
+				else {
+					file.split(".").pop() === "xml" && files.push(file);
+				}
+			}
+			return files;
+		};
+		const files = getFiles(process.env.EMP_KSHARE_FOLDER);
+		for (let i = 0; i < files.length; i++) {
+			let aKsTpl = await KsTpl.findOneAndUpdate({ ksid: files[i] }, { doc: 0 });
+			if (!aKsTpl) {
+				await new KsTpl({
+					ksid: files[i],
+					author: "emp_scan",
+					name: path.basename(files[i], ".xml"),
+					desc: path.basename(files[i], ".xml"),
+					doc: fs.readFileSync(path.join(process.env.EMP_KSHARE_FOLDER, files[i]), "utf8"),
+					fileExists: true,
+				}).save();
+			} else {
+				await KsTpl.findOneAndUpdate(
+					{ ksid: files[i] },
+					{
+						$set: {
+							doc: fs.readFileSync(path.join(process.env.EMP_KSHARE_FOLDER, files[i]), "utf8"),
+						},
+					},
+				);
+			}
+		}
+		console.log(files);
+	} catch (err) {
+		console.log(err);
+	}
+};
+
 const EmpContext = "Emp Server";
 const init = once(async function () {
 	if (!isMainThread) {
@@ -6235,6 +6279,9 @@ const init = once(async function () {
 		"\n",
 		"EMP_ATTACHMENT_FOLDER:",
 		process.env.EMP_ATTACHMENT_FOLDER,
+		"\n",
+		"EMP_KSHARE_FOLDER:",
+		process.env.EMP_KSHARE_FOLDER,
 		"\n",
 		"Default Avatar:",
 		Tools.getDefaultAvatarPath(),
@@ -6259,6 +6306,7 @@ const init = once(async function () {
 
 	await serverInit();
 	await Client.clientInit();
+	await scanKShares();
 	checkingTimer = false;
 	await Crontab.updateMany({}, { $set: { scheduled: false } });
 	await rescheduleCrons();
@@ -7256,4 +7304,5 @@ export default {
 	sendNexts,
 	sendTenantMail,
 	sendSystemMail,
+	scanKShares,
 };

@@ -33,6 +33,8 @@ const internals = {
 		"ST_REVOKED",
 		"ST_END",
 	],
+	scenarios: ["碳中和", "研发", "生产", "营销", "物资", "财务", "行政", "人事"],
+	industries: ["制造", "互联网", "医药", "医疗", "保险"],
 };
 
 export default internals;

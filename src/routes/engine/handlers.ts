@@ -26,6 +26,7 @@ import Cell from "../../database/models/Cell";
 import PondFile from "../../database/models/PondFile";
 import Comment from "../../database/models/Comment";
 import Kicklist from "../../database/models/Kicklist";
+import KsTpl from "../../database/models/KsTpl";
 import Thumb from "../../database/models/Thumb";
 import Mailman from "../../lib/Mailman";
 import CbPoint from "../../database/models/CbPoint";
@@ -33,6 +34,7 @@ import Team from "../../database/models/Team";
 import TempSubset from "../../database/models/TempSubset";
 import OrgChart from "../../database/models/OrgChart";
 import SavedSearch from "../../database/models/SavedSearch";
+import Site from "../../database/models/Site";
 import OrgChartHelper from "../../lib/OrgChartHelper";
 import replyHelper from "../../lib/helpers";
 import Tools from "../../tools/tools.js";
@@ -44,6 +46,7 @@ import Cache from "../../lib/Cache";
 import Const from "../../lib/Const";
 import Mongoose from "mongoose";
 import RCL from "../../lib/RedisCacheLayer";
+import { redisClient } from "../../database/redis";
 
 const EmailSchema = Joi.string().email();
 const asyncFilter = async (arr, predicate) => {
@@ -323,7 +326,6 @@ async function TemplatePut(req, h) {
 		let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
 		if (obj) {
 			if (obj.updatedAt.toISOString() !== lastUpdatedAt) {
-				debugger;
 				throw new EmpError("CHECK_LASTUPDATEDAT_FAILED", "Editted by other or in other window");
 			}
 			//let bdoc = await Tools.zipit(req.payload.doc, {});
@@ -1505,6 +1507,175 @@ async function WorkflowSearch(req, h) {
 	}
 }
 
+async function Mining_Workflow(req, h) {
+	const tenant = req.auth.credentials.tenant._id;
+	let myEmail = req.auth.credentials.email;
+	let myGroup = await Cache.getMyGroup(myEmail);
+	try {
+		let ifNoneMatch = req.headers["if-none-match"];
+		let latestETag = Cache.getETag(`ETAG:MINING:${tenant}`);
+		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
+			return h
+				.response({})
+				.code(304)
+				.header("Content-Type", "application/json; charset=utf-8;")
+				.header("Cache-Control", "no-cache, private")
+				.header("X-Content-Type-Options", "nosniff")
+				.header("ETag", latestETag);
+		}
+		//检查当前用户是否有读取进程的权限
+		let me = await User.findOne({ _id: req.auth.credentials._id });
+		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
+			throw new EmpError("NO_PERM", "You don't have permission to read workflow");
+		let sortBy = req.payload.sortby;
+
+		//开始组装Filter
+		let filter: any = { tenant: req.auth.credentials.tenant._id };
+		let todoFilter: any = { tenant: req.auth.credentials.tenant._id };
+		let skip = 0;
+		if (req.payload.skip) skip = req.payload.skip;
+		let limit = 10000;
+		if (req.payload.limit) limit = req.payload.limit;
+		//按正则表达式匹配wftitle
+		if (req.payload.pattern) {
+			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
+			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
+		}
+		//如果指定了tplid,则使用所指定的tplid
+		if (Tools.hasValue(req.payload.tplid)) {
+			filter["tplid"] = req.payload.tplid;
+			todoFilter["tplid"] = req.payload.tplid;
+		} else {
+			let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
+			//tagsFilter的形式为 {$in: ARRAY OF TPLID}
+			if (tagsFilter) {
+				filter["tplid"] = tagsFilter;
+				todoFilter["tplid"] = tagsFilter;
+			}
+		}
+		if (req.payload.wfid) {
+			filter["wfid"] = req.payload.wfid;
+			todoFilter["wfid"] = req.payload.wfid;
+		}
+
+		if (Tools.hasValue(req.payload.status)) {
+			filter["status"] = req.payload.status;
+			todoFilter["wfstatus"] = req.payload.status;
+		}
+
+		if (Tools.isEmpty(filter.tplid)) {
+			delete filter.tplid;
+			delete todoFilter.tplid;
+		}
+		if (["ST_RUN", "ST_PAUSE", "ST_DONE", "ST_STOP"].includes(filter.status) === false) {
+			delete filter.status;
+			delete todoFilter.wfstatus;
+		}
+
+		if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
+			let cb = req.payload.calendar_begin;
+			let ce = req.payload.calendar_end;
+			let tz = await Cache.getOrgTimeZone(tenant);
+			let tzdiff = TimeZone.getDiff(tz);
+			cb = `${cb}T00:00:00${tzdiff}`;
+			ce = `${ce}T00:00:00${tzdiff}`;
+			filter.createdAt = {
+				$gte: new Date(moment(cb).toDate()),
+				$lt: new Date(moment(ce).add(24, "h").toDate()),
+			};
+			todoFilter.createdAt = filter.createdAt;
+		} else {
+			let tspan = req.payload.tspan;
+			if (tspan !== "any") {
+				let tmp11 = __GetTSpanMomentOperators(tspan);
+				filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1]).toDate()) };
+				todoFilter.createdAt = filter.createdAt;
+			}
+		}
+
+		/*
+    db.todos.aggregate([
+      { $match: { doer: "suguotai@xihuanwu.com" } },
+      { $group: { _id: "$tplid", count: { $sum: 1 } } },
+    ]);
+     */
+		let starter = req.payload.starter;
+		if (starter) {
+			starter = Tools.makeEmailSameDomain(starter, myEmail);
+			filter["starter"] = starter;
+			todoFilter["starter"] = starter;
+		}
+		//如果当前用户不是ADMIN, 则需要检查进程是否与其相关
+		if (me.group !== "ADMIN") {
+			todoFilter.doer = myEmail;
+			//console.log(`[WfIamIn Filter]  ${JSON.stringify(todoFilter)} `);
+			let todoGroup = await Todo.aggregate([
+				{ $match: todoFilter },
+				{ $group: { _id: "$wfid", count: { $sum: 1 } } },
+			]);
+			let WfsIamIn = todoGroup.map((x) => x._id);
+
+			//如果没有todo与template相关,也需要看是否是启动者
+			//因为,流程的启动者,也许刚好工作都是丢给别人的
+			if (WfsIamIn.length === 0) {
+				filter.starter = myEmail;
+			} else {
+				//如果有相关todo与template相关,
+				//则需要同时考虑todo相关 和 starter相关
+				//filter.tplid = { $in: templatesIamIn };
+				filter["wfid"] = { $in: WfsIamIn };
+			}
+		}
+
+		let myBannedTemplatesIds = [];
+		if (myGroup !== "ADMIN") {
+			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+		}
+		if (filter.tplid) {
+			filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $nin: myBannedTemplatesIds } }];
+			delete filter.tplid;
+		} else {
+			filter.tplid = { $nin: myBannedTemplatesIds };
+		}
+
+		let fields = { doc: 0, __v: 0 };
+		if (req.payload.fields) fields = req.payload.fields;
+
+		//let total = await Workflow.countDocuments(filter, { doc: 0 });
+		//console.log(JSON.stringify(filter, null, 2));
+		//let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
+		let retObjs = await Workflow.find(filter, fields).lean();
+
+		for (let i = 0; i < retObjs.length; i++) {
+			retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter, "WorkflowSearch");
+			retObjs[i].commentCount = await Comment.countDocuments({
+				tenant,
+				"context.wfid": retObjs[i].wfid,
+			});
+			retObjs[i].mdata = { works: [], todos: [] };
+			retObjs[i].works = [];
+			retObjs[i].todos = [];
+			retObjs[i].works_number = 0;
+			retObjs[i].todos_number = 0;
+			retObjs[i].lasting = 0;
+		}
+		console.log(
+			`[Workflow Search] ${myEmail} [${retObjs.length}] filter: ${JSON.stringify(
+				filter,
+			)} no sort, no skip, no limit`,
+		);
+		return h
+			.response(retObjs)
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", latestETag);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
 async function WorkflowGetLatest(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
@@ -2270,7 +2441,7 @@ async function TemplateRead(req, h) {
 			filter["lastUpdateBwid"] = { $ne: req.payload.bwid };
 		}
 
-		let tpl = await Template.findOne(filter);
+		let tpl = await Template.findOne(filter).lean();
 		if (req.payload.bwid && !tpl) {
 			return "MAYBE_LASTUPDATE_BY_YOUSELF";
 		} else {
@@ -5436,6 +5607,363 @@ async function FlexibleStart(req, h) {
 	}
 }
 
+const CheckKsAdminPermission = async (myEmail: string, myGroup: string) => {
+	if (myGroup !== "ADMIN" || Tools.getEmailDomain(myEmail) !== (await Cache.getKsAdminDomain()))
+		throw new EmpError(
+			"KS_DOMAIN_ADMIN_IS_REQUIRED",
+			"Only ks admin domain's administrators are allowed for this operation",
+		);
+};
+
+async function KsTplSearch(req, h) {
+	try {
+		let ret = null;
+		if (ret === null) {
+			let filter = {};
+			if (req.payload.q) {
+				filter = {
+					$or: [
+						{
+							name: { $regex: `.*${req.payload.q}.*` },
+						},
+						{
+							desc: { $regex: `.*${req.payload.q}.*` },
+						},
+					],
+				};
+			}
+			ret = await KsTpl.find(filter, { _id: 0, doc: 0, __v: 0 }).lean();
+		}
+		return h
+			.response(ret)
+			.header("Content-Type", "application/json; charset=utf-8;")
+			.header("Cache-Control", "no-cache")
+			.header("X-Content-Type-Options", "nosniff");
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplScan(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		await Cache.removeKey("KSTPLS");
+		await redisClient.del("KSTPLS");
+		await Engine.scanKShares();
+		await Cache.resetETag("ETAG:KSTPLS");
+		return h.response("Done");
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplClearCache(req, h) {
+	await CheckKsAdminPermission(
+		req.auth.credentials.email,
+		await Cache.getMyGroup(req.auth.credentials.email),
+	);
+	await Cache.removeKey("KSTPLS");
+	await Cache.resetETag("ETAG:KSTPLS");
+	return h.response(Cache.getETag("ETAG:KSTPLS"));
+}
+
+async function KsTplAddTag(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const { ksid, tag } = req.payload;
+		const theTpl = await KsTpl.findOneAndUpdate(
+			{
+				ksid: ksid,
+			},
+			{
+				$addToSet: { tags: tag },
+			},
+			{ upsert: false, new: true },
+		);
+		await Cache.resetETag(`ETAG:KSTPLS`);
+		return h.response(theTpl);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplDelTag(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const { ksid, tag } = req.payload;
+		const theTpl = await KsTpl.findOneAndUpdate(
+			{
+				ksid: ksid,
+			},
+			{
+				$pull: { tags: tag },
+			},
+			{ upsert: false, new: true },
+		);
+		await Cache.resetETag(`ETAG:KSTPLS`);
+		return h.response(theTpl);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplRemoveOne(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const { ksid, withFile } = req.payload;
+		await KsTpl.deleteOne({ ksid: ksid });
+		if (withFile) {
+			fs.rmSync(path.join(process.env.EMP_KSHARE_FOLDER, ksid));
+		}
+		return h.response("Done");
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplUploadOne(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const { name, file, desc, tags } = req.payload;
+
+		let doc = fs.readFileSync(file.path, "utf8");
+
+		const aKsTpl = new KsTpl({
+			author: myEmail,
+			ksid: IdGenerator(),
+			name: name,
+			desc: desc,
+			tags: Tools.qtb(tags).split(/[;|\s|,]/),
+			doc: doc,
+		});
+		return h.response(await aKsTpl.save());
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplUpdateOne(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const { ksid, name, desc, tags } = req.payload;
+		return h.response(
+			await KsTpl.findOneAndUpdate(
+				{ ksid: ksid },
+				{
+					$set: { name: name, desc: desc },
+				},
+				{ upsert: false, new: true },
+			),
+		);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsTplPickOne(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+
+		const { ksid, pickto } = req.payload;
+		debugger;
+		if (await Template.findOne({ tenant: tenant, tplid: pickto }, { doc: 0 })) {
+			throw new EmpError("ALREADY_EXIST", "Template exists, cannot overwrite it");
+		}
+		let tplid = pickto;
+		let author = myEmail;
+		const newTemplate = new Template({
+			tenant: tenant,
+			tplid: tplid,
+			author: author,
+			authorName: await Cache.getUserName(tenant, author, "TemplateImport"),
+			ins: false,
+			doc: (await KsTpl.findOne({ ksid: ksid }, { doc: 1 }))["doc"],
+			ksid: ksid,
+		});
+		await newTemplate.save();
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+
+		return h.response({ ret: "success", tplid: tplid });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsConfigGet(req, h) {
+	try {
+		return h.response(JSON.parse(await Cache.getKsConfig()));
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsConfigSet(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const ksconfig = req.payload.ksconfig;
+		const ksconfigString = JSON.stringify(ksconfig);
+		console.log(ksconfigString);
+		const newSite = await Site.findOneAndUpdate(
+			{},
+			{ $set: { ksconfig: ksconfigString } },
+			{ upsert: false, new: true },
+		);
+		Cache.delKey("KSCONFIG");
+		return h.response({ ret: "Done" });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KsAble(req, h) {
+	try {
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		return h.response({ ksable: true });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function KShareTemplate(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+
+		const { tplid, name, desc, tags } = req.payload;
+
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+		const newKstpl = new KsTpl({
+			author: myEmail,
+			name: name,
+			desc: desc,
+			tags: tags,
+			ksid: IdGenerator(),
+			doc: (await Template.findOne({ tenant: tenant, tplid: tplid })).doc,
+		});
+		await newKstpl.save();
+		return h.response({ ksable: true });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function Mining_WorkflowDetails(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		const myEmail = req.auth.credentials.email;
+		const myGroup = await Cache.getMyGroup(myEmail);
+
+		const wfids = req.payload.wfids;
+		const ret = [];
+
+		for (let i = 0; i < wfids.length; i++) {
+			ret.push(
+				await Workflow.findOne(
+					{ tenant: tenant, wfid: wfids[i] },
+					{
+						_id: 0,
+						wfid: 1,
+						wftitle: 1,
+						status: 1,
+						starter: 1,
+						pnodeid: 1,
+						pworkid: 1,
+						createdAt: 1,
+						updatedAt: 1,
+					},
+				).lean(),
+			);
+		}
+		for (let i = 0; i < ret.length; i++) {
+			ret[i].works = await Work.find(
+				{ tenant: tenant, wfid: ret[i].wfid },
+				{
+					_id: 0,
+					wfid: 1,
+					workid: 1,
+					nodeid: 1,
+					from_workid: 1,
+					from_nodeid: 1,
+					title: 1,
+					status: 1,
+					decision: 1,
+					doneat: 1,
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			);
+
+			ret[i].todos = await Todo.find(
+				{ tenant: tenant, wfid: ret[i].wfid },
+				{
+					_id: 0,
+					todoid: 1,
+					wfid: 1,
+					nodeid: 1,
+					workid: 1,
+					doer: 1,
+					tplid: 1,
+					title: 1,
+					decision: 1,
+					doneby: 1,
+					doneat: 1,
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			);
+		}
+		return h.response(ret);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
 export default {
 	TemplateCreate,
 	TemplateDesc,
@@ -5588,4 +6116,19 @@ export default {
 	SavedSearchList,
 	SavedSearchGetOne,
 	FlexibleStart,
+	KsTplScan,
+	KsTplUploadOne,
+	KsTplPickOne,
+	KsTplSearch,
+	KsTplUpdateOne,
+	KsTplAddTag,
+	KsTplDelTag,
+	KsTplRemoveOne,
+	KsTplClearCache,
+	KsConfigGet,
+	KsConfigSet,
+	KsAble,
+	KShareTemplate,
+	Mining_Workflow,
+	Mining_WorkflowDetails,
 };

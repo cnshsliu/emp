@@ -33,6 +33,7 @@ const schema = new Mongoose.Schema(
 		hasCover: { type: Boolean, default: false },
 		coverTag: { type: String, default: "" },
 		allowdiscuss: { type: Boolean, default: true },
+		ksid: { type: String, default: "" },
 	},
 	{ timestamps: true },
 );

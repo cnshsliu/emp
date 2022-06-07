@@ -3,6 +3,7 @@ import fs from "fs";
 import Tools from "../tools/tools";
 import User from "../database/models/User";
 import Template from "../database/models/Template";
+import KsTpl from "../database/models/KsTpl";
 import Tenant from "../database/models/Tenant";
 import OrgChart from "../database/models/OrgChart";
 import Site from "../database/models/Site";
@@ -351,6 +352,7 @@ const internals = {
 		lruCache.set(permKey, perm);
 		return perm;
 	},
+
 	removeKey: async function (key: string): Promise<string> {
 		lruCache.delete(key);
 		return key;
@@ -414,6 +416,32 @@ const internals = {
 		let rstPwdKey = "RSTPWD:" + email;
 		let ret = await redisClient.get(rstPwdKey);
 		return ret;
+	},
+
+	getKsAdminDomain: async function (): Promise<any> {
+		let key = "KSTPLADMINDOMAIN";
+		let contentInRedis = lruCache.get(key);
+		if (contentInRedis) return contentInRedis;
+
+		let contentInDB = (await Site.findOne({}).lean())?.ksadmindomain;
+		contentInDB && lruCache.set(key, contentInDB);
+		return contentInDB;
+	},
+
+	getKsConfig: async function (): Promise<any> {
+		let key = "KSCONFIG";
+		let contentInRedis = lruCache.get(key);
+		if (contentInRedis) return contentInRedis;
+
+		let theSite = await Site.findOne({}).lean();
+		let contentInDB = theSite.ksconfig;
+		contentInDB && lruCache.set(key, contentInDB);
+
+		return contentInDB;
+	},
+
+	delKey: async function (key: string) {
+		lruCache.delete(key);
 	},
 };
 

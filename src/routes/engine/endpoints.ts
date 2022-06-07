@@ -1010,6 +1010,35 @@ const internals = {
 				},
 			},
 		},
+		{
+			method: "POST",
+			path: "/workflow/mining",
+			handler: Handlers.Mining_Workflow,
+			config: {
+				description: "Process Mining",
+				notes: "Process mining with patern",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().optional().allow(""),
+						wfid: Joi.string().optional().allow(""),
+						pattern: Joi.string().empty("").optional().allow(""),
+						starter: Joi.string().allow("").optional(),
+						status: Joi.string().optional(),
+						tagsForFilter: Joi.array().items(Joi.string().allow("")).optional(),
+						tspan: Joi.string().optional(),
+						calendar_begin: Joi.string().optional().allow(""),
+						calendar_end: Joi.string().optional().allow(""),
+						reason: Joi.string().optional(),
+					},
+					validator: Joi,
+				},
+			},
+		},
 
 		{
 			method: "POST",
@@ -3168,6 +3197,285 @@ const internals = {
 					}).unknown(),
 					payload: {
 						name: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/kshare/able",
+			handler: Handlers.KsAble,
+			config: {
+				description: "Ableto share or not",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/kstpls",
+			handler: Handlers.KsTplSearch,
+			config: {
+				description: "KsTpl search",
+				tags: ["api"],
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						q: Joi.string().required().allow(""),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/kstpl/scan",
+			handler: Handlers.KsTplScan,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/uploadone",
+			handler: Handlers.KsTplUploadOne,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				payload: {
+					maxBytes: 1024 * 1024 * 100,
+					parse: true,
+					output: "file",
+					multipart: true,
+					allow: "multipart/form-data",
+					timeout: false,
+				},
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/updateone",
+			handler: Handlers.KsTplUpdateOne,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksid: Joi.string().required().trim(),
+						name: Joi.string().required().trim(),
+						desc: Joi.string().required().trim(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/addtag",
+			handler: Handlers.KsTplAddTag,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksid: Joi.string().required().trim(),
+						tag: Joi.string().required().trim(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/deltag",
+			handler: Handlers.KsTplDelTag,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksid: Joi.string().required().trim(),
+						tag: Joi.string().required().trim(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/removeone",
+			handler: Handlers.KsTplRemoveOne,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksid: Joi.string().required(),
+						withFile: Joi.boolean().optional().default(false),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/clearcache",
+			handler: Handlers.KsTplClearCache,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kstpl/pickone",
+			handler: Handlers.KsTplPickOne,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksid: Joi.string().required(),
+						pickto: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/ksconfig/get",
+			handler: Handlers.KsConfigGet,
+			config: {
+				description: " description",
+				tags: ["api"],
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/ksconfig/set",
+			handler: Handlers.KsConfigSet,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksconfig: {
+							scenarios: Joi.array().items(Joi.string()),
+							industries: Joi.array().items(Joi.string()),
+						},
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/kshare/shareTemplate",
+			handler: Handlers.KShareTemplate,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().required(),
+						name: Joi.string().required(),
+						desc: Joi.string().required(),
+						price: Joi.number().required(),
+						tags: Joi.array().items(Joi.string()),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/mining/workflow/details",
+			handler: Handlers.Mining_WorkflowDetails,
+			config: {
+				description: "Process Mining",
+				notes: "Process mining with patern",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						wfids: Joi.array().items(Joi.string()),
 					},
 					validator: Joi,
 				},
