@@ -5949,6 +5949,7 @@ async function Mining_WorkflowDetails(req, h) {
 					doer: 1,
 					tplid: 1,
 					title: 1,
+					status: 1,
 					decision: 1,
 					doneby: 1,
 					doneat: 1,
@@ -5956,6 +5957,9 @@ async function Mining_WorkflowDetails(req, h) {
 					updatedAt: 1,
 				},
 			);
+			for (let t = 0; t < ret[i].todos.length; t++) {
+				ret[i].todos[t].doerCN = await Cache.getUserName(tenant, ret[i].todos[t].doer);
+			}
 		}
 		return h.response(ret);
 	} catch (err) {
