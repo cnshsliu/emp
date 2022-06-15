@@ -3437,6 +3437,7 @@ const internals = {
 				},
 			},
 		},
+
 		{
 			method: "POST",
 			path: "/kshare/shareTemplate",
@@ -3463,6 +3464,44 @@ const internals = {
 
 		{
 			method: "POST",
+			path: "/kstpl/preparedesign",
+			handler: Handlers.KsTplPrepareDesign,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						ksid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/site/info",
+			handler: Handlers.SiteInfo,
+			config: {
+				description: " description",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
 			path: "/mining/workflow/details",
 			handler: Handlers.Mining_WorkflowDetails,
 			config: {
@@ -3476,6 +3515,27 @@ const internals = {
 					}).unknown(),
 					payload: {
 						wfids: Joi.array().items(Joi.string()),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/mining/data",
+			handler: Handlers.Mining_Data,
+			config: {
+				description: "Get process data",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().required().allow(""),
+						wfid: Joi.string().required().allow(""),
 					},
 					validator: Joi,
 				},

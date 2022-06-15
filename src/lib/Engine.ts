@@ -282,14 +282,12 @@ const cleanupFaultCrons = async function () {
 	let crons = await Crontab.find();
 	for (let i = 0; i < crons.length; i++) {
 		let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
-		if (tmp.length !== 5) {
-			await Crontab.deleteOne({ _id: crons[i]._id });
-		}
-		if (cronEngine.validate(crons[i].expr) === false) {
+		if (tmp.length !== 5 || cronEngine.validate(crons[i].expr) === false) {
 			await Crontab.deleteOne({ _id: crons[i]._id });
 		}
 	}
 };
+
 const rescheduleCrons = async function () {
 	try {
 		await cleanupFaultCrons();
@@ -3204,7 +3202,6 @@ const yarkNode_internal = async function (obj) {
 		if (Array.isArray(doerOrDoers) === false) {
 			throw new EmpError("DOER_ARRAY_ERROR", "Doer is not array");
 		}
-		debugger;
 		let doer_string = Parser.codeToBase64(JSON.stringify(doerOrDoers));
 
 		let roleInNode = tpNode.attr("role");
@@ -6968,6 +6965,12 @@ const getWorkflowDoneAt = function (wfRoot) {
 const getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
 	let linkSelector = '.link[from="' + nodeid + '"]';
 	let routings = [];
+	let tpNode = tpRoot.find("#" + nodeid);
+	let repeaton = tpNode.attr("repeaton");
+	if (repeaton) repeaton = repeaton.trim();
+	if (repeaton) {
+		routings.push(repeaton);
+	}
 	tpRoot.find(linkSelector).each(function (i, el) {
 		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
 		if (
@@ -7026,82 +7029,93 @@ const procNext = async function (
 	rehearsal: boolean,
 	starter: string,
 ) {
-	let linkSelector = '.link[from="' + this_nodeid + '"]';
-	let routingOptionsInTemplate = [];
-	////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////
-	//原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
-	//但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
-	//let defiedNodes = [];
-	//await defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
-	////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////
-	let linksInTemplate = tpRoot.find(linkSelector);
-	tpRoot.find(linkSelector).each(function (i, el) {
-		//SEE HERE
-		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
-		if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
-	});
-
-	if (routingOptionsInTemplate.length === 0) {
-		//This node has no following node, it's a to-be-grounded node
-		//只要linkSelector选到了节点，至少有一个option会放到routingOptionsInTemplate数组中
-		//See last SEE HERE comment
-		return;
-	}
-	//routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
-	//也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
-	let routes = formatRoute(decision);
-	if (Array.isArray(routes) === false) {
-		routes = [decision];
-	}
-
-	//把模版中的后续decision和ProcNext的decision数组进行交集
-	let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
-	if (foundRoutes.length === 0) {
-		console.error(
-			"decision '" +
-				JSON.stringify(decision) +
-				"' not found in linksInTemplate " +
-				routingOptionsInTemplate.toString(),
-		);
-		console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
-		foundRoutes = ["DEFAULT"];
-	}
-	//确保DEFAULT始终存在
-	if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
-	let parallel_number = 0;
-	let parallel_id = IdGenerator();
-	//统计需要经过的路径的数量, 同时,运行路径上的变量设置
-
 	let foundNexts = [];
 	let ignoredNexts = [];
-	linksInTemplate.each(function (i, el) {
-		let linkObj = Cheerio(el);
-		let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
-		if (foundRoutes.includes(option)) {
-			//将要被执行的路径
-			foundNexts.push({
-				option: option,
-				toid: linkObj.attr("to"),
-			});
-			//相同option的后续节点的个数
-			parallel_number++;
-			//路径上是否定义了设置值
-			let setValue = linkObj.attr("set");
-			if (setValue) {
-				//设置路径上的变量
-				setValue = Parser.base64ToCode(setValue);
-				Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
-			}
-		} else {
-			//需要被忽略的路径
-			ignoredNexts.push({
-				option: option,
-				toid: linkObj.attr("to"),
-			});
+	let parallel_number = 0;
+	let parallel_id = IdGenerator();
+
+	let tpNode = tpRoot.find("#" + this_nodeid);
+	let repeaton = tpNode.attr("repeaton");
+	if (repeaton) repeaton = repeaton.trim();
+	if (repeaton.length > 0 && decision === repeaton) {
+		foundNexts.push({
+			option: repeaton,
+			toid: this_nodeid,
+		});
+	} else {
+		let linkSelector = '.link[from="' + this_nodeid + '"]';
+		let routingOptionsInTemplate = [];
+		////////////////////////////////////////////////////////////////////////////////
+		////////////////////////////////////////////////////////////////////////////////
+		//原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
+		//但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
+		//let defiedNodes = [];
+		//await defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
+		////////////////////////////////////////////////////////////////////////////////
+		////////////////////////////////////////////////////////////////////////////////
+		let linksInTemplate = tpRoot.find(linkSelector);
+		tpRoot.find(linkSelector).each(function (i, el) {
+			//SEE HERE
+			let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+			if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
+		});
+
+		if (routingOptionsInTemplate.length === 0) {
+			//This node has no following node, it's a to-be-grounded node
+			//只要linkSelector选到了节点，至少有一个option会放到routingOptionsInTemplate数组中
+			//See last SEE HERE comment
+			return;
 		}
-	});
+		//routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
+		//也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
+		let routes = formatRoute(decision);
+		if (Array.isArray(routes) === false) {
+			routes = [decision];
+		}
+
+		//把模版中的后续decision和ProcNext的decision数组进行交集
+		let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
+		if (foundRoutes.length === 0) {
+			console.error(
+				"decision '" +
+					JSON.stringify(decision) +
+					"' not found in linksInTemplate " +
+					routingOptionsInTemplate.toString(),
+			);
+			console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
+			foundRoutes = ["DEFAULT"];
+		}
+		//确保DEFAULT始终存在
+		if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
+		//统计需要经过的路径的数量, 同时,运行路径上的变量设置
+
+		linksInTemplate.each(function (i, el) {
+			let linkObj = Cheerio(el);
+			let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
+			if (foundRoutes.includes(option)) {
+				//将要被执行的路径
+				foundNexts.push({
+					option: option,
+					toid: linkObj.attr("to"),
+				});
+				//相同option的后续节点的个数
+				parallel_number++;
+				//路径上是否定义了设置值
+				let setValue = linkObj.attr("set");
+				if (setValue) {
+					//设置路径上的变量
+					setValue = Parser.base64ToCode(setValue);
+					Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
+				}
+			} else {
+				//需要被忽略的路径
+				ignoredNexts.push({
+					option: option,
+					toid: linkObj.attr("to"),
+				});
+			}
+		});
+	}
 
 	for (let i = 0; i < foundNexts.length; i++) {
 		//构建一个zeroMQ 消息 body， 放在nexts数组中

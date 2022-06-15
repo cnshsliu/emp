@@ -9,6 +9,7 @@ const schema = new Mongoose.Schema(
 		mode: { type: String, required: true },
 		password: { type: String, required: true },
 		users: [String],
+		ksenabled: { type: Boolean, required: true, default: false },
 		ksadmindomain: { type: String, default: "" },
 		ksconfig: { type: String, default: "{}" },
 	},

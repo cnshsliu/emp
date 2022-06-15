@@ -440,6 +440,20 @@ const internals = {
 		return contentInDB;
 	},
 
+	getSiteInfo: async function (): Promise<any> {
+		let key = "SITEINFO";
+		let contentInLRU = lruCache.get(key);
+		if (contentInLRU) return contentInLRU;
+		//
+		//
+
+		let theSite = await Site.findOne({}, { password: 0, _id: 0, __v: 0 }).lean();
+		let contentInDB = theSite;
+		contentInDB && lruCache.set(key, contentInDB);
+
+		return contentInDB;
+	},
+
 	delKey: async function (key: string) {
 		lruCache.delete(key);
 	},

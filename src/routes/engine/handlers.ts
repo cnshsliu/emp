@@ -361,6 +361,10 @@ async function TemplatePut(req, h) {
 			editorName: await Cache.getUserName(tenant, myEmail, "TemplatePut"),
 		});
 		edittingLog = await edittingLog.save();
+		if (tplid.startsWith("TMP_KSHARE_")) {
+			let ksid = obj.ksid;
+			await KsTpl.findOneAndUpdate({ ksid: ksid }, { $set: { doc: req.payload.doc } });
+		}
 		return h.response({ _id: obj._id, tplid: obj.tplid, updatedAt: obj.updatedAt });
 	} catch (err) {
 		console.error(err);
@@ -455,7 +459,10 @@ async function TemplateBatchStart(req, h) {
 		let starters = req.payload.starters.trim();
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", `Only admins can start workflow in batch mode.`);
+			throw new EmpError(
+				"NOT_ADMIN",
+				`Only admins can start workflow in batch mode. ${myEmail} ${myGroup}`,
+			);
 		}
 		await Engine.startBatchWorkflow(tenant, starters, tplid, myEmail);
 		return h.response("Done");
@@ -3237,7 +3244,7 @@ async function OrgChartImport(req, h) {
 		let myEmail = req.auth.credentials.email;
 		let myGroup = await Cache.getMyGroup(myEmail);
 		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "Only Admin can import orgchart");
+			throw new EmpError("NOT_ADMIN", `Only Admin can import orgchart ${myEmail} ${myGroup}`);
 		}
 		if ((await Cache.setOnNonExist("admin_" + req.auth.credentials.email, "a", 10)) === false) {
 			throw new EmpError("NO_BRUTE", "Please wait for 10 seconds");
@@ -5696,6 +5703,50 @@ async function KsTplAddTag(req, h) {
 	}
 }
 
+async function KsTplPrepareDesign(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+
+		await CheckKsAdminPermission(
+			req.auth.credentials.email,
+			await Cache.getMyGroup(req.auth.credentials.email),
+		);
+
+		await Template.deleteMany({
+			tenant: tenant,
+			author: myEmail,
+			tplid: { $regex: /^TMP_KSHARE_/ },
+		});
+		const { ksid } = req.payload;
+		const theTpl = await KsTpl.findOne({
+			ksid: ksid,
+		});
+		const ksharetplid = "TMP_KSHARE_" + ksid.replace(/\//g, "_");
+		const tmpTpl = await Template.findOneAndUpdate(
+			{
+				tenant: tenant,
+				tplid: ksharetplid,
+			},
+			{
+				$set: {
+					author: myEmail,
+					authorName: await Cache.getUserName(tenant, myEmail, "TemplateImport"),
+					ins: true,
+					doc: (await KsTpl.findOne({ ksid: ksid }, { doc: 1 }))["doc"],
+					ksid: ksid,
+				},
+			},
+			{ upsert: true, new: true },
+		);
+		return h.response(ksharetplid);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
 async function KsTplDelTag(req, h) {
 	try {
 		await CheckKsAdminPermission(
@@ -5795,7 +5846,6 @@ async function KsTplPickOne(req, h) {
 		let myGroup = await Cache.getMyGroup(myEmail);
 
 		const { ksid, pickto } = req.payload;
-		debugger;
 		if (await Template.findOne({ tenant: tenant, tplid: pickto }, { doc: 0 })) {
 			throw new EmpError("ALREADY_EXIST", "Template exists, cannot overwrite it");
 		}
@@ -5814,6 +5864,16 @@ async function KsTplPickOne(req, h) {
 		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 
 		return h.response({ ret: "success", tplid: tplid });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function SiteInfo(req, h) {
+	try {
+		const ret = await Cache.getSiteInfo();
+		return h.response(ret);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -5920,6 +5980,7 @@ async function Mining_WorkflowDetails(req, h) {
 			);
 		}
 		for (let i = 0; i < ret.length; i++) {
+			ret[i].starterCN = await Cache.getUserName(tenant, ret[i].starter);
 			ret[i].works = await Work.find(
 				{ tenant: tenant, wfid: ret[i].wfid },
 				{
@@ -5936,7 +5997,7 @@ async function Mining_WorkflowDetails(req, h) {
 					createdAt: 1,
 					updatedAt: 1,
 				},
-			);
+			).lean();
 
 			ret[i].todos = await Todo.find(
 				{ tenant: tenant, wfid: ret[i].wfid },
@@ -5956,12 +6017,107 @@ async function Mining_WorkflowDetails(req, h) {
 					createdAt: 1,
 					updatedAt: 1,
 				},
-			);
+			).lean();
 			for (let t = 0; t < ret[i].todos.length; t++) {
 				ret[i].todos[t].doerCN = await Cache.getUserName(tenant, ret[i].todos[t].doer);
 			}
 		}
 		return h.response(ret);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function Mining_Data(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		const myEmail = req.auth.credentials.email;
+		const myGroup = await Cache.getMyGroup(myEmail);
+
+		let wfids = [];
+		const { tplid, wfid } = req.payload;
+		if (wfid.length < 1) {
+			wfids = (
+				await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean()
+			).map((x) => x.wfid);
+		} else {
+			wfids = [wfid];
+		}
+		let columnKeys = [];
+		let columnDefs = [];
+		let entries = [];
+		for (let i = 0; i < wfids.length; i++) {
+			let ALL_VISIED_KVARS = await Parser.userGetVars(
+				tenant,
+				myEmail,
+				wfids[i],
+				Const.FOR_WHOLE_PROCESS,
+				[],
+				[],
+				Const.VAR_IS_EFFICIENT,
+			);
+			if (columnKeys.length < 1) {
+				columnKeys = Object.keys(ALL_VISIED_KVARS);
+				columnDefs = columnKeys.map((x) => {
+					return {
+						header: ALL_VISIED_KVARS[x].label,
+						key: x,
+						width: 30,
+					};
+				});
+			} else {
+				let keys = Object.keys(ALL_VISIED_KVARS);
+				for (let k = 0; k < keys.length; k++) {
+					if (columnKeys.includes(keys[k]) === false) {
+						columnKeys.push(keys[k]);
+						columnDefs.push({
+							header: ALL_VISIED_KVARS[keys[k]].label,
+							key: keys[k],
+							width: 30,
+						});
+					}
+				}
+			}
+			let anEntry = {};
+			let keys = Object.keys(ALL_VISIED_KVARS);
+			for (let k = 0; k < keys.length; k++) {
+				anEntry[keys[k]] = ALL_VISIED_KVARS[keys[k]].value;
+			}
+			entries.push(anEntry);
+		}
+
+		const workbook = new Excel.Workbook();
+		workbook.creator = "Metatocome";
+		const worksheet = workbook.addWorksheet("ProcessData");
+
+		if (entries.length > 0) {
+			worksheet.columns = columnDefs;
+
+			for (let i = 0; i < entries.length; i++) {
+				worksheet.addRow(entries[i]);
+			}
+		} else {
+			worksheet.columns = [
+				{
+					header: "No data",
+					key: "nodata",
+					width: 30,
+				},
+			];
+			worksheet.addRow({ nodata: "There is no process data" });
+		}
+
+		//await workbook.xlsx.writeFile("/Users/lucas/tst.xlsx");
+		const buffer = (await workbook.xlsx.writeBuffer()) as Buffer;
+
+		return h
+			.response(buffer)
+			.header("cache-control", "no-cache")
+			.header("Pragma", "no-cache")
+			.header("Access-Control-Allow-Origin", "*")
+			.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+			.header("Content-Disposition", `attachment;filename="ProcessData.xlsx"`);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -6129,10 +6285,13 @@ export default {
 	KsTplDelTag,
 	KsTplRemoveOne,
 	KsTplClearCache,
+	KsTplPrepareDesign,
 	KsConfigGet,
 	KsConfigSet,
+	SiteInfo,
 	KsAble,
 	KShareTemplate,
 	Mining_Workflow,
 	Mining_WorkflowDetails,
+	Mining_Data,
 };

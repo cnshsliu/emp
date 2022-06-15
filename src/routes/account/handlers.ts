@@ -29,6 +29,7 @@ import Cache from "../../lib/Cache";
 
 const buildSessionResponse = (user, tenant) => {
 	let token = JwtAuth.createToken({ id: user._id });
+	console.log("Build Session Token for ", JSON.stringify(user));
 	return {
 		objectId: user._id,
 		sessionToken: token,
@@ -205,8 +206,10 @@ async function SetMyPassword(req, h) {
 		if (!user) {
 			return { error: "用户信息不存在" };
 		}
-		if (Crypto.decrypt(user.password) !== req.payload.oldpassword) {
-			return { error: "原密码不正确" };
+		if (user.password !== "EMPTY_TO_REPLACE") {
+			if (Crypto.decrypt(user.password) !== req.payload.oldpassword) {
+				return { error: "原密码不正确" };
+			}
 		}
 		user = await User.findOneAndUpdate(
 			{ email: payload.doer },
@@ -611,8 +614,10 @@ async function UpdateProfile(req, h) {
 			);
 		}
 		if (v.password) {
-			if (Crypto.decrypt(user.password) != v.old_password) {
-				throw new EmpError("wrong_password", "You are using a wrong password");
+			if (user.password !== "EMPTY_TO_REPLACE") {
+				if (Crypto.decrypt(user.password) != v.old_password) {
+					throw new EmpError("wrong_password", "You are using a wrong password");
+				}
 			}
 			update["password"] = Crypto.encrypt(v.password);
 		}
