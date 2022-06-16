@@ -44,6 +44,22 @@ export type NextDef = {
 	parallel_id?: string;
 };
 
+export type ProcNextParams = {
+	tenant: string;
+	teamid: string;
+	tplid: string;
+	wfid: string;
+	tpRoot: any;
+	wfRoot: any;
+	this_nodeid: string;
+	this_workid: string;
+	decision: string;
+	nexts: any[];
+	round: number;
+	rehearsal: boolean;
+	starter: string;
+};
+
 export type ErrorReturn = {
 	error: string;
 	message: string;

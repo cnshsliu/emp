@@ -48,6 +48,7 @@ import { redisClient, redisConnect } from "../database/redis";
 
 import type {
 	NextDef,
+	ProcNextParams,
 	ErrorReturn,
 	histroyTodoEntry,
 	workFullInfo,
@@ -420,21 +421,21 @@ const runScheduled = async function (obj, isCron = false) {
 	}
 	//ProcNext, 后续节点在nexts
 	let nexts = [];
-	await procNext(
-		obj.tenant,
-		obj.teamid,
-		obj.tplid,
-		obj.wfid,
-		tpRoot,
-		wfRoot,
-		obj.nodeid,
-		obj.workid,
-		"DEFAULT",
-		nexts,
-		obj.round,
-		wf.rehearsal,
-		wf.starter,
-	);
+	await procNext({
+		tenant: obj.tenant,
+		teamid: obj.teamid,
+		tplid: obj.tplid,
+		wfid: obj.wfid,
+		tpRoot: tpRoot,
+		wfRoot: wfRoot,
+		this_nodeid: obj.nodeid,
+		this_workid: obj.workid,
+		decision: "DEFAULT",
+		nexts: nexts,
+		round: obj.round,
+		rehearsal: wf.rehearsal,
+		starter: wf.starter,
+	});
 	//删除数据库中的DelayTimer
 	if (nexts.length > 0) {
 		wf.pnodeid = nexts[0].from_nodeid;
@@ -934,22 +935,21 @@ const __doneTodo = async function (
 				// process Script -- END
 				////////////////////////////////////////////////////
 			}
-			await procNext(
-				tenant,
-				teamid,
-				todo.tplid,
-				todo.wfid,
-				tpRoot,
-				wfRoot,
-				nodeid,
-				todo.workid,
-				workResultRoute, //用户所做的选择
-				nexts,
-				//TODO: 在这里处理关键逻辑
-				todo.round,
-				wf.rehearsal,
-				wf.starter,
-			);
+			await procNext({
+				tenant: tenant,
+				teamid: teamid,
+				tplid: todo.tplid,
+				wfid: todo.wfid,
+				tpRoot: tpRoot,
+				wfRoot: wfRoot,
+				this_nodeid: nodeid,
+				this_workid: todo.workid,
+				decision: workResultRoute, //用户所做的选择
+				nexts: nexts, //TODO: 在这里处理关键逻辑
+				round: todo.round,
+				rehearsal: wf.rehearsal,
+				starter: wf.starter,
+			});
 			console.log(
 				`From ${nodeid} by ${workResultRoute} to ${JSON.stringify(
 					nexts.map((x) => x.selector),
@@ -1515,21 +1515,21 @@ const doCallback = async function (tenant: string, cbp: any, payload: any) {
 	}
 
 	let nexts = [];
-	await procNext(
-		cbp.tenant,
-		teamid,
-		cbp.tplid,
-		cbp.wfid,
-		tpRoot,
-		wfRoot,
-		cbp.nodeid,
-		cbp.workid,
-		payload.decision,
-		nexts,
-		cbp.round,
-		payload.rehearsal,
-		wf.starter,
-	);
+	await procNext({
+		tenant: cbp.tenant,
+		teamid: teamid,
+		tplid: cbp.tplid,
+		wfid: cbp.wfid,
+		tpRoot: tpRoot,
+		wfRoot: wfRoot,
+		this_nodeid: cbp.nodeid,
+		this_workid: cbp.workid,
+		decision: payload.decision,
+		nexts: nexts,
+		round: cbp.round,
+		rehearsal: payload.rehearsal,
+		starter: wf.starter,
+	});
 	let wfUpdate = { doc: wfIO.html() };
 	if (nexts.length > 0) {
 		wf.pnodeid = nexts[0].from_nodeid;
@@ -1744,7 +1744,8 @@ const addAdhoc = async function (payload) {
 		"Engine.revokeWork",
 	);
 	await wf.save();
-	let todoObj = {
+	//create adhoc todo
+	await createTodo({
 		tenant: payload.tenant,
 		doer: doers,
 		tplid: wf.tplid,
@@ -1762,9 +1763,7 @@ const addAdhoc = async function (payload) {
 		teamid: wf.teamid,
 		rehearsal: payload.rehearsal,
 		allowdiscuss: wf.allowdiscuss,
-	};
-	//create adhoc todo
-	await createTodo(todoObj);
+	});
 	let adhocWork = new Work({
 		tenant: payload.tenant,
 		wfid: wf.wfid,
@@ -2085,8 +2084,9 @@ Client.onStartWorkflow = async function (msg) {
 
 Client.onYarkNode = async function (obj) {
 	try {
-		//await yarkNode_internal(obj);
-		await callYarkNodeWorker(obj);
+		await yarkNode_internal(obj);
+		//await callYarkNodeWorker(obj);
+
 		await RCL.resetCache(
 			{ tenant: obj.tenant, wfid: obj.wfid },
 			"Engine.onYarkNode",
@@ -2438,21 +2438,21 @@ const yarkNode_internal = async function (obj) {
 		wfRoot.append(
 			`<div class="work START ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="DEFAULT" round="${obj.round}" at="${isoNow}"></div>`,
 		);
-		await procNext(
-			obj.tenant,
-			teamid,
-			obj.tplid,
-			obj.wfid,
-			tpRoot,
-			wfRoot,
-			nodeid,
-			workid,
-			"DEFAULT", //START 后面这根线一定是DEFAULT
-			nexts,
-			obj.round,
-			obj.rehearsal,
-			obj.starter,
-		);
+		nexts = await procNext({
+			tenant: obj.tenant,
+			teamid: teamid,
+			tplid: obj.tplid,
+			wfid: obj.wfid,
+			tpRoot: tpRoot,
+			wfRoot: wfRoot,
+			this_nodeid: nodeid,
+			this_workid: workid,
+			decision: "DEFAULT", //START 后面这根线一定是DEFAULT
+			nexts: nexts,
+			round: obj.round,
+			rehearsal: obj.rehearsal,
+			starter: obj.starter,
+		});
 	} else if (tpNode.hasClass("INFORM")) {
 		//这里的GetDoer使用了wfRoot，最终会导致 role解析时会从wfRoot中innerTeam，在innerTeam中找不到角色定义，则继续从teamid中找
 		try {
@@ -2620,21 +2620,21 @@ const yarkNode_internal = async function (obj) {
 			wfRoot.append(
 				`<div class="work INFORM ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" route="${obj.route}" round="${obj.round}" at="${isoNow}"></div>`,
 			);
-			await procNext(
-				obj.tenant,
-				teamid,
-				obj.tplid,
-				obj.wfid,
-				tpRoot,
-				wfRoot,
-				nodeid,
-				workid,
-				"DEFAULT", //INFORM后面的route也是DEFAULT
-				nexts,
-				obj.round,
-				obj.rehearsal,
-				obj.starter,
-			);
+			await procNext({
+				tenant: obj.tenant,
+				teamid: teamid,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				tpRoot: tpRoot,
+				wfRoot: wfRoot,
+				this_nodeid: nodeid,
+				this_workid: workid,
+				decision: "DEFAULT", //INFORM后面的route也是DEFAULT
+				nexts: nexts,
+				round: obj.round,
+				rehearsal: obj.rehearsal,
+				starter: obj.starter,
+			});
 		} catch (informNodeError) {
 			console.log("INFORM node exception:" + informNodeError.message);
 			log(tenant, obj.wfid, "INFORM node exception", {
@@ -2750,21 +2750,21 @@ const yarkNode_internal = async function (obj) {
 			wfRoot.append(
 				`<div class="work SCRIPT ST_DONE"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`,
 			);
-			await procNext(
-				obj.tenant,
-				teamid,
-				obj.tplid,
-				obj.wfid,
-				tpRoot,
-				wfRoot,
-				nodeid,
-				workid,
-				codeRetDecision, //SCRIPT后面的连接是SCRIPT的返回
-				nexts,
-				obj.round,
-				obj.rehearsal,
-				obj.starter,
-			);
+			await procNext({
+				tenant: obj.tenant,
+				teamid: teamid,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				tpRoot: tpRoot,
+				wfRoot: wfRoot,
+				this_nodeid: nodeid,
+				this_workid: workid,
+				decision: codeRetDecision, //SCRIPT后面的连接是SCRIPT的返回
+				nexts: nexts,
+				round: obj.round,
+				rehearsal: obj.rehearsal,
+				starter: obj.starter,
+			});
 		} else {
 			wfRoot.append(
 				`<div class="work SCRIPT ST_WAIT"  from_nodeid="${from_nodeid}" from_workid="${from_workid}"  nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}">${codeRetDecision}${innerTeamToAdd}</div>`,
@@ -2830,21 +2830,21 @@ const yarkNode_internal = async function (obj) {
 				//刚刚新建的ROUTE，to_workid不用改
 			}
 			//既然AND已经完成，那么，就可以继续处理AND后面的节点
-			await procNext(
-				obj.tenant,
-				teamid,
-				obj.tplid,
-				obj.wfid,
-				tpRoot,
-				wfRoot,
-				nodeid,
-				workid,
-				"DEFAULT", //AND 后面的连接的值也是DEFAULT
-				nexts,
-				obj.round,
-				obj.rehearsal,
-				obj.starter,
-			);
+			await procNext({
+				tenant: obj.tenant,
+				teamid: teamid,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				tpRoot: tpRoot,
+				wfRoot: wfRoot,
+				this_nodeid: nodeid,
+				this_workid: workid,
+				decision: "DEFAULT", //AND 后面的连接的值也是DEFAULT
+				nexts: nexts,
+				round: obj.round,
+				rehearsal: obj.rehearsal,
+				starter: obj.starter,
+			});
 		} else {
 			// 如果 AND 没有完成
 			if (andNodeExisting.length > 0) {
@@ -2894,42 +2894,42 @@ const yarkNode_internal = async function (obj) {
 			);
 			//OR需要忽略掉其它未执行的兄弟节点
 			ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
-			await procNext(
-				obj.tenant,
-				teamid,
-				obj.tplid,
-				obj.wfid,
-				tpRoot,
-				wfRoot,
-				nodeid,
-				workid,
-				"DEFAULT", //or 后面的连接是DEFAULT
-				nexts,
-				obj.round,
-				obj.rehearsal,
-				obj.starter,
-			);
+			await procNext({
+				tenant: obj.tenant,
+				teamid: teamid,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				tpRoot: tpRoot,
+				wfRoot: wfRoot,
+				this_nodeid: nodeid,
+				this_workid: workid,
+				decision: "DEFAULT", //or 后面的连接是DEFAULT
+				nexts: nexts,
+				round: obj.round,
+				rehearsal: obj.rehearsal,
+				starter: obj.starter,
+			});
 		}
 	} else if (tpNode.hasClass("THROUGH")) {
 		wfRoot.append(
 			`<div class="work THROUGH ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 		);
 		//ignore4Or(obj.tenant, obj.wfid, tpRoot, wfRoot, nodeid, "DEFAULT", nexts);
-		await procNext(
-			obj.tenant,
-			teamid,
-			obj.tplid,
-			obj.wfid,
-			tpRoot,
-			wfRoot,
-			nodeid,
-			workid,
-			"DEFAULT",
-			nexts,
-			obj.round,
-			obj.rehearsal,
-			obj.starter,
-		);
+		await procNext({
+			tenant: obj.tenant,
+			teamid: teamid,
+			tplid: obj.tplid,
+			wfid: obj.wfid,
+			tpRoot: tpRoot,
+			wfRoot: wfRoot,
+			this_nodeid: nodeid,
+			this_workid: workid,
+			decision: "DEFAULT",
+			nexts: nexts,
+			round: obj.round,
+			rehearsal: obj.rehearsal,
+			starter: obj.starter,
+		});
 	} else if (tpNode.hasClass("TIMER")) {
 		wfRoot.append(
 			`<div class="work TIMER ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
@@ -2999,21 +2999,21 @@ const yarkNode_internal = async function (obj) {
 			wfRoot.append(
 				`<div class="work SUB ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 			);
-			await procNext(
-				obj.tenant,
-				teamid,
-				obj.tplid,
-				obj.wfid,
-				tpRoot,
-				wfRoot,
-				nodeid,
-				workid,
-				"DEFAULT",
-				nexts,
-				obj.round,
-				obj.rehearsal,
-				obj.starter,
-			);
+			await procNext({
+				tenant: obj.tenant,
+				teamid: teamid,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				tpRoot: tpRoot,
+				wfRoot: wfRoot,
+				this_nodeid: nodeid,
+				this_workid: workid,
+				decision: "DEFAULT",
+				nexts: nexts,
+				round: obj.round,
+				rehearsal: obj.rehearsal,
+				starter: obj.starter,
+			});
 		} else {
 			wfRoot.append(
 				`<div class="work SUB ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${obj.round}"  at="${isoNow}"></div>`,
@@ -3082,21 +3082,21 @@ const yarkNode_internal = async function (obj) {
 			let child_route = child_kvars["RET"] ? child_kvars["RET"].value : "DEFAULT";
 			//console.log(`Child kvars ${JSON.stringify(child_kvars)}`);
 			//console.log(`Child RET ${child_route}`);
-			await procNext(
-				obj.tenant,
-				teamid,
-				parent_tplid,
-				parent_wfid,
-				parent_tpRoot,
-				parent_wfRoot,
-				parent_nodeid,
-				parent_workid,
-				child_route,
-				parent_nexts,
-				parent_work_round,
-				obj.rehearsal,
-				obj.starter,
-			);
+			await procNext({
+				tenant: obj.tenant,
+				teamid: teamid,
+				tplid: parent_tplid,
+				wfid: parent_wfid,
+				tpRoot: parent_tpRoot,
+				wfRoot: parent_wfRoot,
+				this_nodeid: parent_nodeid,
+				this_workid: parent_workid,
+				decision: child_route,
+				nexts: parent_nexts,
+				round: parent_work_round,
+				rehearsal: obj.rehearsal,
+				starter: obj.starter,
+			});
 
 			if (parent_nexts.length > 0) {
 				parent_wf.pnodeid = parent_nexts[0].from_nodeid;
@@ -3427,36 +3427,67 @@ const createTodo = async function (obj) {
 		else doerName = await Cache.getUserName(obj.tenant, doerEmail, "createTodo");
 
 		if (Tools.isEmpty(doerName)) {
-			console.warn(`increateTodo: doer: ${doerEmail} does not exist.`);
-		} else {
-			//在新建单人TODO时替换doerCN
-			let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
-			let cellInfo = "";
-			if (obj.cells && obj.cells.length > 0) {
-				cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
-			}
-			await newTodo(
-				obj.tenant,
-				obj.round,
-				doerEmail,
-				obj.tplid,
-				obj.wfid,
-				obj.wftitle,
-				obj.starter,
-				obj.nodeid,
-				obj.workid,
-				nodeTitleForPerson,
-				obj.origTitle,
-				obj.comment,
-				obj.instruct,
-				obj.transferable,
-				obj.teamid,
-				obj.byroute,
-				obj.rehearsal,
-				obj.allowdiscuss,
-				cellInfo,
-			);
-		} // if exist
+			console.warn(`increateTodo: doer: ${doerEmail} does not exist. set doerName to "UNKNOWN"`);
+			doerName = "UNKNOWN";
+		}
+		//在新建单人TODO时替换doerCN
+		let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
+		let cellInfo = "";
+		if (obj.cells && obj.cells.length > 0) {
+			cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
+		}
+		let todoid = IdGenerator();
+
+		try {
+			/**
+			 * 用户离职后，在User数据表中，将其设置为active=false，并设置其succeed继承人
+			 */
+			// 如active=true，则返回自身，否则，使用继承者
+			let doer = await getSucceed(obj.tenant, doerEmail);
+
+			debugger;
+			let todo = new Todo({
+				todoid: todoid,
+				tenant: obj.tenant,
+				round: obj.round,
+				doer: doer,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				wftitle: obj.wftitle,
+				wfstarter: obj.wfstarter,
+				nodeid: obj.nodeid,
+				workid: obj.workid,
+				title: obj.title,
+				origtitle: obj.origtitle, //替换var之前的原始Title
+				status: "ST_RUN",
+				wfstatus: "ST_RUN",
+				comment: obj.comment,
+				instruct: obj.instruct,
+				transferable: obj.transferable,
+				teamid: obj.teamid,
+				byroute: obj.byroute,
+				rehearsal: obj.rehearsal,
+				cellInfo: cellInfo,
+				allowdiscuss: obj.allowdiscuss,
+			});
+			await todo.save();
+			await Cache.resetETag(`ETAG:TODOS:${doer}`);
+
+			await informUserOnNewTodo({
+				tenant: obj.tenant,
+				doer: doer,
+				todoid: todoid,
+				tplid: obj.tplid,
+				wfid: obj.wfid,
+				wftitle: obj.wftitle,
+				title: obj.title,
+				wfstarter: obj.wfstarter,
+				rehearsal: obj.rehearsal,
+				cellInfo: cellInfo,
+			});
+		} catch (error) {
+			console.error(error);
+		}
 	} //for
 };
 
@@ -3880,103 +3911,6 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 	} catch (err) {
 		console.error(err);
 	}
-};
-/**
- *  create a todo in database
- *
- * @param {...} tenant -
- * @param {...} doer -
- * @param {...} tplid -
- * @param {...} wfid -
- * @param {...} wftitle -
- * @param {...} wfstarter -
- * @param {...} nodeid -
- * @param {...} workid -
- * @param {...} title -
- *
- * @return {...}
- */
-const newTodo = async function (
-	tenant,
-	round,
-	doer,
-	tplid,
-	wfid,
-	wftitle,
-	wfstarter,
-	nodeid,
-	workid,
-	title,
-	origtitle, //替换var之前的原始Title
-	comment,
-	instruct,
-	transferable,
-	teamid,
-	byroute,
-	rehearsal,
-	allowdiscuss,
-	cellInfo,
-) {
-	let todoid = IdGenerator();
-
-	try {
-		if (Tools.isEmpty(origtitle)) {
-			origtitle = title;
-		}
-
-		/**
-		 * 用户离职后，在User数据表中，将其设置为active=false，并设置其succeed继承人
-		 */
-		// 如active=true，则返回自身，否则，使用继承者
-		doer = await getSucceed(tenant, doer);
-
-		let todo = new Todo({
-			todoid: todoid,
-			tenant: tenant,
-			round: round,
-			doer: doer,
-			tplid: tplid,
-			wfid: wfid,
-			wftitle: wftitle,
-			wfstarter: wfstarter,
-			nodeid: nodeid,
-			workid: workid,
-			title: title,
-			origtitle: origtitle, //替换var之前的原始Title
-			status: "ST_RUN",
-			wfstatus: "ST_RUN",
-			comment: comment,
-			instruct: instruct,
-			transferable: transferable,
-			teamid: teamid,
-			byroute: byroute,
-			rehearsal: rehearsal,
-			cellInfo: cellInfo,
-			allowdiscuss: allowdiscuss,
-		});
-		await todo.save();
-		await Cache.resetETag(`ETAG:TODOS:${doer}`);
-
-		await informUserOnNewTodo({
-			tenant: tenant,
-			doer: doer,
-			todoid: todoid,
-			tplid: tplid,
-			wfid: wfid,
-			wftitle: wftitle,
-			title: title,
-			wfstarter: wfstarter,
-			rehearsal: rehearsal,
-			cellInfo: cellInfo,
-		});
-	} catch (newTodoError) {
-		console.error(newTodoError);
-	}
-
-	//////////////////////////////////////////////////
-	// Check wether user has wecom bot key for this tplid;
-	//////////////////////////////////////////////////
-	//
 };
 
 const getSucceed = async (tenant, doerEmail) => {
@@ -7014,21 +6948,24 @@ const formatRoute = function (route) {
 
 	return ret;
 };
-const procNext = async function (
-	tenant: string,
-	teamid: string,
-	tplid: string,
-	wfid: string,
-	tpRoot: any,
-	wfRoot: any,
-	this_nodeid: string,
-	this_workid: string,
-	decision: string,
-	nexts: any[],
-	round: number,
-	rehearsal: boolean,
-	starter: string,
-) {
+
+const procNext = async function (procParams: ProcNextParams) {
+	let {
+		tenant,
+		teamid,
+		tplid,
+		wfid,
+		tpRoot,
+		wfRoot,
+		this_nodeid,
+		this_workid,
+		decision,
+		nexts,
+		round,
+		rehearsal,
+		starter,
+	} = procParams;
+
 	let foundNexts = [];
 	let ignoredNexts = [];
 	let parallel_number = 0;
@@ -7037,7 +6974,9 @@ const procNext = async function (
 	let tpNode = tpRoot.find("#" + this_nodeid);
 	let repeaton = tpNode.attr("repeaton");
 	if (repeaton) repeaton = repeaton.trim();
-	if (repeaton.length > 0 && decision === repeaton) {
+	if (repeaton && repeaton.length > 0 && decision === repeaton) {
+		//用户完成工作后，如果当前工作存在 repeaton 并且用户的决策等于repeaton
+		//则重复执行当前工作
 		foundNexts.push({
 			option: repeaton,
 			toid: this_nodeid,
@@ -7085,6 +7024,7 @@ const procNext = async function (
 			console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
 			foundRoutes = ["DEFAULT"];
 		}
+
 		//确保DEFAULT始终存在
 		if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
 		//统计需要经过的路径的数量, 同时,运行路径上的变量设置
@@ -7185,6 +7125,7 @@ const procNext = async function (
 			0,
 		);
 	}
+	return nexts;
 };
 
 /**
