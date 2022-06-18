@@ -434,14 +434,18 @@ async function TemplateAddCron(req, h) {
 		let cronTab = new Crontab({
 			tenant: tenant,
 			tplid: tplid,
+			nodeid: "", //no use for STARTWORKFLOW
+			wfid: "", //no use for STARTWORKFLOW
+			workid: "", //no use for STARTWORKFLOW
 			expr: expr,
 			starters: starters,
 			creator: myEmail,
 			scheduled: false,
 			method: "STARTWORKFLOW",
+			extra: "{}",
 		});
 		cronTab = await cronTab.save();
-		Engine.rescheduleCrons();
+		await Engine.rescheduleCrons();
 		let filter: any = { tenant: tenant, tplid: tplid, creator: myEmail };
 		let crons = await Crontab.find(filter).lean();
 		return h.response(crons);

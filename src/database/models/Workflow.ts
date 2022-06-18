@@ -40,7 +40,7 @@ schema.pre("find", function () {
 
 schema.post("find", function () {
 	if (_startTime != null) {
-		console.log("Runtime find Workflow in MS: ", Date.now() - _startTime);
+		console.log("Runtime find Workflow in Milliseconds: ", Date.now() - _startTime);
 	}
 });
 

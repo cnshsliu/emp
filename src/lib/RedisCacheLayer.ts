@@ -55,6 +55,7 @@ const getWorkflow = async (wfFilter: WfFilter, fromFunc: string) => {
 		} catch (assertError) {
 			console.log(assertError.message);
 			await redisClient.del(wfCacheKey);
+			throw new EmpError("WF_NOT_CORRECT", assertError.message);
 		}
 	}
 

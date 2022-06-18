@@ -284,6 +284,7 @@ const cleanupFaultCrons = async function () {
 	for (let i = 0; i < crons.length; i++) {
 		let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
 		if (tmp.length !== 5 || cronEngine.validate(crons[i].expr) === false) {
+			await stopCronTask(crons[i]._id);
 			await Crontab.deleteOne({ _id: crons[i]._id });
 		}
 	}
@@ -327,6 +328,39 @@ const startWorkflowByCron = async (cron) => {
 	console.log("Cron Start Workflow for ", doers.length, " people");
 	let emails = doers.map((x) => x.uid);
 	await __batchStartWorkflow(cron.tenant, cron.tplid, emails, "Cron");
+};
+
+const dispatchWorkByCron = async (cron) => {
+	let todoObj = JSON.parse(cron.extra);
+	console.log("dispatch Cron Task", todoObj);
+	//如果运行中的工作流进程已不存在，则删掉crontab
+	let runningWorkflow = await Workflow.findOne(
+		{
+			tenant: todoObj.tenant,
+			wfid: todoObj.wfid,
+			status: "ST_RUN",
+		},
+		{ wfid: 1 },
+	);
+	if (runningWorkflow) {
+		await createTodo(todoObj);
+	} else {
+		await Work.updateMany(
+			{
+				tenant: todoObj.tenant,
+				wfid: todoObj.wfid,
+				status: "ST_RUN",
+			},
+			{ $set: { status: "ST_IGNORE" } },
+		);
+		await Todo.updateMany(
+			{ tenant: todoObj.tenant, wfid: todoObj.wfid, status: "ST_RUN" },
+			{
+				$set: { status: "ST_IGNORE" },
+			},
+		);
+		await stopWorkflowCrons(todoObj.tenant, todoObj.wfid);
+	}
 };
 
 const startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
@@ -373,13 +407,14 @@ const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 
 const scheduleCron = async (cron) => {
 	console.log("Schedule one cron", cron);
-	//cron.expr = "*/5 * * * * *";
 	let task = cronEngine.schedule(
 		cron.expr,
 		async () => {
 			try {
 				if (cron.method === "STARTWORKFLOW") {
 					startWorkflowByCron(cron).then((res) => {});
+				} else if (cron.method === "DISPATCHWORK") {
+					dispatchWorkByCron(cron).then((res) => {});
 				}
 			} catch (e) {
 				console.error(e);
@@ -1751,7 +1786,7 @@ const addAdhoc = async function (payload) {
 		tplid: wf.tplid,
 		wfid: wf.wfid,
 		wftitle: wf.wftitle,
-		starter: wf.starter,
+		wfstarter: wf.starter,
 		nodeid: "ADHOC",
 		workid: workid,
 		tpNodeTitle: payload.title,
@@ -3027,6 +3062,7 @@ const yarkNode_internal = async function (obj) {
 		);
 		await endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
 		await stopDelayTimers(obj.tenant, obj.wfid);
+		await stopWorkflowCrons(obj.tenant, obj.wfid);
 
 		await resetTodosETagByWfId(tenant, obj.wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
@@ -3272,41 +3308,68 @@ const yarkNode_internal = async function (obj) {
 			nodeid: nodeid,
 			status: "ST_RUN",
 		});
+		let repeaton = getRepeaton(tpNode);
+		let cronrun = parseInt(Tools.blankToDefault(tpNode.attr("cronrun"), "0"));
+		let cronexpr = Tools.blankToDefault(tpNode.attr("cronexpr"), "0 8 * * 1");
+		let workObj = {
+			tenant: obj.tenant,
+			round: thisRound,
+			wfid: wf.wfid,
+			workid: workid,
+			nodeid: nodeid,
+			from_workid: from_workid,
+			from_nodeid: from_nodeid,
+			title: tpNodeTitle,
+			byroute: obj.byroute,
+			status: "ST_RUN",
+		};
+		let todoObj = {
+			tenant: obj.tenant,
+			round: thisRound,
+			doer: doerOrDoers,
+			tplid: wf.tplid,
+			wfid: wf.wfid,
+			wftitle: wfRoot.attr("wftitle"),
+			wfstarter: wfRoot.attr("starter"),
+			nodeid: nodeid,
+			workid: workid,
+			tpNodeTitle: tpNodeTitle,
+			origTitle: originalNodeTitle,
+			comment: "",
+			instruct: "",
+			byroute: obj.byroute,
+			transferable: transferable,
+			teamid: teamid,
+			rehearsal: wf.rehearsal,
+			cells: cells,
+			allowdiscuss: wf.allowdiscuss,
+		};
 		if (!(singleRunning && existingSameNodeWorks.length > 0)) {
-			let newWork = new Work({
-				tenant: obj.tenant,
-				round: thisRound,
-				wfid: wf.wfid,
-				workid: workid,
-				nodeid: nodeid,
-				from_workid: from_workid,
-				from_nodeid: from_nodeid,
-				title: tpNodeTitle,
-				byroute: obj.byroute,
-				status: "ST_RUN",
-			});
-			await newWork.save();
-			await createTodo({
-				tenant: obj.tenant,
-				round: thisRound,
-				doer: doerOrDoers,
-				tplid: wf.tplid,
-				wfid: wf.wfid,
-				wftitle: wfRoot.attr("wftitle"),
-				starter: wfRoot.attr("starter"),
-				nodeid: nodeid,
-				workid: workid,
-				tpNodeTitle: tpNodeTitle,
-				origTitle: originalNodeTitle,
-				comment: "",
-				instruct: "",
-				byroute: obj.byroute,
-				transferable: transferable,
-				teamid: teamid,
-				rehearsal: wf.rehearsal,
-				cells: cells,
-				allowdiscuss: wf.allowdiscuss,
-			});
+			if (cronrun === 0 || cronrun === 1 || cronrun === 3) {
+				//没有Crontab或者Crontab要求先运行一次
+				let newWork = new Work(workObj);
+				await newWork.save();
+				await createTodo(todoObj);
+			}
+
+			if (cronrun === 1 || cronrun === 2) {
+				//install crontab
+				let cronTab = new Crontab({
+					tenant: tenant,
+					tplid: obj.tplid,
+					nodeid: nodeid,
+					wfid: obj.wfid,
+					workid: workid,
+					expr: cronexpr,
+					starters: obj.wfstarter,
+					creator: "",
+					method: "DISPATCHWORK",
+					extra: JSON.stringify(todoObj),
+					scheduled: false,
+				});
+				cronTab = await cronTab.save();
+				await rescheduleCrons();
+			}
 		}
 		//End of ACTION
 	} else {
@@ -3412,6 +3475,16 @@ const getPdsOfAllNodesForScript = async function (data) {
 	return ret;
 };
 
+const getRepeaton = (tpNode) => {
+	let repeaton = tpNode.attr("repeaton");
+	if (repeaton) repeaton = repeaton.trim();
+	if (repeaton) {
+		return repeaton;
+	} else {
+		return "";
+	}
+};
+
 const createTodo = async function (obj) {
 	if (lodash.isArray(obj.doer) === false) {
 		obj.doer = [obj.doer];
@@ -3427,7 +3500,7 @@ const createTodo = async function (obj) {
 		else doerName = await Cache.getUserName(obj.tenant, doerEmail, "createTodo");
 
 		if (Tools.isEmpty(doerName)) {
-			console.warn(`increateTodo: doer: ${doerEmail} does not exist. set doerName to "UNKNOWN"`);
+			console.warn(`in createTodo: doer: ${doerEmail} does not exist. set doerName to "UNKNOWN"`);
 			doerName = "UNKNOWN";
 		}
 		//在新建单人TODO时替换doerCN
@@ -3445,46 +3518,62 @@ const createTodo = async function (obj) {
 			// 如active=true，则返回自身，否则，使用继承者
 			let doer = await getSucceed(obj.tenant, doerEmail);
 
-			debugger;
-			let todo = new Todo({
-				todoid: todoid,
-				tenant: obj.tenant,
-				round: obj.round,
-				doer: doer,
-				tplid: obj.tplid,
-				wfid: obj.wfid,
-				wftitle: obj.wftitle,
-				wfstarter: obj.wfstarter,
-				nodeid: obj.nodeid,
-				workid: obj.workid,
-				title: obj.title,
-				origtitle: obj.origtitle, //替换var之前的原始Title
-				status: "ST_RUN",
-				wfstatus: "ST_RUN",
-				comment: obj.comment,
-				instruct: obj.instruct,
-				transferable: obj.transferable,
-				teamid: obj.teamid,
-				byroute: obj.byroute,
-				rehearsal: obj.rehearsal,
-				cellInfo: cellInfo,
-				allowdiscuss: obj.allowdiscuss,
-			});
-			await todo.save();
-			await Cache.resetETag(`ETAG:TODOS:${doer}`);
+			//检查是否已存在相同wfid，相同workid，相同doer，状态为ST_RUN的Todo
+			const existing = await Todo.findOne(
+				{
+					tenant: obj.tenant,
+					round: obj.round,
+					doer: doer,
+					wfid: obj.wfid,
+					workid: obj.workid,
+					status: "ST_RUN",
+				},
+				{ todoid: 1 },
+			);
 
-			await informUserOnNewTodo({
-				tenant: obj.tenant,
-				doer: doer,
-				todoid: todoid,
-				tplid: obj.tplid,
-				wfid: obj.wfid,
-				wftitle: obj.wftitle,
-				title: obj.title,
-				wfstarter: obj.wfstarter,
-				rehearsal: obj.rehearsal,
-				cellInfo: cellInfo,
-			});
+			if (existing) {
+				console.log("Same running TODO existing, skip creating a same one");
+			} else {
+				let todo = new Todo({
+					todoid: todoid,
+					tenant: obj.tenant,
+					round: obj.round,
+					doer: doer,
+					tplid: obj.tplid,
+					wfid: obj.wfid,
+					wftitle: obj.wftitle,
+					wfstarter: obj.wfstarter,
+					nodeid: obj.nodeid,
+					workid: obj.workid,
+					title: nodeTitleForPerson,
+					origtitle: obj.origTitle, //替换var之前的原始Title
+					status: "ST_RUN",
+					wfstatus: "ST_RUN",
+					comment: obj.comment,
+					instruct: obj.instruct,
+					transferable: obj.transferable,
+					teamid: obj.teamid,
+					byroute: obj.byroute,
+					rehearsal: obj.rehearsal,
+					cellInfo: cellInfo,
+					allowdiscuss: obj.allowdiscuss,
+				});
+				await todo.save();
+				await Cache.resetETag(`ETAG:TODOS:${doer}`);
+
+				await informUserOnNewTodo({
+					tenant: obj.tenant,
+					doer: doer,
+					todoid: todoid,
+					tplid: obj.tplid,
+					wfid: obj.wfid,
+					wftitle: obj.wftitle,
+					wfstarter: obj.wfstarter,
+					title: nodeTitleForPerson,
+					rehearsal: obj.rehearsal,
+					cellInfo: cellInfo,
+				});
+			}
 		} catch (error) {
 			console.error(error);
 		}
@@ -3731,8 +3820,8 @@ const transferWork = async function (tenant, whom, myEmail, todoid) {
 		tplid: todo.tplid,
 		wfid: todo.wfid,
 		wftitle: todo.wftitle,
-		title: todo.title,
 		wfstarter: todo.wfstarter,
+		title: todo.title,
 		rehearsal: todo.rehearsal,
 		cellInfo: "",
 	});
@@ -3812,6 +3901,7 @@ const informUserOnNewTodo = async function (inform) {
 	console.log("\t==>informUserOnNewTodo in ", isMainThread ? "Main Thread" : "Child Thread");
 	try {
 		let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
+		console.log("\t==>sendEmailTo", sendEmailTo);
 		let ew = await Cache.getUserEw(sendEmailTo);
 		let withEmail = true;
 		if (typeof ew === "boolean" && ew === false) {
@@ -4634,6 +4724,7 @@ const __destroyWorkflow = async function (tenant, wfid) {
 	} catch (err) {
 		console.log("\tDestroy Todo: ", err.message);
 	}
+	await stopWorkflowCrons(tenant, wfid);
 	try {
 		process.stdout.write("\tDestroy DelayTimer\r");
 		await DelayTimer.deleteMany({ tenant: tenant, wfid: wfid });
@@ -4798,17 +4889,27 @@ const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	if (!SystemPermController.hasPerm(shouldDoer, "work", todo, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this work");
-	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.getWorkInfo");
-	if (!wf) {
-		await Todo.deleteOne(todo_filter);
+	try {
+		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.getWorkInfo");
+		if (!wf) {
+			await Todo.deleteOne(todo_filter);
 
-		throw new EmpError("NO_WF", "Workflow does not exist");
+			throw new EmpError("NO_WF", "Workflow does not exist");
+		}
+		let wfIO = await Parser.parse(wf.doc);
+		let tpRoot = wfIO(".template");
+		let wfRoot = wfIO(".workflow");
+
+		return await __getWorkFullInfo(tenant, peopleInBrowser, wf, tpRoot, wfRoot, todo.wfid, todo);
+	} catch (error) {
+		if (error.name === "WF_NOT_FOUND") {
+			await Todo.updateMany(
+				{ tenant: tenant, wfid: todo.wfid, status: "ST_RUN" },
+				{ $set: { status: "ST_IGNORE" } },
+			);
+			throw new EmpError("NO_WF", "Workflow does not exist");
+		}
 	}
-	let wfIO = await Parser.parse(wf.doc);
-	let tpRoot = wfIO(".template");
-	let wfRoot = wfIO(".workflow");
-
-	return await __getWorkFullInfo(tenant, peopleInBrowser, wf, tpRoot, wfRoot, todo.wfid, todo);
 };
 
 const getWfHistory = async function (email, tenant, wfid, wf) {
@@ -6871,6 +6972,22 @@ const endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
 	);
 };
 
+const stopWorkflowCrons = async function (tenant, wfid) {
+	try {
+		process.stdout.write("\tDestroy Crontab\r");
+		let cronTabs = await Crontab.find({
+			tenant: tenant,
+			wfid: wfid,
+		});
+		for (let i = 0; i < cronTabs.length; i++) {
+			await stopCronTask(cronTabs[i]._id);
+			await Crontab.deleteOne({ _id: cronTabs[i]._id });
+		}
+	} catch (err) {
+		console.log("\tDestroy Workflow Crontab: ", err.message);
+	}
+};
+
 const getEmailRecipientsFromDoers = function (doers) {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
@@ -6900,8 +7017,7 @@ const getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
 	let linkSelector = '.link[from="' + nodeid + '"]';
 	let routings = [];
 	let tpNode = tpRoot.find("#" + nodeid);
-	let repeaton = tpNode.attr("repeaton");
-	if (repeaton) repeaton = repeaton.trim();
+	let repeaton = getRepeaton(tpNode);
 	if (repeaton) {
 		routings.push(repeaton);
 	}
@@ -6972,90 +7088,103 @@ const procNext = async function (procParams: ProcNextParams) {
 	let parallel_id = IdGenerator();
 
 	let tpNode = tpRoot.find("#" + this_nodeid);
-	let repeaton = tpNode.attr("repeaton");
-	if (repeaton) repeaton = repeaton.trim();
-	if (repeaton && repeaton.length > 0 && decision === repeaton) {
+	let repeaton = getRepeaton(tpNode);
+	let cronrun = parseInt(Tools.blankToDefault(tpNode.attr("cronrun"), "0"));
+	let cronexpr = Tools.blankToDefault(tpNode.attr("cronexpr"), "0 8 * * 1");
+	if ((cronrun === 1 || cronrun === 2) && repeaton !== decision) {
+		//clean existing crontab jobs
+		let cronTab = await Crontab.findOne({
+			tenant: tenant,
+			wfid: wfid,
+			workid: this_workid,
+		});
+		await stopCronTask(cronTab._id);
+		await Crontab.deleteOne({ _id: cronTab._id });
+	}
+
+	if (cronrun === 3 && decision === repeaton) {
 		//用户完成工作后，如果当前工作存在 repeaton 并且用户的决策等于repeaton
 		//则重复执行当前工作
 		foundNexts.push({
 			option: repeaton,
 			toid: this_nodeid,
 		});
-	} else {
-		let linkSelector = '.link[from="' + this_nodeid + '"]';
-		let routingOptionsInTemplate = [];
-		////////////////////////////////////////////////////////////////////////////////
-		////////////////////////////////////////////////////////////////////////////////
-		//原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
-		//但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
-		//let defiedNodes = [];
-		//await defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
-		////////////////////////////////////////////////////////////////////////////////
-		////////////////////////////////////////////////////////////////////////////////
-		let linksInTemplate = tpRoot.find(linkSelector);
-		tpRoot.find(linkSelector).each(function (i, el) {
-			//SEE HERE
-			let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
-			if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
-		});
-
-		if (routingOptionsInTemplate.length === 0) {
-			//This node has no following node, it's a to-be-grounded node
-			//只要linkSelector选到了节点，至少有一个option会放到routingOptionsInTemplate数组中
-			//See last SEE HERE comment
-			return;
-		}
-		//routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
-		//也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
-		let routes = formatRoute(decision);
-		if (Array.isArray(routes) === false) {
-			routes = [decision];
-		}
-
-		//把模版中的后续decision和ProcNext的decision数组进行交集
-		let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
-		if (foundRoutes.length === 0) {
-			console.error(
-				"decision '" +
-					JSON.stringify(decision) +
-					"' not found in linksInTemplate " +
-					routingOptionsInTemplate.toString(),
-			);
-			console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
-			foundRoutes = ["DEFAULT"];
-		}
-
-		//确保DEFAULT始终存在
-		if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
-		//统计需要经过的路径的数量, 同时,运行路径上的变量设置
-
-		linksInTemplate.each(function (i, el) {
-			let linkObj = Cheerio(el);
-			let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
-			if (foundRoutes.includes(option)) {
-				//将要被执行的路径
-				foundNexts.push({
-					option: option,
-					toid: linkObj.attr("to"),
-				});
-				//相同option的后续节点的个数
-				parallel_number++;
-				//路径上是否定义了设置值
-				let setValue = linkObj.attr("set");
-				if (setValue) {
-					//设置路径上的变量
-					setValue = Parser.base64ToCode(setValue);
-					Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
-				}
-			} else {
-				//需要被忽略的路径
-				ignoredNexts.push({
-					option: option,
-					toid: linkObj.attr("to"),
-				});
-			}
-		});
 	}
+
+	//如果没有设cronron，或者没有设置 repeaton， 或者decision不等于 repeaton， 则进行下一步工作
+	let linkSelector = '.link[from="' + this_nodeid + '"]';
+	let routingOptionsInTemplate = [];
+	////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////
+	//原来是希望在循环执行时，将之前执行过的路径上的kvar设置eff为no，来解决script取到上一轮数据的问题
+	//但实际上会导致所有之前的（因为是循环）数据被不合适地标记为no，导致问题
+	//let defiedNodes = [];
+	//await defyKVar(tenant, wfid, tpRoot, wfRoot, this_nodeid, defiedNodes);
+	////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////
+	let linksInTemplate = tpRoot.find(linkSelector);
+	tpRoot.find(linkSelector).each(function (i, el) {
+		//SEE HERE
+		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+		if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
+	});
+
+	if (routingOptionsInTemplate.length === 0) {
+		//This node has no following node, it's a to-be-grounded node
+		//只要linkSelector选到了节点，至少有一个option会放到routingOptionsInTemplate数组中
+		//See last SEE HERE comment
+		return;
+	}
+	//routes是 ProcNext带过来的有哪些decision需要通过，可以是一个字符串数组
+	//也可以是单一个字符串。单一字符串时，变为字符串数组，以方便统一处理
+	let routes = formatRoute(decision);
+	if (Array.isArray(routes) === false) {
+		routes = [decision];
+	}
+
+	//把模版中的后续decision和ProcNext的decision数组进行交集
+	let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
+	if (foundRoutes.length === 0) {
+		console.error(
+			"decision '" +
+				JSON.stringify(decision) +
+				"' not found in linksInTemplate " +
+				routingOptionsInTemplate.toString(),
+		);
+		console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
+		foundRoutes = ["DEFAULT"];
+	}
+
+	//确保DEFAULT始终存在
+	if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
+	//统计需要经过的路径的数量, 同时,运行路径上的变量设置
+
+	linksInTemplate.each(function (i, el) {
+		let linkObj = Cheerio(el);
+		let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
+		if (foundRoutes.includes(option)) {
+			//将要被执行的路径
+			foundNexts.push({
+				option: option,
+				toid: linkObj.attr("to"),
+			});
+			//相同option的后续节点的个数
+			parallel_number++;
+			//路径上是否定义了设置值
+			let setValue = linkObj.attr("set");
+			if (setValue) {
+				//设置路径上的变量
+				setValue = Parser.base64ToCode(setValue);
+				Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
+			}
+		} else {
+			//需要被忽略的路径
+			ignoredNexts.push({
+				option: option,
+				toid: linkObj.attr("to"),
+			});
+		}
+	});
 
 	for (let i = 0; i < foundNexts.length; i++) {
 		//构建一个zeroMQ 消息 body， 放在nexts数组中
