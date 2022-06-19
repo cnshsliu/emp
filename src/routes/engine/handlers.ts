@@ -643,14 +643,18 @@ async function TemplateCopyto(req, h) {
 		});
 		try {
 			newObj = await newObj.save();
+		} catch (err) {
+			if (err.message.indexOf("duplicate key"))
+				throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
+			else throw new EmpError("DB_ERROR", err.message);
+		}
+		try {
 			fs.copyFileSync(
 				path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
 				path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
 			);
 		} catch (err) {
-			if (err.message.indexOf("duplicate key"))
-				throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
-			else throw new EmpError("DB_ERROR", err.message);
+			//可能被copy的png文件不存在，忽略这个错误即可
 		}
 		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(newObj);
@@ -699,6 +703,32 @@ async function TemplateDeleteByName(req, h) {
 		} catch (err) {}
 		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(ret);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function TemplateDeleteMulti(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		assert.equal(
+			await Cache.getMyGroup(myEmail),
+			"ADMIN",
+			new EmpError("NOT_ADMIN", "Only ADMIN can delete templates in batch"),
+		);
+
+		let filter: any = { tenant: tenant, tplid: { $in: req.payload.tplids } };
+		await Template.deleteMany(filter);
+		for (let i = 0; i < req.payload.tplids.length; i++) {
+			try {
+				fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, req.payload.tplids[i] + ".png"));
+			} catch (err) {}
+		}
+
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		return h.response("Deleted");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1164,6 +1194,28 @@ async function WorkflowDestroy(req, h) {
 		let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(ret);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function WorkflowDestroyMulti(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		assert.equal(
+			await Cache.getMyGroup(myEmail),
+			"ADMIN",
+			new EmpError("NOT_ADMIN", "Only ADMIN can delete workflows in batch"),
+		);
+		for (let i = 0; i < req.payload.wfids.length; i++) {
+			const wfid = req.payload.wfids[i];
+			await Engine.resetTodosETagByWfId(tenant, wfid);
+			await Engine.destroyWorkflow(tenant, myEmail, wfid);
+		}
+		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+		return h.response("Deleted");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -2140,6 +2192,7 @@ async function WorkAddAdhoc(req, h) {
 async function WorkSendback(req, h) {
 	try {
 		let myEmail = req.auth.credentials.email;
+		debugger;
 		return await Engine.sendback(
 			myEmail,
 			req.auth.credentials.tenant._id,
@@ -2512,6 +2565,32 @@ async function TemplateImport(req, h) {
 		fs.unlink(fileInfo.path, () => {
 			console.log("Unlinked temp file:", fileInfo.path);
 		});
+		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		return h.response(obj);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function TemplateCopyFrom(req, h) {
+	try {
+		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+			throw new EmpError("NO_PERM", "You don't have permission to create template");
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let myGroup = await Cache.getMyGroup(myEmail);
+		let author = myEmail;
+		let authorName = req.auth.credentials.username;
+		const { fromtplid, totplid } = req.payload;
+
+		let fromDoc = await Template.findOne({ tenant: tenant, tplid: fromtplid }, { _id: 0, doc: 1 });
+		assert(fromDoc && fromDoc.doc);
+		const obj = await Template.findOneAndUpdate(
+			{ tenant: tenant, tplid: totplid },
+			{ $set: { doc: fromDoc.doc } },
+			{ upsert: false, new: true },
+		);
 		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
 		return h.response(obj);
 	} catch (err) {
@@ -6139,12 +6218,14 @@ export default {
 	TemplateCopyto,
 	TemplateDelete,
 	TemplateDeleteByName,
+	TemplateDeleteMulti,
 	TemplateList,
 	TemplateIdList,
 	TemplateSearch,
 	TemplateRead,
 	TemplateDownload,
 	TemplateImport,
+	TemplateCopyFrom,
 	TemplateSetVisi,
 	TemplateClearVisi,
 	TemplateSetAuthor,
@@ -6169,6 +6250,7 @@ export default {
 	WorkflowRestart,
 	WorkflowRestartThenDestroy,
 	WorkflowDestroy,
+	WorkflowDestroyMulti,
 	WorkflowDestroyByTitle,
 	WorkflowDestroyByTplid,
 	WorkflowStatus,

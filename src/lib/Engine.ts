@@ -1610,7 +1610,17 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
-	let info = await __getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, old_todo);
+	let info: workFullInfo = {} as workFullInfo;
+	info = await __getWorkFullInfoRevocableAndReturnable(
+		tenant,
+		email,
+		wf,
+		tpRoot,
+		wfRoot,
+		wfid,
+		old_todo,
+		info,
+	);
 	if (info.revocable === false) {
 		throw new EmpError("WORK_NOT_REVOCABLE", "Todo is not revocable", {
 			wfid,
@@ -1906,7 +1916,17 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
-	let info = await __getWorkFullInfo(tenant, email, wf, tpRoot, wfRoot, wfid, todo);
+	let info: workFullInfo = {} as workFullInfo;
+	info = await __getWorkFullInfoRevocableAndReturnable(
+		tenant,
+		email,
+		wf,
+		tpRoot,
+		wfRoot,
+		wfid,
+		todo,
+		info,
+	);
 	if (info.returnable === false) {
 		throw new EmpError("WORK_NOT_RETURNABLE", "Todo is not returnable", {
 			wfid,
@@ -1925,7 +1945,7 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 		let prevWorkid = fromWorks[i].workid;
 		//await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid, status: "ST_PASS" });
 		await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid });
-		await KVar.deleteMany({ tenant: tenant, wfid: wfid, objid: prevWorkid });
+		//await KVar.deleteMany({ tenant: tenant, wfid: wfid, objid: prevWorkid });
 		let from_workNode = wfRoot.find(`#${prevWorkid}`);
 		if (fromWorks[i].nodeType === "ACTION") {
 			let msgToSend = {
@@ -5113,20 +5133,77 @@ const loadWorkflowComments = async function (tenant, wfid) {
 	return cmts;
 };
 
-//添加from_actions, following_ctions, parallel_actions, returnable and revocable
+const __getWorkFullInfoRevocableAndReturnable = async function (
+	tenant: string,
+	peopleInBrowser: string,
+	theWf: any,
+	tpRoot: any,
+	wfRoot: any,
+	wfid: string,
+	todo: any,
+	ret: workFullInfo,
+) {
+	let TodoOwner = todo.doer;
+	//////////////////////////////////////
+	//////////////////////////////////////
+	let tpNode = tpRoot.find("#" + todo.nodeid);
+	let workNode = wfRoot.find("#" + todo.workid);
 
-/**
- * Get the detail information about a work
- *
- * @param {...} email - the user
- * @param {...} tenant - the Tenant
- * @param {...} tpRoot -  the root of template
- * @param {...} wfRoot - the root of workflow
- * @param {...} wfid - the id of workflow
- * @param {...} todoid - the id of work
- *
- * @return {...}
- */
+	ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes";
+	ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes";
+
+	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
+	ret.parallel_actions = _getParallelActions(tpRoot, wfRoot, workNode);
+
+	if (todo.nodeid === "ADHOC") {
+		ret.revocable = false;
+		ret.returnable = false;
+	} else {
+		if (ret.withsb || ret.withrvk) {
+			//一个工作项可以被退回，仅当它没有同步节点，且状态为运行中
+			if (ret.withsb) {
+				ret.returnable =
+					ret.parallel_actions.length === 0 &&
+					todo.status === "ST_RUN" &&
+					ret.from_nodeid !== "start";
+			} else {
+				ret.returnable = false;
+			}
+
+			if (ret.withrvk) {
+				let all_following_are_running = true;
+				if (ret.following_actions.length == 0) {
+					all_following_are_running = false;
+				} else {
+					for (let i = 0; i < ret.following_actions.length; i++) {
+						if (
+							ret.following_actions[i].nodeType === "ACTION" &&
+							ret.following_actions[i].status !== "ST_RUN"
+						) {
+							all_following_are_running = false;
+							break;
+						}
+					}
+				}
+
+				//revocable only when all following actions are RUNNING, NOT DONE.
+				ret.revocable =
+					workNode.hasClass("ACTION") &&
+					todo.status === "ST_DONE" &&
+					all_following_are_running &&
+					(await notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
+			} else {
+				ret.withrvk = false;
+			}
+		} else {
+			ret.revocable = false;
+			ret.returnable = false;
+		}
+	}
+
+	return ret;
+};
+
 const __getWorkFullInfo = async function (
 	tenant: string,
 	peopleInBrowser: string,
@@ -5199,8 +5276,6 @@ const __getWorkFullInfo = async function (
 	ret.rehearsal = todo.rehearsal;
 	ret.createdAt = todo.createdAt;
 	ret.allowpbo = Tools.blankToDefault(tpNode.attr("pbo"), "no") === "yes";
-	ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes";
-	ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes";
 	ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "yes") === "yes";
 	ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "yes") === "yes";
 	ret.updatedAt = todo.updatedAt;
@@ -5268,51 +5343,16 @@ const __getWorkFullInfo = async function (
 	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
 	ret.parallel_actions = _getParallelActions(tpRoot, wfRoot, workNode);
 
-	if (todo.nodeid === "ADHOC") {
-		ret.revocable = false;
-		ret.returnable = false;
-	} else {
-		if (ret.withsb || ret.withrvk) {
-			//一个工作项可以被退回，仅当它没有同步节点，且状态为运行中
-			if (ret.withsb) {
-				ret.returnable =
-					ret.parallel_actions.length === 0 &&
-					ret.status === "ST_RUN" &&
-					ret.from_nodeid !== "start";
-			} else {
-				ret.returnable = false;
-			}
-
-			if (ret.withrvk) {
-				let all_following_are_running = true;
-				if (ret.following_actions.length == 0) {
-					all_following_are_running = false;
-				} else {
-					for (let i = 0; i < ret.following_actions.length; i++) {
-						if (
-							ret.following_actions[i].nodeType === "ACTION" &&
-							ret.following_actions[i].status !== "ST_RUN"
-						) {
-							all_following_are_running = false;
-							break;
-						}
-					}
-				}
-
-				//revocable only when all following actions are RUNNING, NOT DONE.
-				ret.revocable =
-					workNode.hasClass("ACTION") &&
-					ret.status === "ST_DONE" &&
-					all_following_are_running &&
-					(await notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
-			} else {
-				ret.withrvk = false;
-			}
-		} else {
-			ret.revocable = false;
-			ret.returnable = false;
-		}
-	}
+	__getWorkFullInfoRevocableAndReturnable(
+		tenant,
+		peopleInBrowser,
+		theWf,
+		tpRoot,
+		wfRoot,
+		wfid,
+		todo,
+		ret,
+	);
 
 	ret.wf.history = await __getWorkflowWorksHistory(TodoOwner, tenant, tpRoot, wfRoot, wfid);
 	ret.version = Const.VERSION;

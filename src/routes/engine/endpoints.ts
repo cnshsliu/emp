@@ -431,6 +431,25 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/template/delete/multi",
+			handler: Handlers.TemplateDeleteMulti,
+			config: {
+				description: "Delete a multiple templates by name(tplid)",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplids: Joi.array().items(Joi.string()),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/template/read",
 			handler: Handlers.TemplateRead,
 			config: {
@@ -602,6 +621,26 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/template/copyfrom",
+			handler: Handlers.TemplateCopyFrom,
+			config: {
+				description: "Copy template doc from another template",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						fromtplid: Joi.string().required(),
+						totplid: Joi.string().required(),
+					},
 					validator: Joi,
 				},
 			},
@@ -836,6 +875,25 @@ const internals = {
 					}).unknown(),
 					payload: {
 						wfid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/workflow/destroy/multi",
+			handler: Handlers.WorkflowDestroyMulti,
+			config: {
+				description: "Destroy a workflow",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						wfids: Joi.array().items(Joi.string()).required(),
 					},
 					validator: Joi,
 				},
