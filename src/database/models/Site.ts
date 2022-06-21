@@ -4,7 +4,7 @@ import Mongoose from "mongoose";
 const schema = new Mongoose.Schema(
 	{
 		name: { type: String, required: true },
-		siteid: { type: String, required: true },
+		siteid: { type: String, required: true, index: true, unique: true },
 		owner: { type: String, required: true },
 		mode: { type: String, required: true },
 		password: { type: String, required: true },
