@@ -11,6 +11,7 @@ const schema = new Mongoose.Schema({
 	page_background: { type: String, trim: true, lowercase: true },
 	orgmode: { type: Boolean, default: false },
 	regfree: { type: Boolean, default: false },
+	allowemptypbo: { type: Boolean, default: true },
 	timezone: { type: String, default: "GMT" },
 	menu: { type: String, default: "Home;Docs:Template;Workflow;Team" },
 	smtp: {

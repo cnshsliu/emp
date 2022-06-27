@@ -702,7 +702,9 @@ async function MyOrg(req, h) {
 		//我是否已经加入了一个组织
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant");
 		//我所在的tenant是个组织，而且我是管理员
-		tnt.adminorg = me.tenant.orgmode && me.tenant.owner === me.email;
+		tnt.adminorg =
+			me.tenant.orgmode &&
+			(me.tenant.owner === me.email || (await Cache.getMyGroup(me.email)) === "ADMIN");
 		tnt.orgmode = me.tenant.orgmode;
 		tnt.owner = me.tenant.owner;
 		if (me.tenant.orgmode === true) {
@@ -743,6 +745,7 @@ async function MyOrg(req, h) {
 		tnt.tags = me.tenant.tags;
 		tnt.orgchartadminpds = me.tenant.orgchartadminpds;
 		tnt.regfree = me.tenant.regfree;
+		tnt.allowemptypbo = me.tenant.allowemptypbo;
 		return h.response(tnt);
 	} catch (err) {
 		console.error(err);
@@ -776,9 +779,9 @@ async function MyOrgSetRegFree(req, h) {
 		let tenant_id = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
 		let me = await User.findOne({ _id: req.auth.credentials._id });
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("WRONG_PASSWORD", "You are using a wrong password");
-		}
+		} */
 		const { regfree } = req.payload;
 
 		let myGroup = await Cache.getMyGroup(myEmail);
@@ -795,6 +798,32 @@ async function MyOrgSetRegFree(req, h) {
 		);
 
 		return h.response({ regfree: tenant.regfree });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function MyOrgSetAllowEmptyPbo(req, h) {
+	try {
+		let tenant_id = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		const { allow } = req.payload;
+
+		let myGroup = await Cache.getMyGroup(myEmail);
+		if (myGroup !== "ADMIN") {
+			throw new EmpError("NOT_ADMIN", "You are not admin");
+		}
+
+		let tenant = await Tenant.findOneAndUpdate(
+			{
+				_id: tenant_id,
+			},
+			{ $set: { allowemptypbo: allow ? true : false } },
+			{ upsert: false, new: true },
+		);
+
+		return h.response({ allowemptypbo: tenant.allowemptypbo });
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -888,12 +917,13 @@ async function OrgSetJoinCode(req, h) {
 async function OrgSetName(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: me.tenant, owner: me.email },
+			//{ _id: me.tenant, owner: me.email },
+			{ _id: me.tenant },
 			{ $set: { name: req.payload.orgname } },
 			{ new: true },
 		);
@@ -907,12 +937,13 @@ async function OrgSetName(req, h) {
 async function OrgSetTheme(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: me.tenant, owner: me.email },
+			//{ _id: me.tenant, owner: me.email },
+			{ _id: me.tenant },
 			{ $set: { css: req.payload.css } },
 			{ new: true },
 		);
@@ -926,15 +957,16 @@ async function OrgSetTheme(req, h) {
 async function OrgSetTimezone(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 
 		Cache.removeOrgRelatedCache(me.tenant, "otz");
 
 		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: me.tenant, owner: me.email },
+			//{ _id: me.tenant, owner: me.email },
+			{ _id: me.tenant },
 			{ $set: { timezone: req.payload.timezone } },
 			{ new: true },
 		);
@@ -949,14 +981,15 @@ async function OrgSetTags(req, h) {
 	try {
 		let tenant_id = req.auth.credentials.tenant._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let tmp = req.payload.tags;
 		let cleanedTags = Tools.cleanupDelimiteredString(tmp);
 		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: me.tenant, owner: me.email },
+			//{ _id: me.tenant, owner: me.email },
+			{ _id: me.tenant },
 			{ $set: { tags: cleanedTags } },
 			{ new: true },
 		);
@@ -971,13 +1004,14 @@ async function OrgSetTags(req, h) {
 async function OrgSetOrgChartAdminPds(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let tmp = req.payload.orgchartadminpds;
 		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: me.tenant, owner: me.email },
+			//{ _id: me.tenant, owner: me.email },
+			{ _id: me.tenant },
 			{ $set: { orgchartadminpds: tmp } },
 			{ new: true },
 		);
@@ -991,13 +1025,14 @@ async function OrgSetOrgChartAdminPds(req, h) {
 async function OrgSetMenu(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 
 		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: me.tenant, owner: me.email },
+			//{ _id: me.tenant, owner: me.email },
+			{ _id: me.tenant },
 			{ $set: { menu: req.payload.menu } },
 			{ new: true },
 		);
@@ -1086,9 +1121,9 @@ async function SetMemberGroup(req, h) {
 		} else {
 			let emails = req.payload.ems.split(":");
 			let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-			if (Crypto.decrypt(me.password) != req.payload.password) {
+			/* if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong password");
-			}
+			} */
 			await Parser.isAdmin(me);
 			for (let i = 0; i < emails.length; i++) {
 				await Cache.removeKeyByEmail(emails[i]);
@@ -1112,9 +1147,9 @@ async function SetMemberPassword(req, h) {
 		} else {
 			let emails = req.payload.ems.split(":");
 			let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-			if (Crypto.decrypt(me.password) != req.payload.password) {
+			/* if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong ADMIN password");
-			}
+			} */
 			await Parser.isAdmin(me);
 			let cryptedPassword = Crypto.encrypt(req.payload.set_password_to);
 			for (let i = 0; i < emails.length; i++) {
@@ -1131,24 +1166,36 @@ async function SetMemberPassword(req, h) {
 
 async function RemoveMembers(req, h) {
 	try {
+		let tenant = req.auth.credentials.tenant._id;
 		if (Tools.isEmpty(req.payload.ems)) {
 			return h.response({ ret: "ok" });
 		} else {
 			let emails = req.payload.ems.split(":");
 			let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-			if (Crypto.decrypt(me.password) != req.payload.password) {
+			/* if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong password");
-			}
+			} */
 			await Parser.isAdmin(me);
 			for (let i = 0; i < emails.length; i++) {
 				let user_owned_tenant_filter = { owner: emails[i] };
 				let user_owned_tenant = await Tenant.findOne(user_owned_tenant_filter);
+				if (!user_owned_tenant) {
+					user_owned_tenant = await new Tenant({
+						site: "000",
+						name: "Org of " + emails[i],
+						orgmode: false,
+						owner: emails[i],
+						css: "",
+						timezone: "GMT",
+					}).save();
+				}
 				user_owned_tenant &&
 					(await User.findOneAndUpdate(
 						{ email: emails[i] },
 						{ $set: { tenant: user_owned_tenant._id, group: "ADMIN" } },
 					));
 			}
+			await OrgChart.deleteMany({ tenant: tenant, uid: { $in: emails } });
 			return h.response({ ret: "done" });
 		}
 	} catch (err) {
@@ -1386,6 +1433,7 @@ export default {
 	MyOrgGetSmtp,
 	MyOrgSetSmtp,
 	MyOrgSetRegFree,
+	MyOrgSetAllowEmptyPbo,
 	GenerateNewJoinCode,
 	OrgSetJoinCode,
 	OrgSetName,

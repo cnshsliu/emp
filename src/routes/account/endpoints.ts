@@ -487,8 +487,27 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						password: Joi.string().required().error(new Error("Admin password must be provided")),
+						//password: Joi.string().required().error(new Error("Admin password must be provided")),
 						regfree: Joi.boolean().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tnt/set/allowemptypbo",
+			handler: Handlers.MyOrgSetAllowEmptyPbo,
+			config: {
+				tags: ["api"],
+				description: "Toggle allow empty PBO on process start",
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						allow: Joi.boolean().optional(),
 					},
 					validator: Joi,
 				},
@@ -534,7 +553,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { orgname: Joi.string().min(4).required(), password: Joi.string().required() },
+					//payload: { orgname: Joi.string().min(4).required(), password: Joi.string().required() },
+					payload: { orgname: Joi.string().min(4).required() },
 					validator: Joi,
 				},
 			},
@@ -549,7 +569,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { css: Joi.string().required(), password: Joi.string().required() },
+					//payload: { css: Joi.string().required(), password: Joi.string().required() },
+					payload: { css: Joi.string().required() },
 					validator: Joi,
 				},
 			},
@@ -564,7 +585,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { timezone: Joi.string().required(), password: Joi.string().required() },
+					//payload: { timezone: Joi.string().required(), password: Joi.string().required() },
+					payload: { timezone: Joi.string().required() },
 					validator: Joi,
 				},
 			},
@@ -579,7 +601,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { menu: Joi.string().required(), password: Joi.string().required() },
+					//payload: { menu: Joi.string().required(), password: Joi.string().required() },
+					payload: { menu: Joi.string().required() },
 					validator: Joi,
 				},
 			},
@@ -594,7 +617,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { tags: Joi.string().required().allow(""), password: Joi.string().required() },
+					//payload: { tags: Joi.string().required().allow(""), password: Joi.string().required() },
+					payload: { tags: Joi.string().required().allow(""), password: Joi.string().optional() },
 					validator: Joi,
 				},
 			},
@@ -611,7 +635,7 @@ const internals = {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
 						orgchartadminpds: Joi.string().required().allow(""),
-						password: Joi.string().required(),
+						//password: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -657,7 +681,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { ems: Joi.string().allow("").required(), password: Joi.string().required() },
+					//payload: { ems: Joi.string().allow("").required(), password: Joi.string().required() },
+					payload: { ems: Joi.string().allow("").required() },
 					validator: Joi,
 				},
 			},
@@ -674,7 +699,7 @@ const internals = {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
 						ems: Joi.string().allow("").required(),
-						password: Joi.string().required(),
+						//password: Joi.string().required(),
 						member_group: Joi.string().required(),
 					},
 					validator: Joi,
@@ -693,7 +718,7 @@ const internals = {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
 						ems: Joi.string().allow("").required(),
-						password: Joi.string().required(),
+						//password: Joi.string().required(),
 						set_password_to: Joi.string().regex(validation.password).required(),
 					},
 					validator: Joi,

@@ -73,7 +73,6 @@
     "utf-8-validate": "^5.0.8",
     "uuid": "^8.3.2"
   },
-  "bundleDependencies": [],
   "private": true,
   "main": "build/index",
   "typings": "build/index",
