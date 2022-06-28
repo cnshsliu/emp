@@ -1279,6 +1279,25 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/work/postpone",
+			handler: Handlers.WorkPostpone,
+			config: {
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						todoid: Joi.string().required(),
+						days: Joi.number().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/explain/pds",
 			handler: Handlers.WorkExplainPds,
 			config: {

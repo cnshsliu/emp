@@ -43,6 +43,8 @@ const schema = new Mongoose.Schema(
 		teamid: { type: String, required: false, default: "" },
 		cellInfo: { type: String, required: false, default: "" },
 		allowdiscuss: { type: Boolean, default: true },
+		postpone: { type: Number, default: 0 },
+		postponedAt: { type: Date, default: Date.now() },
 	},
 	{ timestamps: true },
 );

@@ -3577,6 +3577,7 @@ const createTodo = async function (obj) {
 					rehearsal: obj.rehearsal,
 					cellInfo: cellInfo,
 					allowdiscuss: obj.allowdiscuss,
+					postpone: 0,
 				});
 				await todo.save();
 				await Cache.resetETag(`ETAG:TODOS:${doer}`);

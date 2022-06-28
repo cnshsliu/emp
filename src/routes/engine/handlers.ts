@@ -1868,10 +1868,42 @@ async function WorkSearch(req, h) {
 				filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1]).toDate()) };
 			}
 		}
-		filter["$or"] = [
-			{ rehearsal: false, doer: doer },
-			{ rehearsal: true, wfstarter: myEmail },
-		];
+
+		if (filter["status"] !== "ST_RUN") {
+			filter["$or"] = [
+				{ rehearsal: false, doer: doer },
+				{ rehearsal: true, wfstarter: myEmail },
+			];
+		} else {
+			filter["$and"] = [
+				{
+					$or: [
+						{ rehearsal: false, doer: doer },
+						{ rehearsal: true, wfstarter: myEmail },
+					],
+				},
+				{
+					$or: [
+						{ postpone: 0 },
+						{
+							$and: [
+								{ postpone: { $gt: 0 } },
+								{
+									$expr: {
+										$gt: [
+											{
+												$dateDiff: { startDate: "$postponedAt", endDate: "$$NOW", unit: "day" },
+											},
+											"$postpone",
+										],
+									},
+								},
+							],
+						},
+					],
+				},
+			];
+		}
 
 		let fields = { doc: 0 };
 		if (req.payload.fields) fields = req.payload.fields;
@@ -1904,6 +1936,14 @@ async function WorkSearch(req, h) {
 		]);
 		for (let i = 0; i < ret.length; i++) {
 			//使用workid，而不是todoid进行搜索comment， 同一work下，不同的todo，也需要
+			const todoIds = ret.filter((x) => x.postpone > 0).map((x) => x.todoid);
+			await Todo.updateMany(
+				{
+					tenant: tenant,
+					todoid: { $in: todoIds },
+				},
+				{ $set: { postpone: 0 } },
+			);
 			ret[i].commentCount = await Comment.countDocuments({
 				tenant,
 				"context.workid": ret[i].workid,
@@ -2046,6 +2086,31 @@ async function WorkDo(req, h) {
 			req.payload.kvars,
 			req.payload.comment,
 		);
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function WorkPostpone(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		const myEmail = req.auth.credentials.email;
+		const myGroup = await Cache.getMyGroup(myEmail);
+
+		const { todoid, days } = req.payload;
+		await Todo.findOneAndUpdate(
+			{ tenant: tenant, todoid: todoid },
+			{
+				$set: {
+					postpone: days,
+					postponedAt: new Date(),
+				},
+			},
+			{ upsert: false, new: true },
+		);
+
+		return h.response("ret");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -6278,6 +6343,7 @@ export default {
 	WorkAddAdhoc,
 	WorkExplainPds,
 	WorkReset,
+	WorkPostpone,
 	GetDelayTimers,
 	GetActiveDelayTimers,
 	TeamPutDemo,
