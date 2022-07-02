@@ -293,13 +293,6 @@ const cleanupFaultCrons = async function () {
 const rescheduleCrons = async function () {
 	try {
 		await cleanupFaultCrons();
-		await scheduleAllValidCrons();
-	} finally {
-	}
-};
-
-const scheduleAllValidCrons = async function () {
-	try {
 		let crons = await Crontab.find({ scheduled: false });
 		for (let i = 0; i < crons.length; i++) {
 			if (cronEngine.validate(crons[i].expr) === true) {
@@ -332,7 +325,7 @@ const startWorkflowByCron = async (cron) => {
 
 const dispatchWorkByCron = async (cron) => {
 	let todoObj = JSON.parse(cron.extra);
-	console.log("dispatch Cron Task", todoObj);
+	console.log("dispatch Croned Task", JSON.stringify(todoObj));
 	//如果运行中的工作流进程已不存在，则删掉crontab
 	let runningWorkflow = await Workflow.findOne(
 		{
@@ -406,7 +399,17 @@ const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 };
 
 const scheduleCron = async (cron) => {
-	console.log("Schedule one cron", cron);
+	switch (cron.method) {
+		case "STARTWORKFLOW":
+			console.log(
+				`Schedule cron ${cron.expr} STARTWORKFLOW ${cron.tplid} Starter: ${cron.starters} Creator: ${cron.creator}`,
+			);
+			break;
+		case "DISPATCHWORK":
+			console.log(`Schedule cron ${cron.expr} DISPATCHWORK ${cron.extra}`);
+			//console.log(cron);
+			break;
+	}
 	let task = cronEngine.schedule(
 		cron.expr,
 		async () => {
@@ -6994,20 +6997,23 @@ const endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
 	let workSelector = ".work.ST_RUN";
 	wfRoot.find(workSelector).each(async function (i, el) {
 		let work = Cheerio(el);
-		work.removeClass("ST_RUN");
-		work.addClass("ST_END");
+		if (work.hasClass("ADHOC") === false) {
+			work.removeClass("ST_RUN");
+			work.addClass("ST_END");
+		}
 	});
 	await Todo.updateMany(
 		{
 			tenant: tenant,
 			wfid: wfid,
 			status: "ST_RUN",
+			nodeid: { $ne: "ADHOC" },
 		},
 		{ $set: { status: "ST_IGNORE" } },
 		{ timestamps: false },
 	);
 	await Todo.updateMany(
-		{ tenant: tenant, wfid: wfid },
+		{ tenant: tenant, wfid: wfid, nodeid: { $ne: "ADHOC" } },
 		{ $set: { wfstatus: "ST_DONE" } },
 		{ timestamps: false },
 	);

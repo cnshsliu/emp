@@ -1869,7 +1869,7 @@ async function WorkSearch(req, h) {
 			}
 		}
 
-		if (filter["status"] !== "ST_RUN") {
+		if (filter["status"] !== "ST_RUN" || req.payload.showpostponed === true) {
 			filter["$or"] = [
 				{ rehearsal: false, doer: doer },
 				{ rehearsal: true, wfstarter: myEmail },
@@ -1935,15 +1935,21 @@ async function WorkSearch(req, h) {
 			{ $limit: limit },
 		]);
 		for (let i = 0; i < ret.length; i++) {
+			if (req.payload.showpostponed === false) {
+				//如果不显示postponed，也就是搜索结果要么是没有postpone，
+				//要么是已经到了postpone时间的，那么，就可以对于这些已经到了postpone时间的，
+				//将其postpone设为0， 从而在后续搜索中，不再进行时间对比，直接
+				//根据postpone为0，返回即可
+				const todoIds = ret.filter((x) => x.postpone > 0).map((x) => x.todoid);
+				await Todo.updateMany(
+					{
+						tenant: tenant,
+						todoid: { $in: todoIds },
+					},
+					{ $set: { postpone: 0 } },
+				);
+			}
 			//使用workid，而不是todoid进行搜索comment， 同一work下，不同的todo，也需要
-			const todoIds = ret.filter((x) => x.postpone > 0).map((x) => x.todoid);
-			await Todo.updateMany(
-				{
-					tenant: tenant,
-					todoid: { $in: todoIds },
-				},
-				{ $set: { postpone: 0 } },
-			);
 			ret[i].commentCount = await Comment.countDocuments({
 				tenant,
 				"context.workid": ret[i].workid,
