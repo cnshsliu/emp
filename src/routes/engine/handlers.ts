@@ -1905,6 +1905,11 @@ async function WorkSearch(req, h) {
 			];
 		}
 
+		if (req.payload.status === "ST_FOOTPRINT") {
+			filter["status"] = { $in: ["ST_DONE", "ST_RUN"] };
+			filter["doer"] = myEmail;
+		}
+
 		let fields = { doc: 0 };
 		if (req.payload.fields) fields = req.payload.fields;
 
@@ -2263,7 +2268,6 @@ async function WorkAddAdhoc(req, h) {
 async function WorkSendback(req, h) {
 	try {
 		let myEmail = req.auth.credentials.email;
-		debugger;
 		return await Engine.sendback(
 			myEmail,
 			req.auth.credentials.tenant._id,
