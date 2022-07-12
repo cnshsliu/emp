@@ -18,6 +18,7 @@
   },
   "scripts": {
     "dev.tsc": "./node_modules/typescript/bin/tsc --watch -p .",
+    "dev.tsc.once": "./node_modules/typescript/bin/tsc -p .",
     "test": "lab --assert @hapi/code",
     "start": "shx cp ./README.md src/docs && node build/index.js",
     "debug": "node --inspect build/index.js",
@@ -72,7 +73,6 @@
     "utf-8-validate": "^5.0.8",
     "uuid": "^8.3.2"
   },
-  "bundleDependencies": [],
   "private": true,
   "main": "build/index",
   "typings": "build/index",

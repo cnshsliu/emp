@@ -43,6 +43,7 @@ import Podium from "@hapi/podium";
 import EmpError from "./EmpError";
 import Const from "./Const";
 import RCL from "./RedisCacheLayer";
+import type { DoerInfo, DoersArray } from "./EmpTypes";
 
 import { redisClient, redisConnect } from "../database/redis";
 
@@ -1066,6 +1067,30 @@ const __doneTodo = async function (
 		}
 		await Todo.updateMany(filter, { $set: { status: "ST_IGNORE", doneat: isoNow } });
 	}
+	if (Tools.hasValue(tpNode.attr("cc"))) {
+		let cced = (await getDoer(
+			todo.tenant,
+			teamid,
+			tpNode.attr("cc"), //pds
+			wfRoot.attr("starter"),
+			todo.wfid,
+			wfRoot,
+			null,
+			true,
+		)) as unknown as DoersArray;
+		sendCCMessage(
+			tenant,
+			cced,
+			`[MTC cc]: Task ${todo.title} done by ${await Cache.getUserName(todo.tenant, todo.doer)}.`,
+			`Task </BR><B><a href="${frontendUrl}/work/${todo.todoid}">${
+				todo.title
+			}</a></B></BR> was done by ${await Cache.getUserName(todo.tenant, todo.doer)}  </BR>
+</BR></BR>In workflow process:
+<a href="${frontendUrl}/workflow/${wf.wfid}">${wf.wfid}</a>`,
+			wf.rehearsal,
+			wf.starter,
+		);
+	}
 
 	////////////////////////////////////////////////////
 	//参数输入区里的comment同时添加为讨论区的comment
@@ -1167,8 +1192,8 @@ const __doneTodo = async function (
     <br/>
     <br/>
         From: ${doer}<br/>
-        In task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
-        Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
+        In task: <a href="${frontendUrl}/work/${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
+        Process: <a href="${frontendUrl}/workflow/${todo.wfid}">${todo.wftitle}</a><br/>
         <br/><br/><br/> Metatocome`,
 			"YOU_ARE_QED",
 		).then();
@@ -1284,7 +1309,7 @@ const buildWorkDoneMarkdownMessage = async function (
 			workKVars.kvarsArr[i].value +
 			"\n";
 	}
-	let urlEncoded = encodeURI(`${frontendUrl}/work/@${todo.todoid}`);
+	let urlEncoded = encodeURI(`${frontendUrl}/work/${todo.todoid}`);
 	let markdownMsg = {
 		msgtype: "markdown",
 		markdown: {
@@ -1346,8 +1371,8 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
     <br/>
     <br/>
         From: ${doerCN}<br/>
-        Click to see it on task: <a href="${frontendUrl}/work/@${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
-        Process: <a href="${frontendUrl}/workflow/@${todo.wfid}">${todo.wftitle}</a><br/>
+        Click to see it on task: <a href="${frontendUrl}/work/${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
+        Process: <a href="${frontendUrl}/workflow/${todo.wfid}">${todo.wftitle}</a><br/>
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
 	};
 	let context = { wfid: todo.wfid, workid: todo.workid, todoid: todo.todoid };
@@ -1385,10 +1410,10 @@ const postCommentForComment = async function (tenant, doer, cmtid, content, thre
 		doerCN: doerCN,
 		subject: (cmt.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
 		mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> 
-        Click to see it on task: <a href="${frontendUrl}/work/@${
+        Click to see it on task: <a href="${frontendUrl}/work/${
 			cmt.context.todoid
 		}?anchor=ANCHOR">${theTodo ? theTodo.title : "The Task"} </a> <br/>
-        Process: <a href="${frontendUrl}/workflow/@${cmt.context.wfid}">${
+        Process: <a href="${frontendUrl}/workflow/${cmt.context.wfid}">${
 			theTodo ? theTodo.wftitle : "The Workflow"
 		}</a><br/>
     <br/><br/> Metatocome`,
@@ -1514,6 +1539,37 @@ const __postComment = async function (
 		return comment;
 	} catch (err) {
 		console.error(err);
+	}
+};
+
+const convertDoersToHTMLMessage = (doers: DoersArray): string => {
+	let ret = "";
+	for (let i = 0; i < doers.length; i++) {
+		ret += doers[i].cn + "(" + doers[i].uid + ")" + "</BR>";
+	}
+	return ret;
+};
+
+const sendCCMessage = async (
+	tenant: string,
+	cced: DoersArray,
+	subject: string,
+	body: string,
+	rehearsal: boolean,
+	starter: string,
+): Promise<void> => {
+	for (let i = 0; i < cced.length; i++) {
+		try {
+			sendTenantMail(
+				tenant, //not rehearsal
+				rehearsal ? starter : cced[i].uid,
+				subject,
+				body,
+				"TASK_CC_MAIL",
+			).then((res) => {});
+		} catch (error) {
+			console.log("Mailer send email to TASK cc ", rehearsal ? starter : cced[i].uid, "failed");
+		}
 	}
 };
 
@@ -3174,11 +3230,11 @@ const yarkNode_internal = async function (obj) {
 			let mail_body = `Hello, ${cn}, <br/>
           <br/>
           The workflow you started as <br/>
-          <a href="${frontendUrl}/workflow/@${wf.wfid}"> ${wf.wftitle}</a> <br/>
+          <a href="${frontendUrl}/workflow/${wf.wfid}"> ${wf.wftitle}</a> <br/>
           completed already<br/>
           <br/>
           <br/>
-          If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/workflow/@${wf.wfid}<br/>
+          If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/workflow/${wf.wfid}<br/>
           <br/>
 
           <br/><br/>
@@ -3234,6 +3290,7 @@ const yarkNode_internal = async function (obj) {
 				cells = cell.cells;
 			}
 		}
+		let cced = [] as unknown as DoersArray;
 		//如果使用了csv_,则从attach csv中取用户
 		if (attach_csv) {
 			doerOrDoers = [];
@@ -3257,6 +3314,18 @@ const yarkNode_internal = async function (obj) {
 				null,
 				true,
 			);
+			if (Tools.hasValue(tpNode.attr("cc"))) {
+				cced = (await getDoer(
+					obj.tenant,
+					teamid,
+					tpNode.attr("cc"), //pds
+					wfRoot.attr("starter"),
+					obj.wfid,
+					wfRoot,
+					null,
+					true,
+				)) as unknown as DoersArray;
+			}
 		}
 		if (Array.isArray(doerOrDoers) === false) {
 			throw new EmpError("DOER_ARRAY_ERROR", "Doer is not array");
@@ -3373,6 +3442,18 @@ const yarkNode_internal = async function (obj) {
 				let newWork = new Work(workObj);
 				await newWork.save();
 				await createTodo(todoObj);
+				console.log("======CCED ", JSON.stringify(cced));
+				sendCCMessage(
+					tenant,
+					cced,
+					`[MTC cc]: new task dispatched ${tpNodeTitle}`,
+					`Task <B>${tpNodeTitle}</B> dispatched to: </BR>
+${convertDoersToHTMLMessage(cced)}
+</BR></BR>In workflow process:
+<a href="${frontendUrl}/workflow/${wf.wfid}">${wf.wfid}</a>`,
+					wf.rehearsal,
+					wf.starter,
+				);
 			}
 
 			if (cronrun === 1 || cronrun === 2) {
@@ -3935,7 +4016,7 @@ const informUserOnNewTodo = async function (inform) {
 		withEmail = ew && ew.email;
 		let cn = await Cache.getUserName(inform.tenant, inform.doer, "informUserOnNewTodo");
 		let mail_body = `Hello, ${cn}, new task is comming in:
-<br/><a href="${frontendUrl}/work/@${inform.todoid}">${inform.title} </a><br/>
+<br/><a href="${frontendUrl}/work/${inform.todoid}">${inform.title} </a><br/>
 in Workflow: <br/>
 ${inform.wftitle}<br/>
 started by ${inform.wfstarter}
@@ -3943,7 +4024,7 @@ started by ${inform.wfstarter}
 
 ${inform.cellInfo}
 
-  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/@${inform.todoid}</a>
+  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/${inform.todoid}</a>
 <br/>
 <br/>The task's title is<br/>
 ${inform.title}
@@ -3974,15 +4055,15 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 
           ## ${inform.rehearsal ? "Rehearsal: " : ""}${inform.title}
           
-          [Goto task](${frontendUrl}/work/@${inform.todoid})
-          (${frontendUrl}/work/@${inform.todoid})
+          [Goto task](${frontendUrl}/work/${inform.todoid})
+          (${frontendUrl}/work/${inform.todoid})
 
           WeCom may cut part of the above URL making it works not as expected.
           If you encounter difficulty to view task in WeCom internal browser, please open it in your phone's browser
 
           The full url is:
 
-          ${frontendUrl}/work/@${inform.todoid}
+          ${frontendUrl}/work/${inform.todoid}
 
           Of couse, you may also open MTC in your desktop browser to get the full functionalities
 
@@ -5176,7 +5257,7 @@ const __getWorkFullInfoRevocableAndReturnable = async function (
 
 			if (ret.withrvk) {
 				let all_following_are_running = true;
-				if (ret.following_actions.length == 0) {
+				if (ret.following_actions.length === 0) {
 					all_following_are_running = false;
 				} else {
 					for (let i = 0; i < ret.following_actions.length; i++) {
@@ -7367,7 +7448,7 @@ const getDoer = async function (
 		insertDefaultStarter,
 	);
 	//如果返回为空，并且需要插入缺省starter，则返回缺省starter
-	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length == 0))) {
+	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length === 0))) {
 		ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	return ret;
