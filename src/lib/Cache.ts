@@ -288,6 +288,10 @@ const internals = {
 		return ret;
 	},
 
+	delOrgTags: async function (tenant: string): Promise<void> {
+		await internals.removeOrgRelatedCache(tenant, "ORGTAGS");
+	},
+
 	getOrgTags: async function (tenant: string): Promise<string> {
 		let key = "ORGTAGS:" + tenant;
 		let ret = lruCache.get(key) as string;

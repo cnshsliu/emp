@@ -6136,20 +6136,44 @@ const delegate = async function (
 	enddate: string,
 ) {
 	if (delegator === delegatee) {
-		throw new EmpError("DELEGATE_FAILED", `${delegator} and ${delegatee} are the same one`);
+		throw new EmpError(
+			"DELEGATE_FAILED_SAME_USER",
+			`${delegator} and ${delegatee} are the same one`,
+		);
 	}
 	let users = await User.find(
 		{ tenant: tenant, email: { $in: [delegator, delegatee] } },
 		{ _id: 0, email: 1 },
 	);
 	if (users.length !== 2) {
-		throw new EmpError("DELEGATE_FAILED", `${delegator} and ${delegatee} are not in the same org`);
+		throw new EmpError(
+			"DELEGATE_FAILED_NOT_SAME_ORG",
+			`${delegator} and ${delegatee} are not in the same org`,
+		);
 	}
 	let tz = await Cache.getOrgTimeZone(tenant);
 	let tzdiff = TimeZone.getDiff(tz);
 	let dateBegin = new Date(begindate + "T00:00:00" + tzdiff);
 	let dateEnd = new Date(enddate + "T00:00:00" + tzdiff);
 	dateEnd.setDate(dateEnd.getDate() + 1);
+	//TODO: 找到重叠的委托及被委托，重复则不允许
+	if (
+		(await Delegation.countDocuments({
+			tenant: tenant,
+			delegator: delegator,
+			begindate: { $lt: dateEnd },
+			enddate: { $gt: dateBegin },
+		})) +
+			(await Delegation.countDocuments({
+				tenant: tenant,
+				delegatee: delegator,
+				begindate: { $lt: dateEnd },
+				enddate: { $gt: dateBegin },
+			})) >
+		0
+	) {
+		throw new EmpError("DELEGATE_FAILED_OVERLAP", `There are overlapped delegation`);
+	}
 	let obj = new Delegation({
 		tenant: tenant,
 		delegator: delegator,

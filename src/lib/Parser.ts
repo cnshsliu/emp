@@ -8,6 +8,7 @@ import User from "../database/models/User";
 import Team from "../database/models/Team";
 import KVar from "../database/models/KVar";
 import OrgChart from "../database/models/OrgChart";
+import OrgChartAdmin from "../database/models/OrgChartAdmin";
 import Cell from "../database/models/Cell";
 import Cache from "./Cache";
 import OrgChartHelper from "./OrgChartHelper";
@@ -928,23 +929,22 @@ const Parser = {
 	 */
 	checkOrgChartAdminAuthorization: async function (tenant, me) {
 		let isTenantOwner = me.email === me.tenant.owner && me.tenant.orgmode === true;
+		if (isTenantOwner) return true;
 		let myGroup = await Cache.getMyGroup(me.email);
 		let isAdminGroup = myGroup === "ADMIN" && me.tenant.orgmode === true;
-		let orgchartAdmins = await Parser.getDoer(
-			tenant,
-			"",
-			me.tenant.orgchartadminpds, //应该没有[] 替换需求， 这里的PDS用的应该是 @lucas;@steve这类
-			me.tenant.owner,
-			null,
-			null,
-			{}, //因此，这里不需要带入流程参数，也无法带入流程参数，因为不在流程🀄️
+		if (isAdminGroup) return true;
+		if (Parser.canManageOrgChart(tenant, me.email)) return true;
+		throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
+	},
+
+	canManageOrgChart: async (tenant: string, email: string) => {
+		return (
+			(await Cache.getMyGroup(email)) === "ADMIN" ||
+			(await OrgChartAdmin.findOne(
+				{ tenant: tenant, admins: Tools.getEmailPrefix(email) },
+				{ _id: 0, admins: 1 },
+			)) !== null
 		);
-		let orgchartAdminEmails = orgchartAdmins.map((x) => x.uid);
-		let isOneOfOrgChartAdmin = orgchartAdminEmails.includes(me.email);
-		if (!(isTenantOwner || isAdminGroup || isOneOfOrgChartAdmin)) {
-			throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
-		}
-		return true;
 	},
 
 	isAdmin: async function (me) {

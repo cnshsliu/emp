@@ -260,6 +260,7 @@ async function WorkflowReadlog(req, h) {
 		return h.response(fs.readFileSync(logFilename));
 	} catch (err) {
 		console.error(err);
+		if (err.code === "ENOENT") return h.response("Log file does not exist");
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
@@ -4436,7 +4437,7 @@ async function CommentSearch(req, h) {
 	try {
 		const tenant = req.auth.credentials.tenant._id;
 		let myEmail = req.auth.credentials.email;
-		let page = req.payload.page;
+		let pageSer = req.payload.pageSer;
 		let pageSize = req.payload.pageSize;
 		let category = req.payload.category;
 		let q = req.payload.q;
@@ -4528,7 +4529,7 @@ async function CommentSearch(req, h) {
 			total = await Comment.countDocuments(filter_all);
 			cmts = await Comment.find(filter_all)
 				.sort("-updatedAt")
-				.skip(page * 20)
+				.skip(pageSer * 20)
 				.limit(pageSize)
 				.lean();
 		} else {
@@ -4549,7 +4550,7 @@ async function CommentSearch(req, h) {
 			total = await Comment.countDocuments(filter_wfid);
 			cmts = await Comment.find(filter_wfid)
 				.sort("-updatedAt")
-				.skip(page * 20)
+				.skip(pageSer * 20)
 				.limit(pageSize)
 				.lean();
 		}
@@ -4748,9 +4749,9 @@ async function TagDel(req, h) {
 
 		let existingTags = [];
 		if (objtype === "template") {
-			let filter: any = { tenant: tenant, tplid: objid };
+			let searchFilter: any = { tenant: tenant, tplid: objid };
 			let tmp = await Template.findOneAndUpdate(
-				filter,
+				searchFilter,
 				{
 					$pull: {
 						tags: {
@@ -4783,46 +4784,62 @@ async function TagAdd(req, h) {
 		let objid = req.payload.objid;
 		let text = req.payload.text;
 
-		//用于返回
+		let obj = null;
 		let existingTags = [];
-		//先把text拆开
-		let tmp = Parser.splitStringToArray(text);
 		let existingText = [];
+
+		//先把text拆开
+		let inputtedTagTexts = Parser.splitStringToArray(text);
+		//去除空tag
+		inputtedTagTexts = inputtedTagTexts.filter((x) => {
+			return x.trim().length > 0;
+		});
+
 		//获得当前用户已经做过的tag和text
 		if (objtype === "template") {
-			let filter: any = { tenant: tenant, tplid: objid };
-			let obj = await Template.findOne(filter);
-			existingTags = obj.tags;
-			//清理exitingTags中可能存在的空字符串
-			let tmp = existingTags.filter((x) => {
-				return x.text.trim().length > 0;
-			});
-			if (tmp.length < existingTags.length) {
-				obj.tags = tmp;
-				obj = await obj.save();
-				existingTags = obj.tags;
-			}
-			//过滤出当前用户的数据
-			existingTags = existingTags.filter((x) => {
-				return x.owner === myEmail;
-			});
-			existingText = existingTags.map((x) => x.text);
+			let searchCondition: any = { tenant: tenant, tplid: objid };
+			obj = await Template.findOne(searchCondition);
 		}
+		existingTags = obj.tags;
+		//
+		///////////////////////////////////////
+		//清理exitingTags中可能存在的空字符串
+		let cleanedExistingTags = existingTags.filter((x) => {
+			return x.text.trim().length > 0;
+		});
+		//如果发现空字符串，将新的数组（不包含空字符串）重新写入数据库
+		//如此，实现每次在添加新Tag的时候，自动清理空字符串
+		if (cleanedExistingTags.length < existingTags.length) {
+			obj.tags = cleanedExistingTags;
+			obj = await obj.save();
+			existingTags = obj.tags;
+		}
+		///////////////////////////////////////
+		//
+		//过滤出当前用户的数据
+		existingTags = existingTags.filter((x) => {
+			return x.owner === myEmail;
+		});
+		existingText = existingTags.map((x) => x.text);
 		//从用户新录入的tag文本中去除已经存在的
-		tmp = lodash.difference(tmp, existingText);
+		inputtedTagTexts = lodash.difference(inputtedTagTexts, existingText);
 		//转换为tag对象
-		let tagsToAdd = tmp.map((x) => {
+		let tagsToAdd = inputtedTagTexts.map((x) => {
 			return { owner: myEmail, text: x, group: myGroup };
 		});
 
-		if (objtype === "template" && tagsToAdd.length > 0) {
-			let filter: any = { tenant: tenant, tplid: objid };
-			//将新添加的放进数组
-			let obj = await Template.findOneAndUpdate(
-				filter,
-				{ $addToSet: { tags: { $each: tagsToAdd } } },
-				{ upsert: false, new: true },
-			);
+		if (tagsToAdd.length > 0) {
+			if (objtype === "template") {
+				let searchCondition: any = { tenant: tenant, tplid: objid };
+				//将新添加的放进数组
+				obj = await Template.findOneAndUpdate(
+					searchCondition,
+					{ $addToSet: { tags: { $each: tagsToAdd } } },
+					{ upsert: false, new: true },
+				);
+			}
+
+			//如果有添加新的，就需要重新取出所有存在的tags
 			existingTags = obj.tags;
 			//过滤当前用户的tag
 			existingTags = existingTags.filter((x) => {
@@ -4885,6 +4902,7 @@ async function TagListOrg(req, h) {
 
 		let ret = (await Cache.getOrgTags(tenant)).split(";");
 
+		console.log("TagListOrgs", ret);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -5786,18 +5804,23 @@ async function KsTplSearch(req, h) {
 		if (ret === null) {
 			let filter = {};
 			if (req.payload.q) {
-				filter = {
-					$or: [
-						{
-							name: { $regex: `.*${req.payload.q}.*` },
-						},
-						{
-							desc: { $regex: `.*${req.payload.q}.*` },
-						},
-					],
-				};
+				filter["$or"] = [
+					{
+						name: { $regex: `.*${req.payload.q}.*` },
+					},
+					{
+						desc: { $regex: `.*${req.payload.q}.*` },
+					},
+				];
 			}
-			ret = await KsTpl.find(filter, { _id: 0, doc: 0, __v: 0 }).lean();
+			//req.payload.tags = ["碳中和", "生产"];
+			if (req.payload.author?.trim()) {
+				filter["author"] = new RegExp(".*" + req.payload.author + ".*");
+			}
+			if (req.payload.tags.length > 0) {
+				filter["tags"] = { $all: req.payload.tags };
+			}
+			ret = await KsTpl.find(filter, { _id: 0, doc: 0, __v: 0 }).sort("-_id").limit(1000).lean();
 		}
 		return h
 			.response(ret)
@@ -5844,16 +5867,23 @@ async function KsTplAddTag(req, h) {
 			await Cache.getMyGroup(req.auth.credentials.email),
 		);
 		const { ksid, tag } = req.payload;
-		const theTpl = await KsTpl.findOneAndUpdate(
-			{
-				ksid: ksid,
-			},
-			{
-				$addToSet: { tags: tag },
-			},
-			{ upsert: false, new: true },
-		);
-		await Cache.resetETag(`ETAG:KSTPLS`);
+		let tagTextArr = Parser.splitStringToArray(tag);
+		//去除空tag
+		tagTextArr = tagTextArr.filter((x) => {
+			return x.trim().length > 0;
+		});
+		let theTpl = await KsTpl.findOne({ ksid: ksid });
+		if (!theTpl) throw new EmpError("NOT_FOUND", "KsTpl not found");
+		let existingTags = theTpl.tags;
+		let tagsToAdd = lodash.difference(tagTextArr, existingTags);
+		if (tagsToAdd.length > 0) {
+			theTpl = await KsTpl.findOneAndUpdate(
+				{ ksid: ksid },
+				{ $addToSet: { tags: { $each: tagsToAdd } } },
+				{ upsert: false, new: true },
+			);
+			await Cache.resetETag(`ETAG:KSTPLS`);
+		}
 		return h.response(theTpl);
 	} catch (err) {
 		console.error(err);

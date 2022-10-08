@@ -456,7 +456,6 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						password: Joi.string().required().error(new Error("Admin password must be provided")),
 						smtp: {
 							host: Joi.string()
 								.required()
@@ -637,6 +636,55 @@ const internals = {
 						orgchartadminpds: Joi.string().required().allow(""),
 						//password: Joi.string().required(),
 					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tnt/add/orgchartadmin",
+			handler: Handlers.OrgChartAdminAdd,
+			config: {
+				tags: ["api"],
+				description: "Add orgchart administrator",
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: {
+						userid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tnt/del/orgchartadmin",
+			handler: Handlers.OrgChartAdminDel,
+			config: {
+				tags: ["api"],
+				description: "Delete orgchart amdinistrator",
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: {
+						userid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tnt/list/orgchartadmin",
+			handler: Handlers.OrgChartAdminList,
+			config: {
+				tags: ["api"],
+				description: "List orgchart amdinistrators",
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: {},
 					validator: Joi,
 				},
 			},

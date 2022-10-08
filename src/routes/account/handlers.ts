@@ -1,5 +1,6 @@
 "use strict";
 import Mongoose from "mongoose";
+import { Request, ResponseToolkit } from "@hapi/hapi";
 import Boom from "@hapi/boom";
 import assert from "assert";
 import fs from "fs";
@@ -17,6 +18,7 @@ import User from "../../database/models/User";
 import Todo from "../../database/models/Todo";
 import Tenant from "../../database/models/Tenant";
 import OrgChart from "../../database/models/OrgChart";
+import OrgChartAdmin from "../../database/models/OrgChartAdmin";
 import Delegation from "../../database/models/Delegation";
 import JoinApplication from "../../database/models/JoinApplication";
 import Tools from "../../tools/tools";
@@ -714,6 +716,12 @@ async function MyOrg(req, h) {
 			tnt.joinorg = true;
 			tnt.quitorg = false;
 		}
+		tnt.orgchartadmins = await addCNtoUserIds(
+			me.tenant._id,
+			(
+				await OrgChartAdmin.findOne({ tenant: me.tenant._id }, { _id: 0, admins: 1 })
+			)?.admins,
+		);
 		if (tnt.adminorg) {
 			//如果是管理员
 			let tenant_id = me.tenant._id.toString();
@@ -743,7 +751,6 @@ async function MyOrg(req, h) {
 		tnt.smtp = me.tenant.smtp;
 		tnt.menu = me.tenant.menu;
 		tnt.tags = me.tenant.tags;
-		tnt.orgchartadminpds = me.tenant.orgchartadminpds;
 		tnt.regfree = me.tenant.regfree;
 		tnt.allowemptypbo = me.tenant.allowemptypbo;
 		return h.response(tnt);
@@ -852,16 +859,13 @@ async function MyOrgSetSmtp(req, h) {
 		}
 		let tenant_id = req.auth.credentials.tenant._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
-			throw new EmpError("WRONG_PASSWORD", "You are using a wrong password");
-		}
 		await Parser.isAdmin(me);
 		let tenant = await Tenant.findOneAndUpdate(
 			{ _id: tenant_id },
 			{ $set: { smtp: req.payload.smtp } },
 			{ upsert: false, new: true },
 		);
-		Cache.removeOrgRelatedCache(tenant_id, "smtp");
+		Cache.removeOrgRelatedCache(tenant_id, "SMTP");
 
 		//我所在的tenant是个组织，而且我是管理员
 		return h.response(tenant.smtp);
@@ -962,7 +966,7 @@ async function OrgSetTimezone(req, h) {
 		} */
 		await Parser.isAdmin(me);
 
-		Cache.removeOrgRelatedCache(me.tenant, "otz");
+		Cache.removeOrgRelatedCache(me.tenant, "OTZ");
 
 		let tenant = await Tenant.findOneAndUpdate(
 			//{ _id: me.tenant, owner: me.email },
@@ -993,7 +997,8 @@ async function OrgSetTags(req, h) {
 			{ $set: { tags: cleanedTags } },
 			{ new: true },
 		);
-		await Cache.removeOrgRelatedCache(tenant_id, "orgtags");
+		console.log("Remove Org Related Cahce: ORGTAGS");
+		await Cache.removeOrgRelatedCache(tenant_id, "ORGTAGS");
 		return h.response({ tags: tenant.tags });
 	} catch (err) {
 		console.error(err);
@@ -1016,6 +1021,80 @@ async function OrgSetOrgChartAdminPds(req, h) {
 			{ new: true },
 		);
 		return h.response({ orgchartadminpds: tenant.orgchartadminpds });
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	}
+}
+
+async function OrgChartAdminAdd(req: Request, h: ResponseToolkit) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+		let myEmail = req.auth.credentials.email;
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
+			throw new EmpError("wrong_password", "You are using a wrong password");
+		} */
+		await Parser.isAdmin(me);
+		let emailOfUserToAdd = Tools.makeEmailSameDomain(req.payload.userid, myEmail);
+		if (
+			emailOfUserToAdd !== myEmail &&
+			(await User.findOne({ tenant: tenant, email: emailOfUserToAdd }))
+		) {
+			const ret = await OrgChartAdmin.findOneAndUpdate(
+				{ tenant: tenant },
+				{ $addToSet: { admins: req.payload.userid } },
+				{ upsert: true, new: true },
+			);
+			return h.response(await addCNtoUserIds(tenant, ret.admins));
+		} else {
+			throw new EmpError("User not found", "The user specified does not exist");
+		}
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	}
+}
+
+async function OrgChartAdminDel(req: Request, h: ResponseToolkit) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+		let myEmail = req.auth.credentials.email;
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
+			throw new EmpError("wrong_password", "You are using a wrong password");
+		} */
+		await Parser.isAdmin(me);
+		const ret = await OrgChartAdmin.findOneAndUpdate(
+			{ tenant: tenant },
+			{ $pull: { admins: req.payload.userid } },
+			{ new: true },
+		);
+		return h.response(await addCNtoUserIds(tenant, ret.admins));
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	}
+}
+
+const addCNtoUserIds = async (tenant: string, userids: string[]) => {
+	if (!userids) return [];
+	let retArray = [];
+	for (let i = 0; i < userids.length; i++) {
+		retArray.push({
+			userid: userids[i],
+			cn: await Cache.getUserName(tenant, userids[i]),
+		});
+	}
+	return retArray;
+};
+
+async function OrgChartAdminList(req: Request, h: ResponseToolkit) {
+	try {
+		let tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		const ret = await OrgChartAdmin.findOne({ tenant: tenant }, { _id: 0, admins: 1 });
+		return h.response(await addCNtoUserIds(tenant, ret?.admins));
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(400);
@@ -1124,7 +1203,7 @@ async function SetMemberGroup(req, h) {
 			/* if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong password");
 			} */
-			await Parser.isAdmin(me);
+			await Parser.checkOrgChartAdminAuthorization(tenant, me);
 			for (let i = 0; i < emails.length; i++) {
 				await Cache.removeKeyByEmail(emails[i]);
 				await User.findOneAndUpdate(
@@ -1145,12 +1224,13 @@ async function SetMemberPassword(req, h) {
 		if (Tools.isEmpty(req.payload.ems)) {
 			throw new EmpError("set-member-password-failed", "Email or group must be valid");
 		} else {
+			const tenant = req.auth.credentials.tenant._id;
 			let emails = req.payload.ems.split(":");
 			let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 			/* if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong ADMIN password");
 			} */
-			await Parser.isAdmin(me);
+			await Parser.checkOrgChartAdminAuthorization(tenant, me);
 			let cryptedPassword = Crypto.encrypt(req.payload.set_password_to);
 			for (let i = 0; i < emails.length; i++) {
 				await Cache.removeKeyByEmail(emails[i]);
@@ -1175,7 +1255,7 @@ async function RemoveMembers(req, h) {
 			/* if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong password");
 			} */
-			await Parser.isAdmin(me);
+			await Parser.checkOrgChartAdminAuthorization(tenant, me);
 			for (let i = 0; i < emails.length; i++) {
 				let user_owned_tenant_filter = { owner: emails[i] };
 				let user_owned_tenant = await Tenant.findOne(user_owned_tenant_filter);
@@ -1223,15 +1303,14 @@ async function QuitOrg(req, h) {
 
 async function GetOrgMembers(req, h) {
 	try {
+		let tenant = req.auth.credentials.tenant._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		let tenant = me.tenant;
-		let myGroup = await Cache.getMyGroup(me.email);
-		assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "Only admins can opeate"));
+		const adminorg = await Parser.checkOrgChartAdminAuthorization(tenant, me);
 		let members = await User.find(
-			{ tenant: tenant._id, active: true },
+			{ tenant: tenant, active: true },
 			{ _id: 0, email: 1, username: 1, group: 1 },
 		);
-		let ret = { ret: "ok", adminorg: tenant.owner === me.email, members };
+		let ret = { ret: "ok", adminorg: adminorg, members };
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -1456,4 +1535,7 @@ export default {
 	removeSignatureFile,
 	AvatarViewer,
 	SignatureViewer,
+	OrgChartAdminAdd,
+	OrgChartAdminDel,
+	OrgChartAdminList,
 };

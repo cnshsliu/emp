@@ -2436,7 +2436,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						category: Joi.array().items(Joi.string()).required(),
-						page: Joi.number().default(0),
+						pageSer: Joi.number().default(0),
 						pageSize: Joi.number().default(20),
 						q: Joi.string().allow("").optional(),
 					},
@@ -3312,6 +3312,8 @@ const internals = {
 					}).unknown(),
 					payload: {
 						q: Joi.string().required().allow(""),
+						tags: Joi.array().items(Joi.string()),
+						author: Joi.string().optional().allow(""),
 					},
 					validator: Joi,
 				},
