@@ -65,6 +65,7 @@ async function RegisterUser(req, h) {
 		//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
 		//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
 		let siteid = req.payload.siteid || "000";
+		let joincode = req.payload.joincode;
 
 		let site = await Site.findOne({
 			siteid: siteid,
@@ -287,6 +288,8 @@ async function Evc(req, h) {
  */
 async function LoginUser(req, h) {
 	try {
+		console.log("Login user...");
+		console.log(req.payload);
 		if ((await Cache.setOnNonExist("admin_" + req.payload.email, "a", 10)) === false) {
 			throw new EmpError("NO_BRUTE", "Please wait a moment");
 		}
@@ -967,9 +970,9 @@ async function MyOrgSetSmtp(req, h) {
 async function GenerateNewJoinCode(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let tenant_id = me.tenant._id.toString();
 		let jcKey = "jcode-" + tenant_id;
@@ -988,9 +991,9 @@ async function GenerateNewJoinCode(req, h) {
 async function OrgSetJoinCode(req, h) {
 	try {
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let tenant_id = me.tenant._id.toString();
 		let jcKey = "jcode-" + tenant_id;
@@ -1459,9 +1462,9 @@ async function SendInvitation(req, h) {
 	try {
 		let emails = req.payload.ems.split(":");
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
-		}
+		} */
 		await Parser.isAdmin(me);
 		let frontendUrl = Tools.getFrontEndUrl();
 		for (let i = 0; i < emails.length; i++) {

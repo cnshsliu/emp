@@ -22,6 +22,7 @@ const internals = {
 						username: Joi.string().regex(validation.username).required(),
 						password: Joi.string().regex(validation.password).required(),
 						email: Joi.string().email().lowercase().required(),
+						joincode: Joi.string().optional(),
 						siteid: Joi.string().optional(),
 					},
 					validator: Joi,
@@ -540,7 +541,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { password: Joi.string().required() },
+					payload: {},
 					validator: Joi,
 				},
 			},
@@ -555,7 +556,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { joincode: Joi.string().min(4).required(), password: Joi.string().required() },
+					payload: { joincode: Joi.string().min(4).required() },
 					validator: Joi,
 				},
 			},
@@ -829,7 +830,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { ems: Joi.string().required(), password: Joi.string().required() },
+					payload: { ems: Joi.string().required() },
 					validator: Joi,
 				},
 			},
