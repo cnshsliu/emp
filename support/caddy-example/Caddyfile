@@ -1,5 +1,5 @@
 mtc.localhost {
-	reverse_proxy http://localhost:3000
+	reverse_proxy http://localhost:5173
 }
 
 emp.localhost {

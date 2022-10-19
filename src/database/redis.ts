@@ -6,8 +6,10 @@ import ServerConfig from "../../secret/keep_secret";
 const theThread = isMainThread ? "MainThread" : "ChildThread";
 
 const redisUrl = ServerConfig.redis.connectionString;
+const redisPassword = ServerConfig.redis.password;
 const redisClient = createClient({
 	url: redisUrl,
+	password: 'ddipMzbaHtEw7PZK'
 });
 
 const redisConnect = async () => {

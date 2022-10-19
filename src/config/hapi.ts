@@ -40,6 +40,7 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		 */
 		routes: {
 			//Allow CORS for all
+			// cors: true, 
 			cors: {
 				origin: ["*"],
 				credentials: true,

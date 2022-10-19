@@ -26,6 +26,8 @@ const schema = new Mongoose.Schema({
 	active: { type: Boolean, default: true },
 	succeed: { type: String, default: "" },
 	succeedname: { type: String, default: "" },
+	openId: { type: String, default: "",  },
+	unionId: { type: String, default: "" }
 });
 
 export default Mongoose.model("User", schema);

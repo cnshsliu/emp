@@ -28,6 +28,7 @@ import SystemPermController from "../../lib/SystemPermController";
 import EmpError from "../../lib/EmpError";
 import Engine from "../../lib/Engine";
 import Cache from "../../lib/Cache";
+import { getOpenId } from './api'
 
 const buildSessionResponse = (user, tenant) => {
 	let token = JwtAuth.createToken({ id: user._id });
@@ -44,15 +45,16 @@ const buildSessionResponse = (user, tenant) => {
 			ew: user.ew,
 			ps: user.ps ? user.ps : 20,
 			tenant: {
-				_id: tenant._id,
-				css: tenant.css,
-				name: tenant.name,
-				orgmode: tenant.orgmode,
-				timezone: tenant.timezone,
+				_id: tenant?._id,
+				css: tenant?.css,
+				name: tenant?.name,
+				orgmode: tenant?.orgmode,
+				timezone: tenant?.timezone,
 			},
 			perms: SystemPermController.getMyGroupPerm(user.group),
 			avatar: user.avatar,
 			signature: user.signature,
+			openId: user?.openId || ""
 		},
 	};
 };
@@ -288,8 +290,10 @@ async function LoginUser(req, h) {
 		if ((await Cache.setOnNonExist("admin_" + req.payload.email, "a", 10)) === false) {
 			throw new EmpError("NO_BRUTE", "Please wait a moment");
 		}
-
-		let siteid = req.payload.siteid || "000";
+		const {
+			siteid = "000",
+			openid = ""
+		} = req.payload;
 		let login_email = req.payload.email;
 		if (login_email.indexOf("@") < 0) {
 			//如果用户登录时直接使用用户ID而不是邮箱，由于无法确认当前Tenant
@@ -318,15 +322,100 @@ async function LoginUser(req, h) {
 					await redisClient.expire("resend_" + user.email, 6);
 					throw new EmpError("LOGIN_EMAILVERIFIED_FALSE", "Email not verified");
 				} else {
+					if(openid){
+						const existUser = await User.findOne({
+							openId: openid
+						})
+						// 判断openid是否已经绑定过，防串改
+						if(existUser){
+							return h.response({
+								code: 0,
+								msg: "The openid has been bound!",
+								data: false
+							})
+						}else{
+							// 修改用户的openid
+							user = await User.findOneAndUpdate({
+								email: login_email
+							},{
+								$set: {
+									openId: openid
+								}
+							},{ 
+								upsert: true, new: true 
+							}).populate("tenant").lean();
+						}
+					}
+					await redisClient.del(`logout_${user._id}`);
+					console.log(`[Login] ${user.email}`);
+					let ret = buildSessionResponse(user, user.tenant);
+					await Cache.removeKeyByEmail(user.email);
+					// 如果有openid，先判断这个openid是否绑定过，如果没有就绑定这个账号
+					
+					return h.response(ret);
+				}
+			}
+		}
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+/**
+ * wechat scanner 
+ * use code get openid
+ * get openid url：https://api.weixin.qq.com/sns/oauth2/access_token?appid=" + appid + "&secret=" + secret + "&code=" + code + "&grant_type=authorization_code
+ */
+async function ScanLogin(req, h) {
+	try{
+		const {
+			code = ''
+		} = req.payload;
+		const authParam = {
+			appid: process.env.EMP_WX_APPID,
+			secret: process.env.EMP_WX_APPSECRET,
+			js_code: code
+		}
+		console.log("腾讯的参数：", authParam)
+		const res: any = await getOpenId(authParam);
+		console.log(res)
+		if(res.status == 200 && res?.data?.openid){
+			const openId = res.data.openid;
+			// Take the openid to find user from db
+			const user = await User.findOne({
+				openId
+			})
+			if(user){
+				// exist 
+				if (user.emailVerified === false) {
+					await redisClient.set("resend_" + user.email, "sent");
+					await redisClient.expire("resend_" + user.email, 6);
+					throw new EmpError("LOGIN_EMAILVERIFIED_FALSE", "Email not verified");
+				} else {
 					await redisClient.del(`logout_${user._id}`);
 					console.log(`[Login] ${user.email}`);
 					let ret = buildSessionResponse(user, user.tenant);
 					await Cache.removeKeyByEmail(user.email);
 					return h.response(ret);
 				}
+			}else{
+				// non-existent
+				return h.response({
+					code: "ACCOUNT_NO_BINDING",
+					data: openId,
+					msg: "No account is bound to openid!"
+				})
 			}
+		}else{
+			return h.response({
+				code: 500,
+				msg: "Auth fail!",
+				data: false
+			})
 		}
-	} catch (err) {
+		
+	}catch(err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
@@ -1029,21 +1118,21 @@ async function OrgSetOrgChartAdminPds(req, h) {
 
 async function OrgChartAdminAdd(req: Request, h: ResponseToolkit) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		let tenant = (req.auth.credentials.tenant as any)._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		let myEmail = req.auth.credentials.email;
 		/* if (Crypto.decrypt(me.password) != req.payload.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
 		} */
 		await Parser.isAdmin(me);
-		let emailOfUserToAdd = Tools.makeEmailSameDomain(req.payload.userid, myEmail);
+		let emailOfUserToAdd = Tools.makeEmailSameDomain((req.payload as any).userid, myEmail);
 		if (
 			emailOfUserToAdd !== myEmail &&
 			(await User.findOne({ tenant: tenant, email: emailOfUserToAdd }))
 		) {
 			const ret = await OrgChartAdmin.findOneAndUpdate(
 				{ tenant: tenant },
-				{ $addToSet: { admins: req.payload.userid } },
+				{ $addToSet: { admins: (req.payload as any).userid } },
 				{ upsert: true, new: true },
 			);
 			return h.response(await addCNtoUserIds(tenant, ret.admins));
@@ -1058,7 +1147,7 @@ async function OrgChartAdminAdd(req: Request, h: ResponseToolkit) {
 
 async function OrgChartAdminDel(req: Request, h: ResponseToolkit) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		let tenant = (req.auth.credentials.tenant as any)._id;
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 		let myEmail = req.auth.credentials.email;
 		/* if (Crypto.decrypt(me.password) != req.payload.password) {
@@ -1067,7 +1156,7 @@ async function OrgChartAdminDel(req: Request, h: ResponseToolkit) {
 		await Parser.isAdmin(me);
 		const ret = await OrgChartAdmin.findOneAndUpdate(
 			{ tenant: tenant },
-			{ $pull: { admins: req.payload.userid } },
+			{ $pull: { admins: (req.payload as any).userid } },
 			{ new: true },
 		);
 		return h.response(await addCNtoUserIds(tenant, ret.admins));
@@ -1091,7 +1180,7 @@ const addCNtoUserIds = async (tenant: string, userids: string[]) => {
 
 async function OrgChartAdminList(req: Request, h: ResponseToolkit) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
+		let tenant = (req.auth.credentials.tenant as any)._id;
 		let myEmail = req.auth.credentials.email;
 		const ret = await OrgChartAdmin.findOne({ tenant: tenant }, { _id: 0, admins: 1 });
 		return h.response(await addCNtoUserIds(tenant, ret?.admins));
@@ -1497,6 +1586,7 @@ export default {
 	SetMyPassword,
 	Evc,
 	LoginUser,
+	ScanLogin,
 	RefreshUserSession,
 	LogoutUser,
 	VerifyEmail,

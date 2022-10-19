@@ -58,6 +58,24 @@ const internals = {
 						//password required with same regex as client
 						password: Joi.string().required(),
 						siteid: Joi.string().optional(),
+						openid: Joi.string().optional().allow("")
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/account/sacnner",
+			handler: Handlers.ScanLogin,
+			config: {
+				// Include this API in swagger documentation
+				tags: ["api"],
+				description: "User can login by wechat scanner",
+				notes: "The user login will return a sessionToken",
+				validate: {
+					payload: {
+						code: Joi.string().required(),
 					},
 					validator: Joi,
 				},
