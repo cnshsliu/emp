@@ -29,6 +29,8 @@ import EmpError from "../../lib/EmpError";
 import Engine from "../../lib/Engine";
 import Cache from "../../lib/Cache";
 import { getOpenId } from './api'
+import { listenerCount } from "process";
+import LoginTenant from "../../database/models/LoginTenant"
 
 const buildSessionResponse = (user, tenant) => {
 	let token = JwtAuth.createToken({ id: user._id });
@@ -376,8 +378,8 @@ async function ScanLogin(req, h) {
 			code = ''
 		} = req.payload;
 		const authParam = {
-			appid: process.env.EMP_WX_APPID,
-			secret: process.env.EMP_WX_APPSECRET,
+			appid: ServerConfig.wxConfig.appId,
+			secret: ServerConfig.wxConfig.appSecret,
 			js_code: code
 		}
 		console.log("腾讯的参数：", authParam)
@@ -1582,6 +1584,83 @@ async function SignatureViewer(req, h) {
 	}
 }
 
+async function TenantList(req, h) {
+	debugger
+	const { 
+		userId 
+	} = req.payload;
+	let list = await LoginTenant.find({
+		userId
+	})
+	return h.response({
+		code: 0,
+		data: list,
+		msg: "操作成功"
+	})
+}
+async function SwitchTenant (req, h) {
+	const {
+		tenant_id = '',
+		inviter_id = ''
+	} = req.payload;
+	const thisTenantPromise = Tenant.find({
+		_id: tenant_id
+	})
+	const thisLoginTenantPromise = LoginTenant.find({
+		tenant: tenant_id
+	})
+	const [ thisTenant, thisLoginTenant ] = await Promise.all([thisTenantPromise, thisLoginTenantPromise]);
+	// 判断组织是否存在
+	if(!thisTenant){
+		return h.response({
+			code: 500,
+			data: false,
+			msg: "加入的组织不存在"
+		})
+	}
+	// 判断是否已经加入组织
+	if(thisLoginTenant){
+		return h.response({
+			code: 500,
+			data: false,
+			msg: "不能重复加入组织"
+		})
+	}
+	try{
+		let loginTenantRes = await new LoginTenant({
+			userId: '',
+			inviterId: inviter_id,
+			tenant: '',
+			groupId: '',
+			nickname:'',
+			group: '',
+			avatarinfo: '',
+			signature: '',
+			active: '',
+			status: 1
+		}).save()
+		if(loginTenantRes){
+			return h.response({
+				code: 0,
+				data: loginTenantRes,
+				msg: "操作成功"
+			})
+		}else{
+			return h.response({
+				code: 500,
+				data: false,
+				msg: "操作失败"
+			})
+		}
+	} catch (err) {
+		return h.response({
+			code: 500,
+			data: err,
+			msg: "操作失败"
+		})
+	}
+}
+
 export default {
 	RegisterUser,
 	CheckFreeReg,
@@ -1631,4 +1710,6 @@ export default {
 	OrgChartAdminAdd,
 	OrgChartAdminDel,
 	OrgChartAdminList,
+	TenantList,
+	SwitchTenant
 };

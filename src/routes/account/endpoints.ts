@@ -846,13 +846,43 @@ const internals = {
 		{
 			method: "POST",
 			path: "/signature",
-
 			handler: Handlers.SignatureViewer,
 			config: {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { email: Joi.string() },
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tenant/list",
+			handler: Handlers.TenantList,
+			config: {
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						userid: Joi.string()
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tenant/switch",
+			handler: Handlers.SwitchTenant,
+			config: {
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						tenant_id: Joi.string(),
+						inviter_id: Joi.string()
+					},
 					validator: Joi,
 				},
 			},
