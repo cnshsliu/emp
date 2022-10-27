@@ -887,6 +887,22 @@ const internals = {
 				},
 			},
 		},
+
+		{
+			method: "POST",
+			path: "/tenant/detail",
+			handler: Handlers.TenantDetail,
+			config: {
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						tenant_id: Joi.string()
+					},
+					validator: Joi,
+				},
+			},
+		},
 	],
 };
 

@@ -35,9 +35,9 @@ const schema = new Mongoose.Schema({
 	signature: { type: Mongoose.Schema.Types.String, default: "" },
     // 当前账号是否为可用状态
 	active: { type: Boolean, default: true },
-	// 用户离职后，接手人的groupId
+	// 用户离职后，接手人的userId
 	succeed: { type: String, default: "" },
-	// 接手人的中文名称
+	// 接手人的nickname
 	succeedname: { type: String, default: "" },
 });
 
