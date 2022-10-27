@@ -861,11 +861,11 @@ const internals = {
 			path: "/tenant/list",
 			handler: Handlers.TenantList,
 			config: {
-				auth: "token",
+				// auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
-						userid: Joi.string()
+						userId: Joi.string().required()
 					},
 					validator: Joi,
 				},

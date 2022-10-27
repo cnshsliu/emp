@@ -1585,16 +1585,15 @@ async function SignatureViewer(req, h) {
 }
 
 async function TenantList(req, h) {
+	const { userId } = req.payload;
 	debugger
-	const { 
-		userId 
-	} = req.payload;
-	let list = await LoginTenant.find({
-		userId
-	})
+	const tenantList = await LoginTenant.find({
+		userid: userId
+	   })
+	   .populate('tenant').lean();
 	return h.response({
 		code: 0,
-		data: list,
+		data: tenantList,
 		msg: "操作成功"
 	})
 }
