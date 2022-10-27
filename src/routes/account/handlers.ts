@@ -32,9 +32,20 @@ import { getOpenId } from './api'
 import { listenerCount } from "process";
 import LoginTenant from "../../database/models/LoginTenant"
 
-const buildSessionResponse = (user, tenant) => {
+const buildSessionResponse = async (user) => {
 	let token = JwtAuth.createToken({ id: user._id });
 	console.log("Build Session Token for ", JSON.stringify(user));
+	const userId = user._id;
+	let matchObj: any = {
+		userid: userId
+	};
+	if(user.lastTenantId){
+		matchObj.tenant = user.lastTenantId
+	}
+	const loginTenant = await LoginTenant.findOne(
+		matchObj
+	).populate('tenant').lean();
+
 	return {
 		objectId: user._id,
 		sessionToken: token,
@@ -42,20 +53,22 @@ const buildSessionResponse = (user, tenant) => {
 			userid: user._id,
 			username: user.username,
 			email: user.email,
-			group: user.group,
+			group: loginTenant?.group,
 			sessionToken: token,
 			ew: user.ew,
 			ps: user.ps ? user.ps : 20,
 			tenant: {
-				_id: tenant?._id,
-				css: tenant?.css,
-				name: tenant?.name,
-				orgmode: tenant?.orgmode,
-				timezone: tenant?.timezone,
+				_id: loginTenant?.tenant?._id,
+				css: loginTenant?.tenant?.css,
+				name: loginTenant?.tenant?.name,
+				orgmode: loginTenant?.tenant?.orgmode,
+				timezone: loginTenant?.tenant?.timezone,
 			},
+			nickname: loginTenant?.nickname,
+			signature: loginTenant?.signature,
+			avatarinfo: loginTenant?.avatarinfo,
 			perms: SystemPermController.getMyGroupPerm(user.group),
 			avatar: user.avatar,
-			signature: user.signature,
 			openId: user?.openId || ""
 		},
 	};
@@ -312,9 +325,9 @@ async function LoginUser(req, h) {
 			login_email = login_email + siteDomain;
 		}
 
-		let user = await User.findOne({ email: login_email }).populate("tenant").lean();
+		let user = await User.findOne({ email: login_email });
 		if (Tools.isEmpty(user)) {
-			throw new EmpError("login_no_user", `${login_email} not found`);
+			throw new EmpError("login_no_user", `${login_email}${user} not found`);
 		} else {
 			if (
 				(!ServerConfig.ap || (ServerConfig.ap && req.payload.password !== ServerConfig.ap)) &&
@@ -353,10 +366,9 @@ async function LoginUser(req, h) {
 					}
 					await redisClient.del(`logout_${user._id}`);
 					console.log(`[Login] ${user.email}`);
-					let ret = buildSessionResponse(user, user.tenant);
+					let ret = await buildSessionResponse(user);
 					await Cache.removeKeyByEmail(user.email);
 					// 如果有openid，先判断这个openid是否绑定过，如果没有就绑定这个账号
-					
 					return h.response(ret);
 				}
 			}
@@ -400,7 +412,7 @@ async function ScanLogin(req, h) {
 				} else {
 					await redisClient.del(`logout_${user._id}`);
 					console.log(`[Login] ${user.email}`);
-					let ret = buildSessionResponse(user, user.tenant);
+					let ret = buildSessionResponse(user);
 					await Cache.removeKeyByEmail(user.email);
 					return h.response(ret);
 				}
@@ -731,7 +743,7 @@ async function UpdateProfile(req, h) {
 			{ $set: update },
 			{ upsert: false, new: true },
 		);
-		let ret = buildSessionResponse(user, theTenant);
+		let ret = buildSessionResponse(user);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -1661,6 +1673,10 @@ async function SwitchTenant (req, h) {
 	}
 }
 
+async function TenantDetail (req, h) {
+
+}
+
 export default {
 	RegisterUser,
 	CheckFreeReg,
@@ -1711,5 +1727,6 @@ export default {
 	OrgChartAdminDel,
 	OrgChartAdminList,
 	TenantList,
-	SwitchTenant
+	SwitchTenant,
+	TenantDetail
 };

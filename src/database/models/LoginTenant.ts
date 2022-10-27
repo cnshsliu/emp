@@ -3,14 +3,14 @@ import Mongoose from "mongoose";
 
 const schema = new Mongoose.Schema({
 	// 用户id
-	userId: { type: String, ref: "User" },
-	inviterId: {
+	userid: { type: String, ref: "User" },
+	inviterid: {
 		type: String
 	},
 	// 用户当前所属的租户
 	tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
 	// 用户在组织的Id。比如：工号等唯一标识，自动生成
-	groupId: { type: String, unique: true },
+	groupid: { type: String, unique: true },
 	// 企业备注昵称
 	nickname: {
 		type: String
@@ -35,9 +35,9 @@ const schema = new Mongoose.Schema({
 	signature: { type: Mongoose.Schema.Types.String, default: "" },
     // 当前账号是否为可用状态
 	active: { type: Boolean, default: true },
-	// 用户离职后，接手人的groupId
+	// 用户离职后，接手人的userId
 	succeed: { type: String, default: "" },
-	// 接手人的中文名称
+	// 接手人的nickname
 	succeedname: { type: String, default: "" },
 });
 
