@@ -754,6 +754,14 @@ async function WorkflowRead(req, h) {
 			if (withDoc === false) delete retWf.doc;
 			if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
 			retWf.starterCN = await Cache.getUserName(tenant, wf.starter, "WorkflowRead");
+			let pboStatusValueDef = await Parser.getVar(
+				tenant,
+				retWf.wfid,
+				Const.FOR_WHOLE_PROCESS,
+				Const.VAR_IS_EFFICIENT,
+				"pboStatus",
+			);
+			retWf.pboStatus = pboStatusValueDef === null ? "NOT_SET" : pboStatusValueDef.value;
 
 			return retWf;
 		} else {
