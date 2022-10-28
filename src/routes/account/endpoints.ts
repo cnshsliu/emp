@@ -861,11 +861,11 @@ const internals = {
 			path: "/tenant/list",
 			handler: Handlers.TenantList,
 			config: {
-				// auth: "token",
+				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
-						userId: Joi.string().required()
+						userid: Joi.string().required()
 					},
 					validator: Joi,
 				},
@@ -880,8 +880,8 @@ const internals = {
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
-						tenant_id: Joi.string(),
-						inviter_id: Joi.string()
+						tenantid: Joi.string().required(),
+						userid: Joi.string().required()
 					},
 					validator: Joi,
 				},
