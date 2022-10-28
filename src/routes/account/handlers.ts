@@ -75,7 +75,10 @@ const buildSessionResponse = async (user) => {
 };
 
 async function RegisterUser(req, h) {
+	// 开启事务
+	const session = await Mongoose.connection.startSession();
 	try {
+		await session.startTransaction();
 		//在L2C服务端配置里，可以分为多个site，每个site允许哪些用户能注册
 		//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
 		//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
@@ -118,10 +121,11 @@ async function RegisterUser(req, h) {
 			css: "",
 			timezone: "GMT",
 		});
-		tenant = await tenant.save();
+		tenant = await tenant.save({ session });
 		req.payload.password = Crypto.encrypt(req.payload.password);
 		req.payload.emailVerified = false;
-		let user = new User({
+		//创建用户
+		let userObj = new User({
 			site: site.siteid,
 			username: req.payload.username,
 			tenant: new Mongoose.Types.ObjectId(tenant._id),
@@ -132,13 +136,12 @@ async function RegisterUser(req, h) {
 			ps: 20,
 		});
 
-		try {
-			user = await user.save();
-		} catch (e) {
-			tenant.delete();
-			throw e;
-		}
-
+		let loginTenantObj = new LoginTenant({
+			userid: '',
+			tenant: new Mongoose.Types.ObjectId(tenant._id),
+		})
+		let user = await userObj.save({ session });
+		let loginTenant = await loginTenantObj.save({ session })
 		var tokenData = {
 			email: user.email,
 			id: user._id,
@@ -147,13 +150,11 @@ async function RegisterUser(req, h) {
 		const verifyToken = JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey);
 		await redisClient.set("evc_" + user.email, verifyToken);
 		await redisClient.expire("evc_" + user.email, ServerConfig.verify?.email?.verifyin || 15 * 60);
-		try {
-			Mailman.sendMailVerificationLink(user, verifyToken);
-		} catch (error) {
-			console.error(error);
-		}
-
+		// 发送校验邮件
+		Mailman.sendMailVerificationLink(user, verifyToken);
+		
 		let token = JwtAuth.createToken({ id: user._id });
+		await session.commitTransaction();
 		return {
 			objectId: user._id,
 			verifyToken: verifyToken,
@@ -163,8 +164,11 @@ async function RegisterUser(req, h) {
 			},
 		};
 	} catch (err) {
+		await session.abortTransaction();
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	} finally {
+		await session.endSession();
 	}
 }
 
