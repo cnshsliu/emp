@@ -1597,79 +1597,48 @@ async function SignatureViewer(req, h) {
 }
 
 async function TenantList(req, h) {
-	debugger
-	const { 
-		userId 
-	} = req.payload;
-	let list = await LoginTenant.find({
-		userId
-	})
+	const { userid } = req.payload;
+	const tenantList = await LoginTenant.find({
+		userid
+	   }).populate('tenant').lean();
 	return h.response({
 		code: 0,
-		data: list,
+		data: tenantList,
 		msg: "操作成功"
 	})
 }
 async function SwitchTenant (req, h) {
 	const {
-		tenant_id = '',
-		inviter_id = ''
+		tenantid,
+		userid
 	} = req.payload;
-	const thisTenantPromise = Tenant.find({
-		_id: tenant_id
-	})
-	const thisLoginTenantPromise = LoginTenant.find({
-		tenant: tenant_id
-	})
-	const [ thisTenant, thisLoginTenant ] = await Promise.all([thisTenantPromise, thisLoginTenantPromise]);
-	// 判断组织是否存在
-	if(!thisTenant){
-		return h.response({
-			code: 500,
-			data: false,
-			msg: "加入的组织不存在"
-		})
+	const tenantList = await LoginTenant.find({ userid , active: true}).populate('tenant').lean();
+
+	let flag = -1
+	for(let i = 0; i < tenantList.length; i++) {
+		if (tenantList[i].tenant._id == tenantid) {
+			flag = i
+			break;
+		}
 	}
-	// 判断是否已经加入组织
-	if(thisLoginTenant){
+	// 判断组织是否存在
+	if(flag == -1) {
 		return h.response({
 			code: 500,
 			data: false,
-			msg: "不能重复加入组织"
+			msg: "无法切换到该组织"
 		})
 	}
 	try{
-		let loginTenantRes = await new LoginTenant({
-			userId: '',
-			inviterId: inviter_id,
-			tenant: '',
-			groupId: '',
-			nickname:'',
-			group: '',
-			avatarinfo: '',
-			signature: '',
-			active: '',
-			status: 1
-		}).save()
-		if(loginTenantRes){
-			return h.response({
-				code: 0,
-				data: loginTenantRes,
-				msg: "操作成功"
-			})
-		}else{
-			return h.response({
-				code: 500,
-				data: false,
-				msg: "操作失败"
-			})
-		}
+		const user = await User.findOneAndUpdate(
+			{ _id: userid },
+			{ $set: { lastTenantId: tenantid } }
+		);
+		let ret = await buildSessionResponse(user);
+		return h.response(ret);
 	} catch (err) {
-		return h.response({
-			code: 500,
-			data: err,
-			msg: "操作失败"
-		})
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
