@@ -1632,7 +1632,8 @@ async function SwitchTenant (req, h) {
 	try{
 		const user = await User.findOneAndUpdate(
 			{ _id: userid },
-			{ $set: { lastTenantId: tenantid } }
+			{ $set: { lastTenantId: tenantid } },
+			{ new: true },
 		);
 		let ret = await buildSessionResponse(user);
 		return h.response(ret);
