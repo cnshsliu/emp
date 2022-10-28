@@ -866,6 +866,15 @@ async function MyOrg(req, h) {
 	}
 }
 
+async function IsAdminorg(req, h) {
+	let me = await User.findOne({ _id: req.payload.userId }).populate("tenant");
+	// //我所在的tenant是个组织，而且我是管理员
+	// let adminorg =
+	// me.tenant.orgmode &&
+	// (me.tenant.owner === me.email || (await Cache.getMyGroup(me.email)) === "ADMIN");
+	return h.response(me)
+}
+
 async function MyOrgSetOrgmode(req, h) {
 	try {
 		let tenant_id = req.auth.credentials.tenant._id;
@@ -1696,6 +1705,7 @@ export default {
 	RemoveAccount,
 	ProfileConfig,
 	MyOrg,
+	IsAdminorg,
 	MyOrgSetOrgmode,
 	MyOrgGetSmtp,
 	MyOrgSetSmtp,
