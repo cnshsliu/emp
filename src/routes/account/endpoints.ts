@@ -427,25 +427,6 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/tnt/isAdminorg",
-			handler: Handlers.IsAdminorg,
-			config: {
-				tags: ["api"],
-				description: "administrator or not",
-				// auth: "token",
-				validate: {
-					// headers: Joi.object({
-					// 	Authorization: Joi.string(),
-					// }).unknown(),
-					payload: {
-						userId: Joi.string().required()
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
 			path: "/tnt/set/orgmode",
 			handler: Handlers.MyOrgSetOrgmode,
 			config: {
