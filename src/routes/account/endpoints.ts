@@ -861,7 +861,7 @@ const internals = {
 			path: "/tenant/list",
 			handler: Handlers.TenantList,
 			config: {
-				auth: "token",
+				// auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
@@ -876,7 +876,7 @@ const internals = {
 			path: "/tenant/switch",
 			handler: Handlers.SwitchTenant,
 			config: {
-				auth: "token",
+				// auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
@@ -899,6 +899,16 @@ const internals = {
 					payload: { 
 						tenant_id: Joi.string()
 					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/tenant/addlogintenants",
+			handler: Handlers.addLogintenants,
+			config: {
+				validate: {
 					validator: Joi,
 				},
 			},
