@@ -415,7 +415,7 @@ async function ScanLogin(req, h) {
 				} else {
 					await redisClient.del(`logout_${user._id}`);
 					console.log(`[Login] ${user.email}`);
-					let ret = buildSessionResponse(user);
+					let ret = await buildSessionResponse(user);
 					await Cache.removeKeyByEmail(user.email);
 					return h.response(ret);
 				}
@@ -801,7 +801,7 @@ async function UpdateProfile(req, h) {
 			{ $set: updateLoginTenant },
 			{  }
 		)
-		let ret = buildSessionResponse(user);
+		let ret = await buildSessionResponse(user);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
