@@ -78,6 +78,7 @@ async function RegisterUser(req, h) {
 	// 开启事务
 	const session = await Mongoose.connection.startSession();
 	try {
+		console.log(1)
 		await session.startTransaction();
 		//在L2C服务端配置里，可以分为多个site，每个site允许哪些用户能注册
 		//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
@@ -93,16 +94,19 @@ async function RegisterUser(req, h) {
 				{ mode: "RESTRICTED", owner: req.payload.email },
 			],
 		});
+
+		console.log(2)
 		//如果这个site是被管理的，那么就需要检查用户是否允许在这个site里面注册
 		if (!site) {
 			throw new Error("站点已关闭,或者您没有站内注册授权，请使用授权邮箱注册，谢谢");
 		}
-
 		let emailDomain = Tools.getEmailDomain(req.payload.email);
 		let orgTenant = await Tenant.findOne({
 			orgmode: true,
 			owner: { $regex: emailDomain },
 		});
+
+		console.log(3)
 		if (orgTenant && orgTenant.regfree === false) {
 			throw new EmpError(
 				"NO_FREE_REG",
@@ -110,18 +114,18 @@ async function RegisterUser(req, h) {
 			);
 		}
 		if (Tools.isEmpty(req.payload.tenant)) {
-			req.payload.tenant = "Org of " + req.payload.username;
+			req.payload.tenant = "Org_of_" + req.payload.username;
 		}
 
 		let tenant = new Tenant({
 			site: site.siteid,
 			name: req.payload.tenant,
-			orgmode: false,
 			owner: req.payload.email,
 			css: "",
 			timezone: "GMT",
 		});
 		tenant = await tenant.save({ session });
+		console.log(4)
 		req.payload.password = Crypto.encrypt(req.payload.password);
 		req.payload.emailVerified = false;
 		//创建用户
@@ -135,11 +139,15 @@ async function RegisterUser(req, h) {
 			ps: 20,
 		});
 		let user = await userObj.save({ session });
+		console.log(5)
 		let loginTenantObj = new LoginTenant({
 			userid: user.id,
 			tenant: new Mongoose.Types.ObjectId(tenant._id),
+			nickname: req.payload.username,
 		})
 		let loginTenant = await loginTenantObj.save({ session })
+		debugger
+		console.log(6)
 		var tokenData = {
 			email: user.email,
 			id: user._id,
@@ -578,6 +586,7 @@ async function VerifyEmail(req, h) {
 		let loginTenantObj = new LoginTenant({
 			userid: user._id,
 			tenant: new Mongoose.Types.ObjectId(orgTenant._id),
+			nickname: user.username
 		})
 		await loginTenantObj.save({ session })
 		await session.commitTransaction();
