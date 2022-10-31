@@ -39,7 +39,7 @@ const schema = new Mongoose.Schema({
 	// 微信授权登录的unionId
 	unionId: { type: String, default: "" },
 	// 最后登录的组织
-	lastTenantId: { type: String, default: "" }
+	tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" }
 });
 
 export default Mongoose.model("User", schema);
