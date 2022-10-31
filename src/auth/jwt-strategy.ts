@@ -18,6 +18,7 @@ import Jwt from "jsonwebtoken";
 import { redisClient } from "../database/redis";
 //mongoose user object
 import User from "../database/models/User";
+import LoginTenant from "../database/models/LoginTenant"
 
 // private key for signing
 const JwtAuth = {
@@ -61,11 +62,22 @@ const JwtAuth = {
 			cachedCredential = null;
 		}
 		if (!cachedCredential) {
-			let user = await User.findOne({ _id: decoded.id, active: true }).populate("tenant", {
+			let user = await User.findOne({ _id: decoded.id, active: true })
+			const userId = user._id;
+			let matchObj: any = {
+				userid: userId
+			};
+			if(user.lastTenantId){
+				matchObj.tenant = user.lastTenantId
+			}
+			const loginTenant = await LoginTenant.findOne(
+				matchObj
+			).populate("tenant", {
 				_id: 1,
 				name: 1,
 				owner: 1,
-			});
+			}).lean();
+			debugger
 			if (user) {
 				result = {
 					isValid: true,
@@ -73,10 +85,11 @@ const JwtAuth = {
 						_id: user._id,
 						username: user.username,
 						email: user.email,
-						tenant: user.tenant,
+						tenant: loginTenant?.tenant,
 					},
 				};
 				user_id = user._id;
+				debugger
 				await redisClient.set(credentials_redisKey, JSON.stringify(result.credentials));
 				await redisClient.expire(credentials_redisKey, 10 * 60 * 60);
 				console.log("Refreshed credentials from database successfully");
