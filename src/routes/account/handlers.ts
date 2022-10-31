@@ -68,7 +68,6 @@ const buildSessionResponse = async (user) => {
 			signature: loginTenant?.signature,
 			avatarinfo: loginTenant?.avatarinfo,
 			perms: SystemPermController.getMyGroupPerm(user.group),
-			avatar: loginTenant.avatarinfo,
 			openId: user?.openId || ""
 		},
 	};
@@ -78,7 +77,6 @@ async function RegisterUser(req, h) {
 	// 开启事务
 	const session = await Mongoose.connection.startSession();
 	try {
-		console.log(1)
 		await session.startTransaction();
 		//在L2C服务端配置里，可以分为多个site，每个site允许哪些用户能注册
 		//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
@@ -94,8 +92,6 @@ async function RegisterUser(req, h) {
 				{ mode: "RESTRICTED", owner: req.payload.email },
 			],
 		});
-
-		console.log(2)
 		//如果这个site是被管理的，那么就需要检查用户是否允许在这个site里面注册
 		if (!site) {
 			throw new Error("站点已关闭,或者您没有站内注册授权，请使用授权邮箱注册，谢谢");
@@ -105,8 +101,6 @@ async function RegisterUser(req, h) {
 			orgmode: true,
 			owner: { $regex: emailDomain },
 		});
-
-		console.log(3)
 		if (orgTenant && orgTenant.regfree === false) {
 			throw new EmpError(
 				"NO_FREE_REG",
@@ -114,7 +108,7 @@ async function RegisterUser(req, h) {
 			);
 		}
 		if (Tools.isEmpty(req.payload.tenant)) {
-			req.payload.tenant = "Org_of_" + req.payload.username;
+			req.payload.tenant = "Org of " + req.payload.username;
 		}
 
 		let tenant = new Tenant({
@@ -125,7 +119,6 @@ async function RegisterUser(req, h) {
 			timezone: "GMT",
 		});
 		tenant = await tenant.save({ session });
-		console.log(4)
 		req.payload.password = Crypto.encrypt(req.payload.password);
 		req.payload.emailVerified = false;
 		//创建用户
@@ -139,26 +132,21 @@ async function RegisterUser(req, h) {
 			ps: 20,
 		});
 		let user = await userObj.save({ session });
-		console.log(5)
 		let loginTenantObj = new LoginTenant({
 			userid: user.id,
 			tenant: new Mongoose.Types.ObjectId(tenant._id),
 			nickname: req.payload.username,
 		})
 		let loginTenant = await loginTenantObj.save({ session })
-		debugger
-		console.log(6)
 		var tokenData = {
 			email: user.email,
 			id: user._id,
 		};
-
 		const verifyToken = JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey);
 		await redisClient.set("evc_" + user.email, verifyToken);
 		await redisClient.expire("evc_" + user.email, ServerConfig.verify?.email?.verifyin || 15 * 60);
 		// 发送校验邮件
 		Mailman.sendMailVerificationLink(user, verifyToken);
-		
 		let token = JwtAuth.createToken({ id: user._id });
 		await session.commitTransaction();
 		return {
@@ -799,16 +787,17 @@ async function UpdateProfile(req, h) {
 		}
 
 		await Cache.removeKeyByEmail(user.email);
-
+		// 更新用户信息
 		user = await User.findOneAndUpdate(
 			{ email: user.email },
 			{ $set: updateUser },
 			{ upsert: false, new: true },
 		);
+		// 更新用户组织信息
 		let loginTenant = await LoginTenant.findOneAndUpdate(
 			{ tenant: tenant, userid: user._id },
 			{ $set: updateLoginTenant },
-			{  }
+			{ upsert: false, new: true }
 		)
 		let ret = await buildSessionResponse(user);
 		return h.response(ret);
@@ -876,13 +865,23 @@ async function MyOrg(req, h) {
 		//let myAdminedOrg = await Tenant.findOne(iamAdminFilter);
 		//我是否已经加入了一个组织
 		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant");
+		const userId = me._id;
+		let matchObj: any = {
+			userid: userId
+		};
+		if(me.lastTenantId){
+			matchObj.tenant = me.lastTenantId
+		}
+		const loginTenant = await LoginTenant.findOne(
+			matchObj
+		).populate('tenant').lean();
 		//我所在的tenant是个组织，而且我是管理员
 		tnt.adminorg =
-			me.tenant.orgmode &&
-			(me.tenant.owner === me.email || (await Cache.getMyGroup(me.email)) === "ADMIN");
-		tnt.orgmode = me.tenant.orgmode;
-		tnt.owner = me.tenant.owner;
-		if (me.tenant.orgmode === true) {
+		loginTenant.tenant.orgmode &&
+			(loginTenant.tenant.owner === me.email || (await Cache.getMyGroup(me.email)) === "ADMIN");
+		tnt.orgmode = loginTenant.tenant.orgmode;
+		tnt.owner = loginTenant.tenant.owner;
+		if (loginTenant.tenant.orgmode === true) {
 			tnt.joinorg = false;
 			tnt.quitorg = true;
 		} else {
@@ -890,14 +889,14 @@ async function MyOrg(req, h) {
 			tnt.quitorg = false;
 		}
 		tnt.orgchartadmins = await addCNtoUserIds(
-			me.tenant._id,
+			loginTenant.tenant._id,
 			(
-				await OrgChartAdmin.findOne({ tenant: me.tenant._id }, { _id: 0, admins: 1 })
+				await OrgChartAdmin.findOne({ tenant: loginTenant.tenant._id }, { _id: 0, admins: 1 })
 			)?.admins,
 		);
 		if (tnt.adminorg) {
 			//如果是管理员
-			let tenant_id = me.tenant._id.toString();
+			let tenant_id = loginTenant.tenant._id.toString();
 			let jcKey = "jcode-" + tenant_id;
 			tnt.quitorg = false;
 			//从Redis中找joincode信息
@@ -918,14 +917,14 @@ async function MyOrg(req, h) {
 			//如果不是管理员，这个code设为空，送到前端
 			tnt.joincode = "";
 		}
-		tnt.orgname = me.tenant.name;
-		tnt.css = me.tenant.css;
-		tnt.timezone = me.tenant.timezone;
-		tnt.smtp = me.tenant.smtp;
-		tnt.menu = me.tenant.menu;
-		tnt.tags = me.tenant.tags;
-		tnt.regfree = me.tenant.regfree;
-		tnt.allowemptypbo = me.tenant.allowemptypbo;
+		tnt.orgname = loginTenant.tenant.name;
+		tnt.css = loginTenant.tenant.css;
+		tnt.timezone = loginTenant.tenant.timezone;
+		tnt.smtp = loginTenant.tenant.smtp;
+		tnt.menu = loginTenant.tenant.menu;
+		tnt.tags = loginTenant.tenant.tags;
+		tnt.regfree = loginTenant.tenant.regfree;
+		tnt.allowemptypbo = loginTenant.tenant.allowemptypbo;
 		return h.response(tnt);
 	} catch (err) {
 		console.error(err);
