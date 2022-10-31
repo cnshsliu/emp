@@ -65,7 +65,7 @@ const JwtAuth = {
 			let user = await User.findOne({ _id: decoded.id, active: true })
 			const userId = user._id;
 			let matchObj: any = {
-				userid: userId
+				userid: userId.toString()
 			};
 			if(user.lastTenantId){
 				matchObj.tenant = user.lastTenantId
@@ -77,7 +77,6 @@ const JwtAuth = {
 				name: 1,
 				owner: 1,
 			}).lean();
-			debugger
 			if (user) {
 				result = {
 					isValid: true,
@@ -89,7 +88,6 @@ const JwtAuth = {
 					},
 				};
 				user_id = user._id;
-				debugger
 				await redisClient.set(credentials_redisKey, JSON.stringify(result.credentials));
 				await redisClient.expire(credentials_redisKey, 10 * 60 * 60);
 				console.log("Refreshed credentials from database successfully");
