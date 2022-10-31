@@ -68,7 +68,7 @@ const buildSessionResponse = async (user) => {
 			signature: loginTenant?.signature,
 			avatarinfo: loginTenant?.avatarinfo,
 			perms: SystemPermController.getMyGroupPerm(user.group),
-			avatar: user.avatar,
+			avatar: loginTenant.avatarinfo,
 			openId: user?.openId || ""
 		},
 	};
@@ -128,19 +128,17 @@ async function RegisterUser(req, h) {
 		let userObj = new User({
 			site: site.siteid,
 			username: req.payload.username,
-			tenant: new Mongoose.Types.ObjectId(tenant._id),
 			password: req.payload.password,
 			email: req.payload.email,
 			emailVerified: false,
 			ew: { email: false },
 			ps: 20,
 		});
-
+		let user = await userObj.save({ session });
 		let loginTenantObj = new LoginTenant({
-			userid: '',
+			userid: user.id,
 			tenant: new Mongoose.Types.ObjectId(tenant._id),
 		})
-		let user = await userObj.save({ session });
 		let loginTenant = await loginTenantObj.save({ session })
 		var tokenData = {
 			email: user.email,
@@ -161,6 +159,7 @@ async function RegisterUser(req, h) {
 			user: {
 				userid: user._id,
 				username: user.username,
+				tenant: loginTenant.tenant
 			},
 		};
 	} catch (err) {
@@ -211,7 +210,7 @@ async function SetMyUserName(req, h) {
 			objectId: req.auth.credentials._id,
 			username: user.username, //the changed one
 			email: req.auth.credentials.email,
-			tenant: req.auth.credentials.tenant,
+			// tenant: req.auth.credentials.tenant,
 			sessionToken: req.headers.authorization,
 			config: user.config,
 		};
@@ -244,7 +243,7 @@ async function SetMyPassword(req, h) {
 			objectId: req.auth.credentials._id,
 			username: user.username, //the changed one
 			email: req.auth.credentials.email,
-			tenant: req.auth.credentials.tenant,
+			// tenant: req.auth.credentials.tenant,
 			sessionToken: req.headers.authorization,
 			config: user.config,
 		};
@@ -365,7 +364,7 @@ async function LoginUser(req, h) {
 								}
 							},{ 
 								upsert: true, new: true 
-							}).populate("tenant").lean();
+							});
 						}
 					}
 					await redisClient.del(`logout_${user._id}`);
@@ -449,6 +448,16 @@ async function RefreshUserSession(req, h) {
 			throw new EmpError("login_no_user", "User refresh not found");
 		} else {
 			let token = JwtAuth.createToken({ id: user._id });
+			const userId = user._id;
+			let matchObj: any = {
+				userid: userId
+			};
+			if(user.lastTenantId){
+				matchObj.tenant = user.lastTenantId
+			}
+			const loginTenant = await LoginTenant.findOne(
+				matchObj
+			).populate('tenant').lean();
 			return {
 				objectId: user._id,
 				sessionToken: token,
@@ -456,17 +465,20 @@ async function RefreshUserSession(req, h) {
 					userid: user._id,
 					username: user.username,
 					email: user.email,
-					group: user.group,
+					group: loginTenant?.group,
 					sessionToken: token,
 					tenant: {
-						css: user.tenant.css,
-						name: user.tenant.name,
-						orgmode: user.tenant.orgmode,
-						timezone: user.tenant.timezone,
+						_id: loginTenant?.tenant?._id,
+						css: loginTenant?.tenant?.css,
+						name: loginTenant?.tenant?.name,
+						orgmode: loginTenant?.tenant?.orgmode,
+						timezone: loginTenant?.tenant?.timezone,
 					},
+					nickname: loginTenant?.nickname,
+					signature: loginTenant?.signature,
+					avatarinfo: loginTenant?.avatarinfo,
 					perms: SystemPermController.getMyGroupPerm(user.group),
-					avatar: user.avatar,
-					signature: user.signature,
+					avatar: user.avatar
 				},
 			};
 		}
@@ -505,7 +517,10 @@ async function LogoutUser(req, h) {
  *
  */
 async function VerifyEmail(req, h) {
+	// 开启事务
+	const session = await Mongoose.connection.startSession();
 	try {
+		await session.startTransaction();
 		let frontendUrl = Tools.getFrontEndUrl();
 		let decoded: any;
 		let method_GET = true;
@@ -538,33 +553,41 @@ async function VerifyEmail(req, h) {
 			);
 		}
 
-		//检查这个邮箱后缀的Tenant是否已存在，存在就把用户加进去
+		// 检查这个邮箱后缀的Tenant是否已存在，存在就把用户加进去
 		let domain = Tools.getEmailDomain(user.email);
 		let orgTenant = await Tenant.findOne({ orgmode: true, owner: new RegExp(`${domain}$`) });
 		if (orgTenant) {
-			user.tenant = new Mongoose.Types.ObjectId(orgTenant._id);
 			//再看OrgChart
 			await OrgChart.findOneAndUpdate(
 				{ tenant: orgTenant._id, ou: "ARR00", uid: "OU---", position: [] },
 				{
 					$set: { cn: "New Users" },
 				},
-				{ upsert: true, new: true },
+				{ upsert: true, new: true, session },
 			);
 			await OrgChart.findOneAndUpdate(
 				{ tenant: orgTenant._id, ou: "ARR00", uid: user.email },
 				{
 					$set: { cn: user.username, position: ["staff"] },
 				},
-				{ upsert: true, new: true },
+				{ upsert: true, new: true, session },
 			);
 		}
 		user.emailVerified = true;
-		user = await user.save();
+		user = await user.save({ session });
+		let loginTenantObj = new LoginTenant({
+			userid: user._id,
+			tenant: new Mongoose.Types.ObjectId(orgTenant._id),
+		})
+		await loginTenantObj.save({ session })
+		await session.commitTransaction();
 		return h.response("EMAIL_VERIFIED");
 	} catch (err) {
+		await session.abortTransaction();
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	} finally {
+		await session.endSession();
 	}
 }
 
@@ -637,19 +660,34 @@ async function ResetPassword(req, h) {
  */
 async function GetMyProfile(req, h) {
 	try {
-		let user = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
+		let user = await User.findOne({ _id: req.auth.credentials._id });
+		const userId = user._id;
+		let matchObj: any = {
+			userid: userId
+		};
+		if(user.lastTenantId){
+			matchObj.tenant = user.lastTenantId
+		}
+		let loginTenant: any = await LoginTenant.findOne(
+			matchObj
+		).populate('tenant').lean();
+		if(loginTenant&& loginTenant){
+			loginTenant = loginTenant[0]
+		}else{
+			throw new EmpError("NON_LOGIN_TENANT", "You are not tenant");
+		}
 		//let user = await User.findOne({_id: req.auth.credentials._id}).lean();
 		let ret = {
 			objectId: req.auth.credentials._id,
 			userid: req.auth.credentials._id,
 			username: req.auth.credentials.username,
 			email: req.auth.credentials.email,
-			tenant: req.auth.credentials.tenant,
+			tenant: loginTenant.tenant,//loginTenant.tenant,//req.auth.credentials.tenant,
 			sessionToken: req.headers.authorization,
 			emailVerified: user.emailVerified,
 			config: user.config ? user.config : {},
-			avatar: user.avatar != null,
-			group: user.group,
+			avatar: loginTenant.avatarinfo != null,
+			group: loginTenant.group,
 		};
 		ret.tenant.orgmode = user.tenant.orgmode;
 		return h.response(ret);
@@ -665,6 +703,16 @@ async function GetMyProfile(req, h) {
 async function GetProfileByEmail(req, h) {
 	try {
 		let user = await User.findOne({ email: req.params.email }).populate("tenant").lean();
+		const userId = user._id;
+		let matchObj: any = {
+			userid: userId
+		};
+		if(user.lastTenantId){
+			matchObj.tenant = user.lastTenantId
+		}
+		let loginTenant: any = await LoginTenant.findOne(
+			matchObj
+		).populate('tenant').lean();
 		let ret = {};
 		if (req.auth.credentials.tenant._id.toString() !== user.tenant._id.toString()) {
 			ret = {
@@ -673,10 +721,10 @@ async function GetProfileByEmail(req, h) {
 		} else {
 			ret = {
 				email: user.email,
-				tenant: user.tenant,
+				tenant: loginTenant.tenant,
 				username: user.username,
-				avatar: user.avatar != null,
-				group: user.group,
+				avatar: loginTenant.avatarinfo != null,
+				group: loginTenant.group,
 			};
 		}
 		return h.response(ret);
@@ -701,26 +749,27 @@ async function UpdateProfile(req, h) {
 		let theTenant = await Tenant.findOne({ _id: tenant });
 		let v = req.payload.value;
 
-		let update = {};
+		let updateUser = {};
+		let updateLoginTenant = {};
 
 		//对数据库中的ew进行检查. 之前ew是boolean，现在改成了对象
 		//如果不存在ew，则设置ew
 		if (!user.ew) {
-			update["ew"] = { email: true, wecom: false };
+			updateUser["ew"] = { email: true, wecom: false };
 		}
 		if (typeof user.ew === "boolean") {
-			update["ew"] = { email: true, wecom: false };
+			updateUser["ew"] = { email: true, wecom: false };
 		}
 		if (v.avatar) {
-			update["avatar"] = v.avatar.trim();
+			updateLoginTenant["avatar"] = v.avatar.trim();
 		}
 		if (v.signature) {
-			update["signature"] = v.signature.trim();
+			updateLoginTenant["signature"] = v.signature.trim();
 		}
 		if (v.username && v.username !== user.username) {
-			update["username"] = v.username;
+			updateUser["username"] = v.username;
 			await Cache.setUserName(user.email, v.username);
-			await User.updateMany(
+			await LoginTenant.updateMany(
 				{ tenant: tenant, succeed: user.email },
 				{ $set: { succeedname: v.username } },
 			);
@@ -731,22 +780,27 @@ async function UpdateProfile(req, h) {
 					throw new EmpError("wrong_password", "You are using a wrong password");
 				}
 			}
-			update["password"] = Crypto.encrypt(v.password);
+			updateUser["password"] = Crypto.encrypt(v.password);
 		}
 		if (v && v.ew !== undefined && v.ew !== user.ew) {
-			update["ew"] = v.ew;
+			updateUser["ew"] = v.ew;
 		}
 		if (v.ps) {
-			update["ps"] = v.ps;
+			updateUser["ps"] = v.ps;
 		}
 
 		await Cache.removeKeyByEmail(user.email);
 
 		user = await User.findOneAndUpdate(
-			{ tenant: tenant, email: user.email },
-			{ $set: update },
+			{ email: user.email },
+			{ $set: updateUser },
 			{ upsert: false, new: true },
 		);
+		let loginTenant = await LoginTenant.findOneAndUpdate(
+			{ tenant: tenant, userid: user._id },
+			{ $set: updateLoginTenant },
+			{  }
+		)
 		let ret = buildSessionResponse(user);
 		return h.response(ret);
 	} catch (err) {
@@ -1234,8 +1288,9 @@ async function OrgSetMenu(req, h) {
 
 async function JoinOrg(req, h) {
 	try {
-		let myInfo = await User.findOne({ _id: req.auth.credentials._id });
-		let joincode = req.payload.joincode;
+		const authUserId = req.auth.credentials._id;
+		const joincode = req.payload.joincode;
+		let myInfo = await User.findOne({ _id: authUserId });
 		let tenant_id = await redisClient.get(joincode);
 		if (!tenant_id) {
 			throw new EmpError("joincode_not_found_or_expired", "邀请码不存在或已过期");

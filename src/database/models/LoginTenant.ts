@@ -10,7 +10,7 @@ const schema = new Mongoose.Schema({
 	},
 	// 用户当前所属的租户
 	tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
-	// 用户在组织的编号。比如：工号等唯一标识
+	// 用户在组织的编号。比如：工号等
 	groupno: { type: String, default:'' },
 	// 企业备注昵称
 	nickname: {
