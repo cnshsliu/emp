@@ -83,7 +83,8 @@ async function RegisterUser(req, h) {
 		//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
 		let siteid = req.payload.siteid || "000";
 		let joincode = req.payload.joincode;
-
+		// TODO  joincode应该拿去redis里匹配对应的tenant_id
+		
 		let site = await Site.findOne({
 			siteid: siteid,
 			$or: [
@@ -130,6 +131,7 @@ async function RegisterUser(req, h) {
 			emailVerified: false,
 			ew: { email: false },
 			ps: 20,
+			lastTenantId: tenant._id
 		});
 		let user = await userObj.save({ session });
 		let loginTenantObj = new LoginTenant({
