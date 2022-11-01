@@ -22,7 +22,7 @@ const internals = {
 						username: Joi.string().regex(validation.username).required(),
 						password: Joi.string().regex(validation.password).required(),
 						email: Joi.string().email().lowercase().required(),
-						joincode: Joi.string().optional(),
+						joincode: Joi.string().optional().allow(null),
 						siteid: Joi.string().optional(),
 					},
 					validator: Joi,
