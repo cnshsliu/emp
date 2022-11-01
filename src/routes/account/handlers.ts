@@ -39,8 +39,8 @@ const buildSessionResponse = async (user) => {
 	let matchObj: any = {
 		userid: userId
 	};
-	if(user.lastTenantId){
-		matchObj.tenant = user.lastTenantId
+	if(user.tenant){
+		matchObj.tenant = user.tenant
 	}
 	const loginTenant = await LoginTenant.findOne(
 		matchObj
@@ -83,8 +83,7 @@ async function RegisterUser(req, h) {
 		//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
 		let siteid = req.payload.siteid || "000";
 		let joincode = req.payload.joincode;
-		// TODO  joincode应该拿去redis里匹配对应的tenant_id
-		
+		// TODO  
 		let site = await Site.findOne({
 			siteid: siteid,
 			$or: [
@@ -131,7 +130,7 @@ async function RegisterUser(req, h) {
 			emailVerified: false,
 			ew: { email: false },
 			ps: 20,
-			lastTenantId: tenant._id
+			tenant: tenant._id
 		});
 		let user = await userObj.save({ session });
 		let loginTenantObj = new LoginTenant({
@@ -450,8 +449,8 @@ async function RefreshUserSession(req, h) {
 			let matchObj: any = {
 				userid: userId
 			};
-			if(user.lastTenantId){
-				matchObj.tenant = user.lastTenantId
+			if(user.tenant){
+				matchObj.tenant = user.tenant
 			}
 			const loginTenant = await LoginTenant.findOne(
 				matchObj
@@ -474,9 +473,8 @@ async function RefreshUserSession(req, h) {
 					},
 					nickname: loginTenant?.nickname,
 					signature: loginTenant?.signature,
-					avatarinfo: loginTenant?.avatarinfo,
 					perms: SystemPermController.getMyGroupPerm(user.group),
-					avatar: user.avatar
+					avatar: loginTenant?.avatarinfo
 				},
 			};
 		}
@@ -664,8 +662,8 @@ async function GetMyProfile(req, h) {
 		let matchObj: any = {
 			userid: userId
 		};
-		if(user.lastTenantId){
-			matchObj.tenant = user.lastTenantId
+		if(user.tenant){
+			matchObj.tenant = user.tenant
 		}
 		let loginTenant: any = await LoginTenant.findOne(
 			matchObj
@@ -706,8 +704,8 @@ async function GetProfileByEmail(req, h) {
 		let matchObj: any = {
 			userid: userId
 		};
-		if(user.lastTenantId){
-			matchObj.tenant = user.lastTenantId
+		if(user.tenant){
+			matchObj.tenant = user.tenant
 		}
 		let loginTenant: any = await LoginTenant.findOne(
 			matchObj
@@ -818,8 +816,7 @@ async function RemoveAccount(req, h) {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
 		let user_tobe_del = await User.deleteOne({
-			email: req.payload.emailtobedel,
-			tenant: tenant,
+			email: req.payload.emailtobedel
 		});
 		if (user_tobe_del) {
 			await Tenant.deleteMany({
@@ -866,13 +863,13 @@ async function MyOrg(req, h) {
 		//let iamAdminFilter = {owner: req.auth.credentials._id, orgmode: true};
 		//let myAdminedOrg = await Tenant.findOne(iamAdminFilter);
 		//我是否已经加入了一个组织
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant");
+		let me = await User.findOne({ _id: req.auth.credentials._id });
 		const userId = me._id;
 		let matchObj: any = {
 			userid: userId
 		};
-		if(me.lastTenantId){
-			matchObj.tenant = me.lastTenantId
+		if(me.tenant){
+			matchObj.tenant = me.tenant
 		}
 		const loginTenant = await LoginTenant.findOne(
 			matchObj
@@ -1701,7 +1698,7 @@ async function SwitchTenant (req, h) {
 	try{
 		const user = await User.findOneAndUpdate(
 			{ _id: userid },
-			{ $set: { lastTenantId: tenantid } },
+			{ $set: { tenant: tenantid } },
 			{ new: true },
 		);
 		let ret = await buildSessionResponse(user);

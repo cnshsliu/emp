@@ -67,8 +67,8 @@ const JwtAuth = {
 			let matchObj: any = {
 				userid: userId.toString()
 			};
-			if(user.lastTenantId){
-				matchObj.tenant = user.lastTenantId
+			if(user.tenant){
+				matchObj.tenant = user.tenant
 			}
 			const loginTenant = await LoginTenant.findOne(
 				matchObj
