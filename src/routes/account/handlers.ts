@@ -1703,7 +1703,12 @@ async function SwitchTenant (req, h) {
 }
 
 async function TenantDetail (req, h) {
-
+	const tenant = await Tenant.findById(req.params.tenant_id).lean();
+	return h.response({
+		code: 0,
+		data: tenant,
+		msg: "操作成功"
+	});
 }
 
 export default {
