@@ -473,9 +473,8 @@ async function RefreshUserSession(req, h) {
 					},
 					nickname: loginTenant?.nickname,
 					signature: loginTenant?.signature,
-					avatarinfo: loginTenant?.avatarinfo,
 					perms: SystemPermController.getMyGroupPerm(user.group),
-					avatar: user.avatar
+					avatar: loginTenant?.avatarinfo
 				},
 			};
 		}
@@ -817,8 +816,7 @@ async function RemoveAccount(req, h) {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
 		let user_tobe_del = await User.deleteOne({
-			email: req.payload.emailtobedel,
-			tenant: tenant,
+			email: req.payload.emailtobedel
 		});
 		if (user_tobe_del) {
 			await Tenant.deleteMany({
@@ -865,7 +863,7 @@ async function MyOrg(req, h) {
 		//let iamAdminFilter = {owner: req.auth.credentials._id, orgmode: true};
 		//let myAdminedOrg = await Tenant.findOne(iamAdminFilter);
 		//我是否已经加入了一个组织
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant");
+		let me = await User.findOne({ _id: req.auth.credentials._id });
 		const userId = me._id;
 		let matchObj: any = {
 			userid: userId
