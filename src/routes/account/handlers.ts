@@ -83,7 +83,7 @@ async function RegisterUser(req, h) {
 		//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
 		let siteid = req.payload.siteid || "000";
 		let joincode = req.payload.joincode;
-		// TODO  
+		// TODO  joincode需要做邀请判断逻辑
 		let site = await Site.findOne({
 			siteid: siteid,
 			$or: [
@@ -143,6 +143,7 @@ async function RegisterUser(req, h) {
 			email: user.email,
 			id: user._id,
 		};
+		
 		const verifyToken = JasonWebToken.sign(tokenData, ServerConfig.crypto.privateKey);
 		await redisClient.set("evc_" + user.email, verifyToken);
 		await redisClient.expire("evc_" + user.email, ServerConfig.verify?.email?.verifyin || 15 * 60);
@@ -568,15 +569,15 @@ async function VerifyEmail(req, h) {
 				},
 				{ upsert: true, new: true, session },
 			);
+			let loginTenantObj = new LoginTenant({
+				userid: user._id,
+				tenant: new Mongoose.Types.ObjectId(orgTenant._id),
+				nickname: user.username
+			})
+			await loginTenantObj.save({ session })
 		}
 		user.emailVerified = true;
 		user = await user.save({ session });
-		let loginTenantObj = new LoginTenant({
-			userid: user._id,
-			tenant: new Mongoose.Types.ObjectId(orgTenant._id),
-			nickname: user.username
-		})
-		await loginTenantObj.save({ session })
 		await session.commitTransaction();
 		return h.response("EMAIL_VERIFIED");
 	} catch (err) {
@@ -1324,11 +1325,14 @@ async function JoinOrg(req, h) {
 }
 
 async function JoinApprove(req, h) {
+	const session = await Mongoose.connection.startSession()
 	try {
+		await session.startTransaction();
 		if (req.payload.ems.length === 0) {
 			h.response({ ret: "array", joinapps: [] });
 		} else {
 			let emails = req.payload.ems.toLowerCase().split(":");
+			// TODO 这里的组织是当前登录的组织，如果用户切换到别的组织，他就不能进行组织管理了
 			let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
 			if (Crypto.decrypt(me.password) != req.payload.password) {
 				throw new EmpError("wrong_password", "You are using a wrong password");
@@ -1338,15 +1342,26 @@ async function JoinApprove(req, h) {
 			for (let i = 0; i < emails.length; i++) {
 				await Cache.removeKeyByEmail(emails[i]);
 				if (emails[i] !== me.email) {
-					await User.findOneAndUpdate(
+					let user = await User.findOneAndUpdate(
 						{ email: emails[i] },
-						{ $set: { tenant: my_tenant_id, group: "DOER" } },
+						{ $set: { tenant: my_tenant_id } },
+						{ session, new: true, upsert: true, }
 					);
+					let loginTenantObj = new LoginTenant({
+						userid: user._id,
+						tenant: my_tenant_id,
+						group: "DOER" 
+					})
+					await loginTenantObj.save({ session })
 				} else {
-					await User.findOneAndUpdate({ email: emails[i] }, { $set: { group: "ADMIN" } });
+					await User.findOneAndUpdate({ email: emails[i] }, { $set: { group: "ADMIN" } }, { session });
 				}
 			}
-			await JoinApplication.deleteMany({ user_email: { $in: emails } });
+			await JoinApplication.deleteMany(
+				{ user_email: { $in: emails } }, 
+				{ session }
+			);
+			await session.commitTransaction();
 			return h.response({
 				ret: "array",
 				joinapps: await JoinApplication.find(
@@ -1357,7 +1372,10 @@ async function JoinApprove(req, h) {
 		}
 	} catch (err) {
 		console.error(err);
+		await session.abortTransaction();
 		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	} finally {
+		await session.endSession();
 	}
 }
 
