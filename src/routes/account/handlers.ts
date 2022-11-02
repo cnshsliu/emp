@@ -1691,7 +1691,7 @@ async function SwitchTenant (req, h) {
 	try{
 		const user = await User.findOneAndUpdate(
 			{ _id: userid },
-			{ $set: { lastTenantId: tenantid } },
+			{ $set: { tenant: new Mongoose.Types.ObjectId(tenantid) } },
 			{ new: true },
 		);
 		let ret = await buildSessionResponse(user);
