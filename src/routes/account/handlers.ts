@@ -1769,6 +1769,5 @@ export default {
 	OrgChartAdminList,
 	TenantList,
 	SwitchTenant,
-	TenantDetail,
-	addLogintenants
+	TenantDetail
 };

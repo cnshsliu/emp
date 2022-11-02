@@ -902,17 +902,7 @@ const internals = {
 					validator: Joi,
 				},
 			},
-		},
-		{
-			method: "POST",
-			path: "/tenant/addlogintenants",
-			handler: Handlers.addLogintenants,
-			config: {
-				validate: {
-					validator: Joi,
-				},
-			},
-		},
+		}
 	],
 };
 
