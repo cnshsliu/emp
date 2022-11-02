@@ -889,15 +889,15 @@ const internals = {
 		},
 
 		{
-			method: "POST",
-			path: "/tenant/detail",
+			method: "GET",
+			path: "/tenant/detail/{tenant_id}",
 			handler: Handlers.TenantDetail,
 			config: {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { 
-						tenant_id: Joi.string()
+					params: { 
+						tenant_id: Joi.string().required()
 					},
 					validator: Joi,
 				},
