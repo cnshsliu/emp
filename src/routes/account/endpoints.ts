@@ -22,7 +22,7 @@ const internals = {
 						username: Joi.string().regex(validation.username).required(),
 						password: Joi.string().regex(validation.password).required(),
 						email: Joi.string().email().lowercase().required(),
-						joincode: Joi.string().optional(),
+						joincode: Joi.string().optional().allow(null),
 						siteid: Joi.string().optional(),
 					},
 					validator: Joi,
@@ -865,7 +865,7 @@ const internals = {
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
-						userid: Joi.string()
+						userid: Joi.string().required()
 					},
 					validator: Joi,
 				},
@@ -880,13 +880,29 @@ const internals = {
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
-						tenant_id: Joi.string(),
-						inviter_id: Joi.string()
+						tenantid: Joi.string().required(),
+						userid: Joi.string().required()
 					},
 					validator: Joi,
 				},
 			},
 		},
+
+		{
+			method: "GET",
+			path: "/tenant/detail/{tenant_id}",
+			handler: Handlers.TenantDetail,
+			config: {
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					params: { 
+						tenant_id: Joi.string().required()
+					},
+					validator: Joi,
+				},
+			},
+		}
 	],
 };
 

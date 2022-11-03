@@ -18,6 +18,7 @@ import Jwt from "jsonwebtoken";
 import { redisClient } from "../database/redis";
 //mongoose user object
 import User from "../database/models/User";
+import LoginTenant from "../database/models/LoginTenant"
 
 // private key for signing
 const JwtAuth = {
@@ -61,11 +62,21 @@ const JwtAuth = {
 			cachedCredential = null;
 		}
 		if (!cachedCredential) {
-			let user = await User.findOne({ _id: decoded.id, active: true }).populate("tenant", {
+			let user = await User.findOne({ _id: decoded.id, active: true })
+			const userId = user._id;
+			let matchObj: any = {
+				userid: userId.toString()
+			};
+			if(user.tenant){
+				matchObj.tenant = user.tenant
+			}
+			const loginTenant = await LoginTenant.findOne(
+				matchObj
+			).populate("tenant", {
 				_id: 1,
 				name: 1,
 				owner: 1,
-			});
+			}).lean();
 			if (user) {
 				result = {
 					isValid: true,
@@ -73,7 +84,7 @@ const JwtAuth = {
 						_id: user._id,
 						username: user.username,
 						email: user.email,
-						tenant: user.tenant,
+						tenant: loginTenant?.tenant,
 					},
 				};
 				user_id = user._id;
