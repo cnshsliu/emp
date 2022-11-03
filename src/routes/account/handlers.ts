@@ -1716,7 +1716,7 @@ async function SwitchTenant (req, h) {
 	try{
 		const user = await User.findOneAndUpdate(
 			{ _id: userid },
-			{ $set: { tenant: tenantid } },
+			{ $set: { tenant: new Mongoose.Types.ObjectId(tenantid) } },
 			{ new: true },
 		);
 		let ret = await buildSessionResponse(user);
@@ -1728,32 +1728,12 @@ async function SwitchTenant (req, h) {
 }
 
 async function TenantDetail (req, h) {
-	
-}
-
-async function addLogintenants(req, h) {
-	try {
-		let tenant = await new LoginTenant({
-			inviterid: "aaa",
-			tenant: "61ab7f5a8109205f9b533de4",
-			groupid: "U141415",
-			nickname: "12312312",
-			group: "DOER",
-			avatarinfo: {
-			  "etag": ""
-			},
-			signature: "",
-			active: true,
-			succeed: "",
-			succeedname: "",
-		}).save()
-		// console.log(tenant)
-		return h.response(tenant)
-	} catch (error) {
-		console.log(error)
-		return h.response(error)
-	}
-	
+	const tenant = await Tenant.findById(req.params.tenant_id).lean();
+	return h.response({
+		code: 0,
+		data: tenant,
+		msg: "操作成功"
+	});
 }
 
 export default {
@@ -1807,6 +1787,5 @@ export default {
 	OrgChartAdminList,
 	TenantList,
 	SwitchTenant,
-	TenantDetail,
-	addLogintenants
+	TenantDetail
 };
