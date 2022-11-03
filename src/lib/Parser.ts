@@ -250,6 +250,27 @@ const Parser = {
 		return retResult;
 	},
 
+	getVar: async function (
+		tenant: string,
+		wfid: string,
+		objid: string,
+		efficient: string,
+		varName: string,
+	) {
+		let retResult = this.userGetVars(tenant, "EMP", wfid, objid, [], [], efficient);
+		let names = Object.keys(retResult);
+		let valueDef = null;
+		for (let k = 0; k < names.length; k++) {
+			let name = names[k];
+			if (name === varName) {
+				valueDef = retResult[name];
+				break;
+			}
+		}
+
+		return valueDef;
+	},
+
 	sysGetTemplateVars: async function (tenant, elem) {
 		let ret = {};
 		const mergeTplVars = async function (elem, destVars) {

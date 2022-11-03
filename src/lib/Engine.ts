@@ -408,7 +408,6 @@ const scheduleCron = async (cron) => {
 			break;
 		case "DISPATCHWORK":
 			console.log(`Schedule cron ${cron.expr} DISPATCHWORK ${cron.extra}`);
-			//console.log(cron);
 			break;
 	}
 	let task = cronEngine.schedule(
@@ -3635,9 +3634,7 @@ const createTodo = async function (obj) {
 				{ todoid: 1 },
 			);
 
-			if (existing) {
-				console.log("Same running TODO existing, skip creating a same one");
-			} else {
+			if (!existing) {
 				let todo = new Todo({
 					todoid: todoid,
 					tenant: obj.tenant,
@@ -3678,6 +3675,8 @@ const createTodo = async function (obj) {
 					rehearsal: obj.rehearsal,
 					cellInfo: cellInfo,
 				});
+				/* } else {
+				console.log("Same running TODO existing, skip creating a same one"); */
 			}
 		} catch (error) {
 			console.error(error);
