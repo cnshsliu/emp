@@ -59,7 +59,7 @@ const internals = {
 						//password required with same regex as client
 						password: Joi.string().required(),
 						siteid: Joi.string().optional(),
-						openid: Joi.string().optional().allow("")
+						openid: Joi.string().optional().allow(""),
 					},
 					validator: Joi,
 				},
