@@ -1736,6 +1736,38 @@ async function TenantDetail (req, h) {
 	});
 }
 
+async function upgradeTenant(req, h) {
+	let id = req.payload.tenantid;
+	let ret = {
+		code: 0,
+		data: true,
+		msg: ''
+	}
+	try {
+		let tenent = await Tenant.findOneAndUpdate(
+			{ _id: id },
+			{ $set: { orgmode: true } },
+			{ new: true },
+		)
+		if(tenent) {
+			ret.msg = '升级成功'
+		} else {
+			ret = {
+				code: 500,
+				data: false,
+				msg: '升级失败'
+			}
+		}
+	} catch(err) {
+		ret = {
+			code: 500,
+			data: false,
+			msg: err.message
+		}
+	}
+	return h.response(ret);
+}
+
 export default {
 	RegisterUser,
 	CheckFreeReg,
@@ -1787,5 +1819,6 @@ export default {
 	OrgChartAdminList,
 	TenantList,
 	SwitchTenant,
-	TenantDetail
+	TenantDetail,
+	upgradeTenant
 };

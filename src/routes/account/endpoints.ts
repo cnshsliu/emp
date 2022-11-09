@@ -902,6 +902,21 @@ const internals = {
 					validator: Joi,
 				},
 			},
+		},
+		{
+			method: "POST",
+			path: "/tenant/upgrade",
+			handler: Handlers.upgradeTenant,
+			config: {
+				// auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						tenantid: Joi.string().required()					
+					},
+					validator: Joi,
+				},
+			},
 		}
 	],
 };
