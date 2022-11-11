@@ -1750,18 +1750,29 @@ async function handleDateFlow (req, h){
 		})
 	}
 	try{
+		//清空旧数据
+		const delLt = await LoginTenant.deleteMany()
+		
 		// 读取旧数据
 		let userList = await User.find()
 		// 插入到新表
 		for(let i = 0 ; i < userList.length ; i++){
-			const user = userList[i];
-			const lt = await LoginTenant.find({
-				userid: user?._id || user?.id || "",
-				tenant: user?.tenant || ""
-			})
-			if(lt.length <= 0 && user?._id && user?.tenant){
+			const user = userList[i]._doc;
+			if(
+				user?._id 
+				&& user?.tenant 
+				&& (
+					user?.group 
+					|| user?.avatarinfo
+					|| user?.signature
+					|| user?.active
+					|| user?.succeed
+					|| user?.succeedname
+				)
+			){
 				const loginTenantObj = new LoginTenant({
 					userid: user._id,
+					email: user.email,
 					inviterid: "",
 					tenant: user.tenant, 
 					groupno: "",

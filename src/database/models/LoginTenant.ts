@@ -3,7 +3,8 @@ import Mongoose from "mongoose";
 
 const schema = new Mongoose.Schema({
 	// 用户id
-	userid: { type: String, ref: "User" },
+	userid: { type: String, required: true, ref: "User" },
+	email: { type: String, required: true },
 	inviterid: {
 		type: String,
 		default: ""
