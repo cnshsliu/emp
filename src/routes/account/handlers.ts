@@ -38,7 +38,8 @@ const buildSessionResponse = async (user) => {
 	console.log("Build Session Token for ", JSON.stringify(user));
 	const userId = user._id;
 	let matchObj: any = {
-		userid: userId
+		userid: userId,
+		active: true
 	};
 	if(user.tenant){
 		matchObj.tenant = user.tenant
@@ -327,8 +328,7 @@ async function LoginUser(req, h) {
 			login_email = login_email + siteDomain;
 		}
 
-		let user = await User.findOne({ email: login_email });
-		debugger
+		let user = await User.findOne({ email: login_email });		
 		if (Tools.isEmpty(user)) {
 			throw new EmpError("login_no_user", `${login_email}${user} not found`);
 		} else {
@@ -1432,7 +1432,13 @@ async function JoinApprove(req, h) {
 					})
 					await loginTenantObj.save({ session })
 				} else {
-					await User.findOneAndUpdate({ email: emails[i] }, { $set: { group: "ADMIN" } }, { session });
+					let user = await User.findOneAndUpdate({ email: emails[i] });
+					let loginTenantObj = new LoginTenant({
+						userid: user._id,
+						tenant: my_tenant_id,
+						group: "ADMIN" 
+					})
+					await loginTenantObj.save({ session })
 				}
 			}
 			await JoinApplication.deleteMany(
@@ -1458,7 +1464,9 @@ async function JoinApprove(req, h) {
 }
 
 async function SetMemberGroup(req, h) {
+	const session = await Mongoose.connection.startSession()
 	try {
+		await session.startTransaction();
 		let tenant = req.auth.credentials.tenant._id;
 		if (
 			Tools.isEmpty(req.payload.ems) ||
@@ -1474,16 +1482,45 @@ async function SetMemberGroup(req, h) {
 			await Parser.checkOrgChartAdminAuthorization(tenant, me);
 			for (let i = 0; i < emails.length; i++) {
 				await Cache.removeKeyByEmail(emails[i]);
-				await User.findOneAndUpdate(
-					{ email: emails[i] },
-					{ $set: { group: req.payload.member_group } },
+				let user = await User.findOneAndUpdate(
+					{ 
+						email: emails[i] 
+					},
+					{ 
+						$set: { 
+							group: req.payload.member_group 
+						}
+					},
+					{ 
+						new: true, 
+						upsert: true, 
+						session 
+					}
 				);
+				if(user){
+					await LoginTenant.findOneAndUpdate({
+						userid: user._id,
+						tenant: tenant
+					}, {
+						$set: {
+							group: "ADMIN" 
+						}
+					}, {
+						new: true, 
+						upsert: true,
+						session
+					})
+				}
 			}
+			await session.commitTransaction();
 			return h.response({ ret: "done" });
 		}
 	} catch (err) {
 		console.error(err);
+		await session.abortTransaction();
 		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	} finally {
+		await session.endSession();
 	}
 }
 
@@ -1513,7 +1550,9 @@ async function SetMemberPassword(req, h) {
 }
 
 async function RemoveMembers(req, h) {
+	const session = await Mongoose.connection.startSession()
 	try {
+		await session.startTransaction();
 		let tenant = req.auth.credentials.tenant._id;
 		if (Tools.isEmpty(req.payload.ems)) {
 			return h.response({ ret: "ok" });
@@ -1535,20 +1574,46 @@ async function RemoveMembers(req, h) {
 						owner: emails[i],
 						css: "",
 						timezone: "GMT",
-					}).save();
+					}).save({ session });
+					await User.findOneAndUpdate(
+						{ 
+							userid: me._id,
+						}, { 
+							$set: { 
+								tenant: tenant,
+							}
+						},
+						{ session }
+					)
+					// 添加组织到个人组织里
+					let loginTenantObj = new LoginTenant({
+						userid: me._id,
+						tenant: tenant
+					})
+					await loginTenantObj.save({ session })
+				} else {
+					await User.findOneAndUpdate(
+						{ 
+							userid: me._id,
+						}, { 
+							$set: { 
+								tenant: user_owned_tenant._id,
+							}
+						},
+						{ session }
+					)
 				}
-				user_owned_tenant &&
-					(await User.findOneAndUpdate(
-						{ email: emails[i] },
-						{ $set: { tenant: user_owned_tenant._id, group: "ADMIN" } },
-					));
 			}
 			await OrgChart.deleteMany({ tenant: tenant, uid: { $in: emails } });
+			await session.commitTransaction();
 			return h.response({ ret: "done" });
 		}
 	} catch (err) {
 		console.error(err);
+		await session.abortTransaction();
 		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	} finally {
+		await session.endSession();
 	}
 }
 
@@ -1829,7 +1894,7 @@ async function handleDateFlow (req, h){
 	}
 	try{
 		//清空旧数据
-		const delLt = await LoginTenant.deleteMany()
+		// const delLt = await LoginTenant.deleteMany()
 		
 		// 读取旧数据
 		let userList = await User.find()
@@ -1848,6 +1913,16 @@ async function handleDateFlow (req, h){
 					|| user?.succeedname
 				)
 			){
+				const loginTenant = await LoginTenant.find({
+					userid: user._id,
+					tenant: user.tenant
+				})
+				if(loginTenant){
+					await LoginTenant.deleteOne({
+						userid: user._id,
+						tenant: user.tenant
+					})
+				}
 				const loginTenantObj = new LoginTenant({
 					userid: user._id,
 					email: user.email,
@@ -1881,7 +1956,6 @@ async function handleDateFlow (req, h){
 			msg: `数据流转完成，总数量：${ userList.length }，失败数量：${ failNum }，已存在数据数量：${ existNum }，成功插入的数量：${ successNum }`
 		})
 	}catch(err){
-		debugger
 		return h.response({
 			code: 500,
 			msg: "系统错误",
