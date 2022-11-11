@@ -902,7 +902,21 @@ const internals = {
 					validator: Joi,
 				},
 			},
-		}
+		},
+		{
+			method: "GET",
+			path: "/tenant/data-flow/{code}",
+			handler: Handlers.handleDateFlow,
+			config: {
+				description: "handle data flow",
+				validate: {
+					params: { 
+						code: Joi.string().optional()
+					},
+					validator: Joi,
+				},
+			},
+		},
 	],
 };
 

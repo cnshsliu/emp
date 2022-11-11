@@ -29,7 +29,7 @@ import EmpError from "../../lib/EmpError";
 import Engine from "../../lib/Engine";
 import Cache from "../../lib/Cache";
 import { getOpenId } from './api'
-import { listenerCount } from "process";
+import { exit, listenerCount } from "process";
 import LoginTenant from "../../database/models/LoginTenant"
 
 const buildSessionResponse = async (user) => {
@@ -1735,6 +1735,71 @@ async function TenantDetail (req, h) {
 		msg: "操作成功"
 	});
 }
+// 处理表结构变化的数据流转工作
+async function handleDateFlow (req, h){
+	let failNum = 0;
+	let existNum = 0;
+	let successNum = 0;
+	const {
+		code = ""
+	} = req.params;
+	if(code != "qwe"){
+		return h.response({
+			code: 0,
+			msg: "密钥不匹配"
+		})
+	}
+	try{
+		// 读取旧数据
+		let userList = await User.find()
+		// 插入到新表
+		for(let i = 0 ; i < userList.length ; i++){
+			const user = userList[i];
+			const lt = await LoginTenant.find({
+				userid: user?._id || user?.id || "",
+				tenant: user?.tenant || ""
+			})
+			if(lt.length <= 0 && user?._id && user?.tenant){
+				const loginTenantObj = new LoginTenant({
+					userid: user._id,
+					inviterid: "",
+					tenant: user.tenant, 
+					groupno: "",
+					nickname: user.username || "",
+					group: user?.group || "ADMIN",
+					avatarinfo: user?.avatarinfo || {},
+					signature: user?.signature || "",
+					active: user?.active || false,
+					succeed: user?.succeed || "",
+					succeedname: user?.succeedname || "",
+				})
+				let res = await loginTenantObj.save()
+				if(!res){
+					failNum++;
+					return h.response({
+						code: 0,
+						msg: "插入失败"
+					})
+				}else{
+					successNum++;
+				}
+			}else{
+				existNum++;
+			}
+		}
+		return h.response({
+			code: 0,
+			msg: `数据流转完成，总数量：${ userList.length }，失败数量：${ failNum }，已存在数据数量：${ existNum }，成功插入的数量：${ successNum }`
+		})
+	}catch(err){
+		debugger
+		return h.response({
+			code: 500,
+			msg: "系统错误",
+			data: err
+		})
+	}
+}
 
 export default {
 	RegisterUser,
@@ -1787,5 +1852,6 @@ export default {
 	OrgChartAdminList,
 	TenantList,
 	SwitchTenant,
-	TenantDetail
+	TenantDetail,
+	handleDateFlow
 };
