@@ -38,7 +38,8 @@ const buildSessionResponse = async (user) => {
 	console.log("Build Session Token for ", JSON.stringify(user));
 	const userId = user._id;
 	let matchObj: any = {
-		userid: userId
+		userid: userId,
+		active: true
 	};
 	if(user.tenant){
 		matchObj.tenant = user.tenant
@@ -327,8 +328,7 @@ async function LoginUser(req, h) {
 			login_email = login_email + siteDomain;
 		}
 
-		let user = await User.findOne({ email: login_email });
-		debugger
+		let user = await User.findOne({ email: login_email });		
 		if (Tools.isEmpty(user)) {
 			throw new EmpError("login_no_user", `${login_email}${user} not found`);
 		} else {
@@ -1891,7 +1891,6 @@ async function handleDateFlow (req, h){
 			msg: `数据流转完成，总数量：${ userList.length }，失败数量：${ failNum }，已存在数据数量：${ existNum }，成功插入的数量：${ successNum }`
 		})
 	}catch(err){
-		debugger
 		return h.response({
 			code: 500,
 			msg: "系统错误",
