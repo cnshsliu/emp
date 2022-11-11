@@ -7479,6 +7479,19 @@ const getDoer = async function (
 	return ret;
 };
 
+/**
+ * 生成6位短信验证码
+ * @returns 
+ */
+const randomNumber = () => {
+    let Num = Math.round(Math.random() * 1000000);
+    if (Num < 100000 || Num > 1000000) {
+        return randomNumber();
+    } else {
+        return Num;
+    }
+};
+
 if (isMainThread) init();
 
 export default {
@@ -7543,4 +7556,5 @@ export default {
 	sendTenantMail,
 	sendSystemMail,
 	scanKShares,
+	randomNumber
 };

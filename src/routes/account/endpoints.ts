@@ -84,6 +84,22 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/account/loginByPhone",
+			handler: Handlers.PhoneLogin,
+			config: {
+				// auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						code: Joi.string().required(),
+						phone: Joi.string().required()					
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/session/refresh",
 			handler: Handlers.RefreshUserSession,
 			config: {
@@ -913,6 +929,22 @@ const internals = {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: { 
 						tenantid: Joi.string().required()					
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/account/sendSms",
+			handler: Handlers.SendSms,
+			config: {
+				// auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						area: Joi.string().default('+86'),
+						phone: Joi.string().required()					
 					},
 					validator: Joi,
 				},
