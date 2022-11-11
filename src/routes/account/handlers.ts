@@ -1881,8 +1881,8 @@ async function TenantDetail (req, h) {
 // 处理表结构变化的数据流转工作
 async function handleDateFlow (req, h){
 	let failNum = 0;
-	let existNum = 0;
 	let successNum = 0;
+	let newNum = 0;
 	const {
 		code = ""
 	} = req.params;
@@ -1948,12 +1948,12 @@ async function handleDateFlow (req, h){
 					successNum++;
 				}
 			}else{
-				existNum++;
+				newNum++
 			}
 		}
 		return h.response({
 			code: 0,
-			msg: `数据流转完成，总数量：${ userList.length }，失败数量：${ failNum }，已存在数据数量：${ existNum }，成功插入的数量：${ successNum }`
+			msg: `数据流转完成，总数量：${ userList.length }，失败数量：${ failNum }，成功插入的数量：${ successNum },有${ newNum }条新数据`
 		})
 	}catch(err){
 		return h.response({
