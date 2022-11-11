@@ -2,6 +2,7 @@ import { isMainThread, parentPort } from "worker_threads";
 import fs from "fs";
 import Tools from "../tools/tools";
 import User from "../database/models/User";
+import LoginTenant from "../database/models/LoginTenant";
 import Template from "../database/models/Template";
 import KsTpl from "../database/models/KsTpl";
 import Tenant from "../database/models/Tenant";
@@ -91,15 +92,27 @@ const internals = {
 		if (signature) {
 			return signature;
 		} else {
-			let user = await User.findOne({ tenant: tenant, email: email }, { signature: 1 });
+			let user = await User.findOne({ tenant: tenant, email: email });
 			if (user) {
-				let setTo = "";
-				if (user.signature) {
-					setTo = user.signature;
-				}
+				let loginTenant = await LoginTenant.findOne(
+					{
+						tenant: tenant,
+						userid: user._id
+					},{ 
+						signature: 1 
+					}
+				)
+				if(loginTenant && loginTenant.signature){
+					let setTo = "";
+					if (user.signature) {
+						setTo = user.signature;
+					}
 
-				lruCache.set(key, setTo);
-				return setTo;
+					lruCache.set(key, setTo);
+					return setTo;
+				} else {
+					return ""
+				}
 			} else {
 				return "";
 			}
@@ -168,15 +181,25 @@ const internals = {
 			return cached;
 		} else {
 			let ret = null;
-			let user = await User.findOne({ tenant: tenant, email: email }, { avatarinfo: 1 });
-			if (user && user.avatarinfo && user.avatarinfo.path) {
-				if (fs.existsSync(user.avatarinfo.path)) {
-					ret = user.avatarinfo;
+			let user = await User.findOne({ tenant: tenant, email: email });
+			if(user){
+				let loginTenant = await LoginTenant.findOne(
+					{
+						tenant: tenant,
+						userid: user._id
+					},{ 
+						avatarinfo: 1 
+					}
+				)
+				if (loginTenant && loginTenant.avatarinfo && loginTenant.avatarinfo.path) {
+					if (fs.existsSync(loginTenant.avatarinfo.path)) {
+						ret = loginTenant.avatarinfo;
+					} else {
+						ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
+					}
 				} else {
 					ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
 				}
-			} else {
-				ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
 			}
 			lruCache.set(key, ret);
 			return ret;
@@ -235,11 +258,24 @@ const internals = {
 		let mygroup = lruCache.get(key) as string;
 		if (!mygroup) {
 			let filter = { email: email };
-			let user = await User.findOne(filter, { group: 1 });
+			let user = await User.findOne(filter);
 			if (user) {
-				lruCache.set(key, user.group);
-				//await redisClient.expire(key, PERM_EXPIRE_SECONDS);
-				mygroup = user.group;
+				let loginTenantFilter = {
+					userid: user._id,
+					tenant: user.tenant
+				}
+				let loginTenant = await LoginTenant.findOne(
+					loginTenantFilter, { 
+						group: 1 
+					}
+				)
+				if(loginTenant){
+					lruCache.set(key, loginTenant.group);
+					//await redisClient.expire(key, PERM_EXPIRE_SECONDS);
+					mygroup = loginTenant.group;
+				}else {
+					console.error("Get My Group: LoginTenant not found: filter", loginTenantFilter);
+				}
 			} else {
 				console.error("Get My Group: User not found: filter", filter);
 			}

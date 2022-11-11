@@ -2035,7 +2035,6 @@ async function WorkSearch(req, h) {
 
 		let fields = { doc: 0 };
 		if (req.payload.fields) fields = req.payload.fields;
-
 		let total = await Todo.find(filter).countDocuments();
 		let ret = await Todo.aggregate([
 			{ $match: filter },
