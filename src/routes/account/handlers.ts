@@ -1829,7 +1829,7 @@ async function handleDateFlow (req, h){
 	}
 	try{
 		//清空旧数据
-		const delLt = await LoginTenant.deleteMany()
+		// const delLt = await LoginTenant.deleteMany()
 		
 		// 读取旧数据
 		let userList = await User.find()
@@ -1848,6 +1848,16 @@ async function handleDateFlow (req, h){
 					|| user?.succeedname
 				)
 			){
+				const loginTenant = await LoginTenant.find({
+					userid: user._id,
+					tenant: user.tenant
+				})
+				if(loginTenant){
+					await LoginTenant.deleteOne({
+						userid: user._id,
+						tenant: user.tenant
+					})
+				}
 				const loginTenantObj = new LoginTenant({
 					userid: user._id,
 					email: user.email,
