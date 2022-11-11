@@ -408,7 +408,6 @@ const scheduleCron = async (cron) => {
 			break;
 		case "DISPATCHWORK":
 			console.log(`Schedule cron ${cron.expr} DISPATCHWORK ${cron.extra}`);
-			//console.log(cron);
 			break;
 	}
 	let task = cronEngine.schedule(
@@ -1096,7 +1095,7 @@ const __doneTodo = async function (
 	//参数输入区里的comment同时添加为讨论区的comment
 	////////////////////////////////////////////////////
 	try {
-		if (comment.trim().length > 0) await postCommentForTodo(tenant, doer, todo, comment);
+		if (comment && comment.trim().length > 0) await postCommentForTodo(tenant, doer, todo, comment);
 	} catch (err) {
 		console.error(err);
 	}
@@ -3079,7 +3078,7 @@ const yarkNode_internal = async function (obj) {
 			[],
 			Const.VAR_IS_EFFICIENT,
 		);
-		let pbo = getWfPbo(wf);
+		let textPboArray = getWfTextPbo(wf);
 		let sub_tpl_id = tpNode.attr("sub").trim();
 		let isStandalone = Tools.blankToDefault(tpNode.attr("alone"), "no") === "yes";
 		let sub_wf_id = IdGenerator();
@@ -3093,7 +3092,7 @@ const yarkNode_internal = async function (obj) {
 				obj.tenant,
 				sub_tpl_id,
 				wf.starter,
-				pbo,
+				textPboArray,
 				teamid,
 				sub_wf_id,
 				sub_tpl_id + "-sub-" + Tools.timeStringTag(),
@@ -3635,9 +3634,7 @@ const createTodo = async function (obj) {
 				{ todoid: 1 },
 			);
 
-			if (existing) {
-				console.log("Same running TODO existing, skip creating a same one");
-			} else {
+			if (!existing) {
 				let todo = new Todo({
 					todoid: todoid,
 					tenant: obj.tenant,
@@ -3678,6 +3675,8 @@ const createTodo = async function (obj) {
 					rehearsal: obj.rehearsal,
 					cellInfo: cellInfo,
 				});
+				/* } else {
+				console.log("Same running TODO existing, skip creating a same one"); */
 			}
 		} catch (error) {
 			console.error(error);
@@ -4110,6 +4109,7 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 
 const getSucceed = async (tenant, doerEmail) => {
 	let user = await User.findOne({ tenant: tenant, email: doerEmail }, { active: 1, succeed: 1 });
+	if (!user) return doerEmail;
 	return user.active ? doerEmail : user.succeed;
 };
 
@@ -4742,7 +4742,6 @@ const restartWorkflow = async function (
 	starter = Tools.defaultValue(starter, old_wf.starter);
 	teamid = Tools.defaultValue(teamid, old_wf.teamid);
 	wftitle = Tools.defaultValue(wftitle, old_wf.wftitle);
-	pbo = Tools.defaultValue(pbo, getWfPbo(old_wf));
 	await resetTodosETagByWfId(tenant, old_wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	let new_wfid = IdGenerator();
@@ -4773,7 +4772,7 @@ const restartWorkflow = async function (
 		runmode: old_wf.runmode ? old_wf.runmode : "standalone",
 		allowdiscuss: old_wf.allowdiscuss,
 	});
-	wf.attachments = await getWfPbo(old_wf);
+	wf.attachments = old_wf.attachments;
 	wf = await wf.save();
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	await Parser.copyVars(
@@ -4920,9 +4919,11 @@ const setPboByWfId = async function (email, tenant, wfid, pbos) {
 	return wf.attachments;
 };
 
-const getWfPbo = function (wf) {
+const getWfTextPbo = function (wf) {
 	let attachments = wf.attachments;
-	attachments = attachments.filter((x) => x.forKey === "pbo");
+	attachments = attachments.filter((x) => {
+		return typeof x === "string";
+	});
 	return attachments;
 };
 
@@ -7478,6 +7479,19 @@ const getDoer = async function (
 	return ret;
 };
 
+/**
+ * 生成6位短信验证码
+ * @returns 
+ */
+const randomNumber = () => {
+    let Num = Math.round(Math.random() * 1000000);
+    if (Num < 100000 || Num > 1000000) {
+        return randomNumber();
+    } else {
+        return Num;
+    }
+};
+
 if (isMainThread) init();
 
 export default {
@@ -7501,6 +7515,7 @@ export default {
 	getDelayTimers,
 	getKVars,
 	resumeWorkflow,
+	getWfTextPbo,
 	resetTodosETagByWfId,
 	pauseWorkflow,
 	getWorkflowOrNodeStatus,
@@ -7541,4 +7556,5 @@ export default {
 	sendTenantMail,
 	sendSystemMail,
 	scanKShares,
+	randomNumber
 };

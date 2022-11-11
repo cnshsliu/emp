@@ -10,6 +10,7 @@
  *
  */
 import Handlers from "./handlers";
+import Joi from "joi";
 /**
  * ## endpoints
  *

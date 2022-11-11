@@ -321,12 +321,14 @@ async function TemplatePut(req, h) {
 		}
 		let tplid = req.payload.tplid;
 		let bwid = req.payload.bwid;
+		if (!bwid) bwid = myEmail;
+		let forceupdate = req.payload.forceupdate;
 		if (Tools.isEmpty(tplid)) {
 			throw new EmpError("NO_TPLID", "Template id can not be empty");
 		}
 		let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
 		if (obj) {
-			if (obj.updatedAt.toISOString() !== lastUpdatedAt) {
+			if (forceupdate === false && obj.updatedAt.toISOString() !== lastUpdatedAt) {
 				throw new EmpError("CHECK_LASTUPDATEDAT_FAILED", "Editted by other or in other window");
 			}
 			//let bdoc = await Tools.zipit(req.payload.doc, {});
@@ -766,6 +768,117 @@ async function WorkflowRead(req, h) {
 			return retWf;
 		} else {
 			return { wftitle: "Not Found" };
+		}
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function WorkflowGetAttachments(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let withDoc = req.payload.withdoc;
+		let wf = await RCL.getWorkflow(
+			{ tenant, wfid: req.payload.wfid },
+			"engine/handler.WorkflowRead",
+		);
+		if (wf) {
+			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+				throw new EmpError("NO_PERM", "You don't have permission to read this template");
+			return wf.attachments;
+		} else {
+			throw new EmpError("NOT_FOUND", "Workflow not found");
+		}
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function WorkflowGetPbo(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let withDoc = req.payload.withdoc;
+		let pboType = req.payload.pbotype;
+		let wf = await RCL.getWorkflow(
+			{ tenant, wfid: req.payload.wfid },
+			"engine/handler.WorkflowRead",
+		);
+		if (wf) {
+			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+				throw new EmpError("NO_PERM", "You don't have permission to read this template");
+			let ret = wf.attachments;
+			switch (pboType.toLowerCase) {
+				case "all":
+					ret = wf.attachments;
+					break;
+				case "text":
+					ret = ret.filter((x) => {
+						return typeof x === "string";
+					});
+					break;
+				case "file":
+					ret = ret.filter((x) => {
+						return typeof x !== "string";
+					});
+					break;
+			}
+			return ret;
+		} else {
+			throw new EmpError("NOT_FOUND", "Workflow not found");
+		}
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function WorkflowSetPbo(req, h) {
+	try {
+		const tenant = req.auth.credentials.tenant._id;
+		let myEmail = req.auth.credentials.email;
+		let withDoc = req.payload.withdoc;
+		let newPbo = req.payload.pbo;
+		let pbotype = req.payload.pbotype;
+		if (pbotype !== "text") {
+			throw new EmpError("NOT_SUPPORT", "Only texttype pbo is supported at this moment");
+		}
+		if (!Array.isArray(newPbo)) {
+			newPbo = [newPbo];
+		}
+		let wf = await RCL.getWorkflow(
+			{ tenant, wfid: req.payload.wfid },
+			"engine/handler.WorkflowSetPbo",
+		);
+		if (wf) {
+			if (!(await SystemPermController.hasPerm(myEmail, "workflow", wf, "update")))
+				throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
+
+			//保留文件型attachments， 去除所有text类型attachments
+			wf.attachments = wf.attachments.filter((x) => {
+				return x.serverId ? true : false;
+			});
+			//将新的text类型attachments放到最前面;
+			wf.attachments.unshift(...newPbo);
+			await Workflow.updateOne(
+				{ tenant, wfid: req.payload.wfid },
+				{ $set: { attachments: wf.attachments } },
+			);
+			await RCL.resetCache(
+				{ tenant, wfid: req.payload.wfid },
+				"engine/handler.WorkflowSetPbo",
+				RCL.CACHE_ELEVEL_REDIS,
+			);
+			wf = await RCL.getWorkflow(
+				{ tenant, wfid: req.payload.wfid },
+				"engine/handler.WorkflowSetPbo",
+			);
+			return wf.attachments;
+		} else {
+			throw new EmpError("NOT_FOUND", "Workflow not found");
 		}
 	} catch (err) {
 		console.error(err);
@@ -1341,7 +1454,7 @@ async function WorkflowSetTitle(req, h) {
 			{ tenant: tenant, wfid: wfid },
 			"engine/handler.WorkflowSetTitle",
 		);
-		if (!SystemPermController.hasPerm(myEmail, "workflow", wf, "update"))
+		if (!(await SystemPermController.hasPerm(myEmail, "workflow", wf, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 		wf = await RCL.updateWorkflow(
 			{ tenant: tenant, wfid: wfid },
@@ -1777,6 +1890,7 @@ async function WorkSearch(req, h) {
 	if (myGroup !== "ADMIN" && doer !== myEmail) {
 		doer = myEmail;
 	}
+
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
 		let latestETag = Cache.getETag(`ETAG:TODOS:${doer}`);
@@ -6353,6 +6467,9 @@ export default {
 	TemplateSetCover,
 	TemplateGetCover,
 	WorkflowRead,
+	WorkflowGetPbo,
+	WorkflowSetPbo,
+	WorkflowGetAttachments,
 	WorkflowCheckStatus,
 	WorkflowRoutes,
 	WorkflowDumpInstemplate,

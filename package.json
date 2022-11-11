@@ -71,6 +71,7 @@
     "saslprep": "^1.0.3",
     "short-uuid": "^4.2.0",
     "shx": "^0.3.4",
+    "tencentcloud-sdk-nodejs": "^4.0.478",
     "utf-8-validate": "^5.0.8",
     "uuid": "^8.3.2"
   },

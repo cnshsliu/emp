@@ -55,7 +55,7 @@ const Mailman = {
 			" </p><p>Please verify your email by clicking on the" +
 			" verification link below.<br/><a href='" +
 			url +
-			"/account/verifyEmail/" +
+			"/verifyemail/" +
 			token +
 			"'>Verification Link</a></p>";
 		Mailman.mail(

@@ -211,8 +211,9 @@ const internals = {
 					}).unknown(),
 					payload: {
 						doc: Joi.string().required(),
-						lastUpdatedAt: Joi.string(),
 						tplid: Joi.string().optional(),
+						forceupdate: Joi.boolean().optional().default(false),
+						lastUpdatedAt: Joi.string(),
 						bwid: Joi.string().optional(),
 					},
 					validator: Joi,
@@ -679,6 +680,69 @@ const internals = {
 					payload: {
 						wfid: Joi.string().required(),
 						withdoc: Joi.boolean().default(true),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/workflow/get/attachments",
+			handler: Handlers.WorkflowGetAttachments,
+			config: {
+				description: "Get workflow attachments",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						wfid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/workflow/get/pbo",
+			handler: Handlers.WorkflowGetPbo,
+			config: {
+				description: "Get workflow text pbo",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						wfid: Joi.string().required(),
+						//pbotype:   text | file | all
+						pbotype: Joi.string().optional().default("text"),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/workflow/set/pbo",
+			handler: Handlers.WorkflowSetPbo,
+			config: {
+				description: "Set workflow text pbo",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						wfid: Joi.string().required(),
+						pbo: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string()).required(),
+						//pbotype:   text | file | all,
+						// 当前，当用api调用时，仅支持text方式
+						pbotype: Joi.string().optional().default("text"),
 					},
 					validator: Joi,
 				},
@@ -1407,7 +1471,7 @@ const internals = {
 						tspan: Joi.string().optional(),
 						calendar_begin: Joi.string().optional(),
 						calendar_end: Joi.string().optional(),
-						sortby: Joi.string().optional().allow(""),
+						sortby: Joi.string().optional().default("_id"),
 						skip: Joi.number().optional(),
 						limit: Joi.number().optional(),
 						reason: Joi.string().optional(),

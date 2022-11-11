@@ -59,7 +59,7 @@ const internals = {
 						//password required with same regex as client
 						password: Joi.string().required(),
 						siteid: Joi.string().optional(),
-						openid: Joi.string().optional().allow("")
+						openid: Joi.string().optional().allow(""),
 					},
 					validator: Joi,
 				},
@@ -77,6 +77,22 @@ const internals = {
 				validate: {
 					payload: {
 						code: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/account/loginByPhone",
+			handler: Handlers.PhoneLogin,
+			config: {
+				// auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						code: Joi.string().required(),
+						phone: Joi.string().required()					
 					},
 					validator: Joi,
 				},
@@ -902,7 +918,52 @@ const internals = {
 					validator: Joi,
 				},
 			},
-		}
+		},
+		{
+			method: "POST",
+			path: "/tenant/upgrade",
+			handler: Handlers.upgradeTenant,
+			config: {
+				// auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						tenantid: Joi.string().required()					
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/account/sendSms",
+			handler: Handlers.SendSms,
+			config: {
+				// auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { 
+						area: Joi.string().default('+86'),
+						phone: Joi.string().required()					
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "GET",
+			path: "/tenant/data-flow/{code}",
+			handler: Handlers.handleDateFlow,
+			config: {
+				description: "handle data flow",
+				validate: {
+					params: { 
+						code: Joi.string().optional()
+					},
+					validator: Joi,
+				},
+			},
+		},
 	],
 };
 
