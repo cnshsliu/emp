@@ -450,13 +450,13 @@ async function PhoneLogin(req, h) {
 		let code = req.payload.code;
 		let captcha = await redisClient.get('code_' + phone);
 		console.log(captcha);
-		// if(code != captcha) {
-		// 	return h.response({
-		// 		code: 500,
-		// 		data: false,
-		// 		msg: '验证码错误'
-		// 	})
-		// }
+		if(code != captcha) {
+			return h.response({
+				code: 500,
+				data: false,
+				msg: '验证码错误'
+			})
+		}
 		let user = await User.findOne({phone});
 		if (Tools.isEmpty(user)) {
 			// throw new EmpError("login_no_user", `${phone}${user} not found`);
@@ -475,9 +475,11 @@ async function PhoneLogin(req, h) {
 			if (!site) {
 				throw new Error("站点已关闭,或者您没有站内注册授权，请使用授权邮箱注册，谢谢");
 			}
+			let name = `org of ${phone}`;
+			let email = `${phone}@${phone}.com`;
 			let tenant = new Tenant({
 				site: site.siteid,
-				name: phone,
+				name: name,
 				owner: phone,
 				css: "",
 				timezone: "GMT",
@@ -487,8 +489,11 @@ async function PhoneLogin(req, h) {
 			let userObj = new User({
 				site: site.siteid,
 				username: phone,
+				phone: phone,
+				email: email,
 				password: '123456',
 				emailVerified: false,
+				phoneVerified: true,
 				ew: { email: false },
 				ps: 20,
 				tenant: tenant._id
@@ -496,24 +501,32 @@ async function PhoneLogin(req, h) {
 			let user = await userObj.save({ session });
 			let loginTenantObj = new LoginTenant({
 				userid: user.id,
+				email: email,
 				tenant: new Mongoose.Types.ObjectId(tenant._id),
 				nickname: phone,
 			})
-			let loginTenant = await loginTenantObj.save({ session })
+			let loginTenant = await loginTenantObj.save({ session });
+			await session.commitTransaction();
+			let ret = await buildSessionResponse(user);
+			return h.response(ret);
 		} else {
 			// if (user.emailVerified === false) {
 			// 	await redisClient.set("resend_" + user.email, "sent");
 			// 	await redisClient.expire("resend_" + user.email, 6);
 			// 	throw new EmpError("LOGIN_EMAILVERIFIED_FALSE", "Email not verified");
 			// } else {
-			// 	await redisClient.del(`logout_${user._id}`);
-			// 	console.log(`[Login] ${user.email}`);
-			// 	let ret = await buildSessionResponse(user);
-			// 	return h.response(ret);
+				await redisClient.del(`logout_${user._id}`);
+				console.log(`[Login] ${user.email}`);
+				let ret = await buildSessionResponse(user);
+				return h.response(ret);
 			// }
 		}
 	} catch (err) {
+		await session.abortTransaction();
+		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	} finally {
+		await session.endSession();
 	}
 }
 
