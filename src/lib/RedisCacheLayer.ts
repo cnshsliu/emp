@@ -1,13 +1,14 @@
 import { isMainThread } from "worker_threads";
 import Tools from "../tools/tools";
 import EmpError from "./EmpError";
-import Template from "../database/models/Template";
-import Workflow from "../database/models/Workflow";
+import { Template } from "../database/models/Template";
+import { Workflow } from "../database/models/Workflow";
 import { redisClient, redisConnect } from "../database/redis";
+import { Types } from "mongoose";
 import assert from "assert";
 import LRU from "lru-cache";
 
-type WfFilter = { tenant: string; wfid: string };
+type WfFilter = { tenant: string | Types.ObjectId; wfid: string };
 const lruCache = new LRU({ max: 2000 });
 const CACHE_ELEVEL_MEM = 1;
 const CACHE_ELEVEL_REDIS = 2;

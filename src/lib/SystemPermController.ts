@@ -1,4 +1,7 @@
+import { strict as assert } from "node:assert";
+import { EmployeeType } from "../database/models/Employee";
 import Cache from "./Cache";
+const SUPPORTED_GROUPS = ["ADMIN", "OBSERVER", "DOER"];
 const internals = {
 	//对三个系统角色的赋权
 	getMyGroupPerm: function (group: string) {
@@ -32,40 +35,36 @@ const internals = {
 	/**
 	 * internals.hasPerm = async() Whether user has operaiton permission on class or object
 	 *
-	 * @param {...} email - who
-	 * @param {...} what -  class: workflow/template/work
-	 * @param {...} instance - object
-	 * @param {...} op - operation: read/create/update/delete
 	 *
-	 * @return {...}
+	 * }
 	 */
-	hasPerm: async function (email: string, what: string, instance: any, op: string) {
-		email = email.toLowerCase();
-		/*
-    //先找缓存
-    let permKey = `perm_${email}_${what}_${op}`;
-    if (instance && instance._id) {
-      permKey = permKey + "_" + instance._id.toString();
-    }
-    let perm = await Cache.getMyPerm(permKey);
-    //找不到，则调用control来判断
-    if (!perm) {
-      let group = await Cache.getMyGroup(email);
-      perm = this.control(this.getMyGroupPerm(group), email, what, instance, op);
-      //解析后，放入缓存
-      await Cache.setMyPerm(permKey, perm);
-    } else {
-      console.log("GOT perm from cache");
-    }
-    console.log("Perm>", perm, permKey);
-    */
-		let group = await Cache.getMyGroup(email);
-		let perm = this.control(this.getMyGroupPerm(group), email, what, instance, op);
+	hasPerm: async function (employee: EmployeeType, what: string, instance: any, op: string) {
+		assert(
+			employee.domain && employee.group && employee.eid,
+			"First arg must be employee for hasPerm",
+		);
+		assert(SUPPORTED_GROUPS.includes(employee.group), `Group ${employee.group} is not supported`);
+		//先找缓存
+		let permKey = `perm_${employee.domain}_${employee.eid}_${what}_${op}`;
+		if (instance && instance._id) {
+			permKey = permKey + "_" + instance._id.toString();
+		}
+		let perm = await Cache.getMyPerm(permKey);
+		//找不到，则调用control来判断
+		if (!perm) {
+			perm = this.control(this.getMyGroupPerm(employee.group), employee.eid, what, instance, op);
+			//解析后，放入缓存
+			await Cache.setMyPerm(permKey, perm);
+		} else {
+			console.log("GOT perm from cache");
+		}
+		console.log("Perm>", perm, permKey);
 		return perm;
 	},
 
 	//这个是真正的解析
 	control: function (perms: string[], who: string, what: string, instance: any, op: string) {
+		assert(who.indexOf("@") < 0, "Who should be an eid");
 		let ret = false;
 		try {
 			for (let i = 0; i < perms.length; i++) {

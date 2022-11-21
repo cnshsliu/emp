@@ -67,7 +67,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						tplid: Joi.string().required(),
-						starters: Joi.string(),
+						starters: Joi.string().trim(),
 						expr: Joi.string(),
 					},
 					validator: Joi,
@@ -88,7 +88,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						tplid: Joi.string().required(),
-						starters: Joi.string(),
+						starters: Joi.string().trim(),
 					},
 					validator: Joi,
 				},
@@ -211,7 +211,8 @@ const internals = {
 					}).unknown(),
 					payload: {
 						doc: Joi.string().required(),
-						tplid: Joi.string().optional(),
+						tplid: Joi.string().required(),
+						desc: Joi.string().optional().allow(""),
 						forceupdate: Joi.boolean().optional().default(false),
 						lastUpdatedAt: Joi.string(),
 						bwid: Joi.string().optional(),
@@ -412,8 +413,8 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/template/delete/byname",
-			handler: Handlers.TemplateDeleteByName,
+			path: "/template/delete/by/tplid",
+			handler: Handlers.TemplateDeleteByTplid,
 			config: {
 				description: "Delete a template by name(tplid)",
 				notes: "Delete a template by name(tplid)",
@@ -861,7 +862,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						wfid: Joi.string().required(),
-						attachments: Joi.any(),
+						attachments: Joi.array().items({ serverId: Joi.string().required() }),
 					},
 					validator: Joi,
 				},
@@ -1222,23 +1223,6 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/workflow/upgrade",
-			handler: Handlers.WorkflowUpgrade,
-			config: {
-				description: "get workflow kvars",
-				tags: ["api"],
-				auth: "token",
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					payload: {},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
 			path: "/workflow/get/firsttodoid",
 			handler: Handlers.WorkflowGetFirstTodoid,
 			config: {
@@ -1495,13 +1479,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						doer: Joi.string().required(),
-						todoid: Joi.string().optional().description("must provide if nodeid is absent"),
-						wfid: Joi.string()
-							.optional()
-							.description("wfid and nodeid must provide if workid is absent"),
-						nodeid: Joi.string()
-							.optional()
-							.description("wfid and nodeid must provide if workid is absent"),
+						todoid: Joi.string().required(),
 						route: Joi.string().optional(),
 						comment: Joi.string().optional().allow(""),
 						kvars: Joi.object().optional(),
@@ -2075,7 +2053,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						member_email: Joi.string().required(),
+						eid: Joi.string().required(),
 						what: Joi.string().required(),
 						instance_id: Joi.string().optional(),
 						op: Joi.string().required(),
@@ -2885,6 +2863,9 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
+					payload: {
+						serverId: Joi.string().required(),
+					},
 					validator: Joi,
 				},
 			},

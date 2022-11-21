@@ -1,4 +1,5 @@
 import Cheerio from "cheerio";
+import { Types } from "mongoose";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
 import cronEngine from "node-cron";
 import Wreck from "@hapi/wreck";
@@ -8,23 +9,24 @@ import { marked as Marked } from "marked";
 import Parser from "./Parser";
 import Mutex from "./Mutex";
 import moment from "moment";
-import Template from "../database/models/Template";
-import User from "../database/models/User";
+import { Template } from "../database/models/Template";
+import { User } from "../database/models/User";
+import { Employee, EmployeeType } from "../database/models/Employee";
 import List from "../database/models/List";
-import Workflow from "../database/models/Workflow";
+import { Workflow, WorkflowType } from "../database/models/Workflow";
 import Handlebars from "handlebars";
 import SanitizeHtml from "sanitize-html";
-import Todo from "../database/models/Todo";
-import Crontab from "../database/models/Crontab";
+import { Todo, TodoType } from "../database/models/Todo";
+import { Crontab, CrontabType } from "../database/models/Crontab";
 import Webhook from "../database/models/Webhook";
 import Work from "../database/models/Work";
 import Route from "../database/models/Route";
 import CbPoint from "../database/models/CbPoint";
-import Comment from "../database/models/Comment";
+import { Comment, CommentType } from "../database/models/Comment";
 import Thumb from "../database/models/Thumb";
 import Delegation from "../database/models/Delegation";
 import KVar from "../database/models/KVar";
-import Cell from "../database/models/Cell";
+import { Cell } from "../database/models/Cell";
 import TempSubset from "../database/models/TempSubset";
 import DelayTimer from "../database/models/DelayTimer";
 import KsTpl from "../database/models/KsTpl";
@@ -57,7 +59,7 @@ import type {
 	ActionDef,
 	SmtpInfo,
 } from "./EmpTypes";
-const asyncFilter = async (arr, predicate) => {
+const asyncFilter = async (arr: Array<any>, predicate: any) => {
 	const results = await Promise.all(arr.map(predicate));
 
 	return arr.filter((_v, index) => results[index]);
@@ -88,7 +90,7 @@ let checkingTimer = false;
 
 const podium = new Podium();
 const Client: any = {};
-const callYarkNodeWorker = function (msg) {
+const callYarkNodeWorker = function (msg: object) {
 	msg = JSON.parse(JSON.stringify(msg));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(path.dirname(__filename) + "/worker/YarkNodeWorker.js", {
@@ -125,7 +127,7 @@ const callYarkNodeWorker = function (msg) {
 
 //
 // msg: {endpoint: URL,data: JSON}
-const callWebApiPosterWorker = async function (msg) {
+const callWebApiPosterWorker = async function (msg: object) {
 	msg = JSON.parse(JSON.stringify(msg));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(path.dirname(__filename) + "/worker/WebApiPosterWorker.js", {
@@ -140,7 +142,7 @@ const callWebApiPosterWorker = async function (msg) {
 	});
 };
 
-const callSendMailWorker = async function (msg) {
+const callSendMailWorker = async function (msg: object) {
 	try {
 		msg = JSON.parse(JSON.stringify(msg));
 		return new Promise((resolve, reject) => {
@@ -169,8 +171,8 @@ const callSendMailWorker = async function (msg) {
  * @param {function} fn function to be run
  * @param {context} context
  */
-const once = function (fn, context) {
-	var result;
+const once = function (fn: any, context: any) {
+	var result: any;
 
 	return function () {
 		if (fn) {
@@ -207,7 +209,7 @@ const serverInit = async function () {
 	]);
 };
 
-const sendNexts = async function (nexts) {
+const sendNexts = async function (nexts: Array<NextDef>) {
 	if (isMainThread) {
 		for (let i = 0; i < nexts.length; i++) {
 			if (nexts[i].tenant && typeof nexts[i].tenant !== "string") {
@@ -285,7 +287,7 @@ const cleanupFaultCrons = async function () {
 	for (let i = 0; i < crons.length; i++) {
 		let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
 		if (tmp.length !== 5 || cronEngine.validate(crons[i].expr) === false) {
-			await stopCronTask(crons[i]._id);
+			await stopCronTask(crons[i]._id.toString());
 			await Crontab.deleteOne({ _id: crons[i]._id });
 		}
 	}
@@ -297,8 +299,8 @@ const rescheduleCrons = async function () {
 		let crons = await Crontab.find({ scheduled: false });
 		for (let i = 0; i < crons.length; i++) {
 			if (cronEngine.validate(crons[i].expr) === true) {
-				if (crontabsMap[crons[i]._id]) {
-					await stopCronTask(crons[i]._id);
+				if (crontabsMap[crons[i]._id.toString()]) {
+					await stopCronTask(crons[i]._id.toString());
 				}
 				await scheduleCron(crons[i]);
 				await Crontab.updateOne({ _id: crons[i]._id }, { $set: { scheduled: true } });
@@ -308,7 +310,7 @@ const rescheduleCrons = async function () {
 	}
 };
 
-const startWorkflowByCron = async (cron) => {
+const startWorkflowByCron = async (cron: CrontabType) => {
 	let doers = await getDoer(
 		cron.tenant,
 		"", //Team id
@@ -320,11 +322,11 @@ const startWorkflowByCron = async (cron) => {
 		false,
 	); //
 	console.log("Cron Start Workflow for ", doers.length, " people");
-	let emails = doers.map((x) => x.uid);
-	await __batchStartWorkflow(cron.tenant, cron.tplid, emails, "Cron");
+	let eids = doers.map((x) => x.eid);
+	await __batchStartWorkflow(cron.tenant, cron.tplid, eids, "Cron");
 };
 
-const dispatchWorkByCron = async (cron) => {
+const dispatchWorkByCron = async (cron: CrontabType) => {
 	let todoObj = JSON.parse(cron.extra);
 	console.log("dispatch Croned Task", JSON.stringify(todoObj));
 	//如果运行中的工作流进程已不存在，则删掉crontab
@@ -357,32 +359,42 @@ const dispatchWorkByCron = async (cron) => {
 	}
 };
 
-const startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
+const startBatchWorkflow = async (
+	tenant: string,
+	starters: string,
+	tplid: string,
+	directorEid: string,
+) => {
 	let doers = await getDoer(
 		tenant,
 		"", //Team id
 		starters, //PDS
-		directorEmail,
+		directorEid,
 		null,
 		null, //expalinPDS 没有workflow实例
 		null, //kvarString
 		false,
 	); //
-	let directorCN = await Cache.getUserName(tenant, directorEmail, "startBatchWorkflow");
+	let directorCN = await Cache.getUserName(tenant, directorEid, "startBatchWorkflow");
 	console.log(directorCN, " start Workflow for ", doers.length, " people");
-	let emails = doers.map((x) => x.uid);
-	await __batchStartWorkflow(tenant, tplid, emails, directorCN);
+	let eids = doers.map((x) => x.eid);
+	await __batchStartWorkflow(tenant, tplid, eids, directorCN);
 };
-const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
-	for (let i = 0; i < emails.length; i++) {
+const __batchStartWorkflow = async (
+	tenant: string | Types.ObjectId,
+	tplid: string,
+	eids: string[],
+	sender: string,
+) => {
+	for (let i = 0; i < eids.length; i++) {
 		let processTitle =
-			(await Cache.getUserName(tenant, emails[i], "__batchStartWorkflow")) + ": " + tplid;
+			(await Cache.getUserName(tenant, eids[i], "__batchStartWorkflow")) + ": " + tplid;
 		let msgToSend = {
 			CMD: "CMD_startWorkflow",
 			rehearsal: false,
 			tenant: tenant,
 			tplid: tplid,
-			starter: emails[i],
+			starter: eids[i],
 			pbo: [],
 			teamid: "",
 			wfid: IdGenerator(),
@@ -399,7 +411,7 @@ const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 	}
 };
 
-const scheduleCron = async (cron) => {
+const scheduleCron = async (cron: CrontabType) => {
 	switch (cron.method) {
 		case "STARTWORKFLOW":
 			console.log(
@@ -428,19 +440,31 @@ const scheduleCron = async (cron) => {
 			timezone: "Asia/Shanghai",
 		},
 	);
-	crontabsMap[cron._id] = task;
+	crontabsMap[cron._id.toString()] = task;
 };
 
-const stopCronTask = async function (cronId) {
+const stopCronTask = async function (cronId: string | Types.ObjectId) {
 	try {
-		let my_job = crontabsMap[cronId];
+		const theKey = typeof cronId === "string" ? cronId : cronId.toString();
+		let my_job = crontabsMap[theKey];
 		my_job && my_job.stop();
 	} catch (e) {
 		console.error(e);
 	}
 };
 
-const runScheduled = async function (obj, isCron = false) {
+const runScheduled = async function (
+	obj: {
+		tenant: string | Types.ObjectId;
+		tplid: string;
+		teamid: string;
+		wfid: string;
+		nodeid: string;
+		workid: string;
+		round?: number;
+	},
+	isCron = false,
+) {
 	//打开对应的Workflow
 	let wf = await RCL.getWorkflow({ tenant: obj.tenant, wfid: obj.wfid }, "Engine.runScheduled");
 	if (!wf) throw new EmpError("WORKFLOW_NOT_FOUND", "Workflow does not exist");
@@ -491,29 +515,27 @@ const runScheduled = async function (obj, isCron = false) {
 /**
  * doWork = async() 执行一个工作项
  *
- * @param {...} doWork = asynctenant -
- * @param {...} doer - 工作者
- * @param {...} workid - 工作编号, optional, 如提供，按workid查节点，如未提供，按nodeid查节点
- * @param {...} wfid - 工作流编号
- * @param {...} nodeid - 节点编号
- * @param {...} route - 路由
- * @param {...} kvars - 携带变量
+ * doWork = asynctenant -
+ * doer - 工作者
+ * workid - 工作编号, optional, 如提供，按workid查节点，如未提供，按nodeid查节点
+ * wfid - 工作流编号
+ * nodeid - 节点编号
+ * route - 路由
+ * kvars - 携带变量
  *
- * @return {...}
+ *
  */
 const doWork = async function (
-	email,
-	todoid,
-	tenant,
-	doer,
-	wfid,
-	nodeid,
-	userDecision,
-	kvarsFromBrowserInput,
-	comment,
+	myEid: string,
+	todoid: string,
+	tenant: string,
+	doer: string,
+	wfid: string,
+	userDecision: string,
+	kvarsFromBrowserInput: object,
+	comment: string,
 ) {
-	//workid, 如提供，按workid查节点，如未提供，按nodeid查节点
-	let fact_email = email;
+	let fact_eid = myEid;
 	let todo_filter = {
 		tenant: tenant,
 		doer: doer, //此时，如果是rehearsal，是演练者
@@ -522,22 +544,24 @@ const doWork = async function (
 		wfstatus: "ST_RUN",
 	};
 	//找到该Todo数据库对象
-	let todo = await Todo.findOne(todo_filter);
-	if (!SystemPermController.hasPerm(fact_email, "work", todo, "update"))
+	let todo = (await Todo.findOne(todo_filter)) as TodoType;
+	//TODO: cache
+	const fact_employee = (await Employee.findOne({
+		tenant: tenant,
+		eid: fact_eid,
+	})) as EmployeeType;
+	if (!SystemPermController.hasPerm(fact_employee, "work", todo, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 
 	if (Tools.isEmpty(todo)) {
-		console.error("Todo ", nodeid, todoid, "not found, see following filter");
+		console.error("Todo ", todoid, "not found, see following filter");
 		console.error(todo_filter);
 		//return { error: "Todo Not Found" };
-		throw new EmpError(
-			"WORK_RUNNING_NOT_EXIST",
-			`Doable work ${nodeid}, ${todoid} ${todo_filter} not found`,
-		);
+		throw new EmpError("WORK_RUNNING_NOT_EXIST", `Doable work ${todoid} ${todo_filter} not found`);
 	}
 
 	//此时，是真正的用户
-	let fact_doer = await getWorkDoer(tenant, todo, email);
+	let fact_doer = await getWorkDoer(tenant, todo, myEid);
 	if (fact_doer === "NOT_YOUR_REHEARSAL") {
 		throw new EmpError("NOT_YOUR_REHEARSAL", "Not your rehearsal");
 	} else if (fact_doer === "NO_PERM_TO_DO") {
@@ -548,7 +572,6 @@ const doWork = async function (
 		tenant,
 		todo,
 		fact_doer,
-		wfid,
 		todo.workid,
 		userDecision,
 		kvarsFromBrowserInput,
@@ -556,27 +579,29 @@ const doWork = async function (
 	);
 };
 
-const hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
+const hasPermForWork = async function (tenant_id: string, myEid: string, doerEid: string) {
 	let hasPerm = false;
-	if (doerEmail === myEmail) {
+	if (doerEid === myEid) {
 		hasPerm = true;
 	} else {
-		if ((await Cache.getMyGroup(myEmail)) === "ADMIN") {
-			//如果我是管理员，则只要doerEmail是我的组织成员之一，即返回真
-			let doerUser = await User.findOne({
-				email: doerEmail,
+		if ((await Cache.getEmployeeGroup(tenant_id, myEid)) === "ADMIN") {
+			//如果我是管理员，则只要doerEid是我的组织成员之一，即返回真
+			let doerEmployee = await Employee.findOne({
+				email: doerEid,
 				tenant: tenant_id,
 			});
-			if (doerUser) {
+			if (doerEmployee) {
 				hasPerm = true;
+			} else {
+				throw new EmpError("USER_NOT_FOUND", `${doerEmployee} does not exist in your tenant`);
 			}
 		} else {
-			//否则，doerEmail当前有委托给我，则返回真
-			let delegationToMe = await delegationToMeToday(tenant_id, myEmail);
+			//否则，doerEid当前有委托给我，则返回真
+			let delegationToMe = await delegationToMeToday(tenant_id, myEid);
 
 			let delegators = [];
 			delegators = delegationToMe.map((x) => x.delegator);
-			if (delegators.includes(doerEmail)) {
+			if (delegators.includes(doerEid)) {
 				hasPerm = true;
 			}
 		}
@@ -584,13 +609,13 @@ const hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
 	return hasPerm;
 };
 
-const getWorkDoer = async function (tenant, work, currentUser) {
+const getWorkDoer = async function (tenant: string, work: TodoType, currentUserEid: string) {
 	if (work.rehearsal) {
-		if (work.wfstarter === currentUser) return work.doer;
+		if (work.wfstarter === currentUserEid) return work.doer;
 		else return "NOT_YOUR_REHEARSAL";
 	} else {
-		if (currentUser !== work.doer) {
-			let hasPerm = await hasPermForWork(tenant, currentUser, work.doer);
+		if (currentUserEid !== work.doer) {
+			let hasPerm = await hasPermForWork(tenant, currentUserEid, work.doer);
 			if (!hasPerm) {
 				return "NO_PERM_TO_DO";
 			}
@@ -601,23 +626,14 @@ const getWorkDoer = async function (tenant, work, currentUser) {
 
 /**
  * 完成一个Todo
- *
- * @param {...} todo -
- * @param {...} doer -
- * @param {...} workid -
- * @param {...} route -
- * @param {...} kvarsFromBrowserInput -
- *
- * @return {...}
  */
 const __doneTodo = async function (
 	tenant: string,
-	todo: any,
+	todo: TodoType,
 	doer: string,
-	wfid: string,
 	workid: string,
 	userDecision: string,
-	kvarsFromBrowserInput: any,
+	kvarsFromBrowserInput: object,
 	comment: string,
 ) {
 	let logMsg = "";
@@ -626,20 +642,10 @@ const __doneTodo = async function (
 			? JSON.parse(kvarsFromBrowserInput)
 			: {};
 	let isoNow = Tools.toISOString(new Date());
-	let nodeid = todo.nodeid;
-	if (Tools.isEmpty(todo)) {
-		throw new EmpError("WORK_NOT_EXIST", "Todo not exist", {
-			wfid,
-			nodeid,
-			workid: todo.workid,
-			todoid: todo.todoid,
-			status: todo.status,
-		});
-	}
 	if (Tools.isEmpty(todo.wfid)) {
 		throw new EmpError("WORK_WFID_IS_EMPTY", "Todo wfid is empty", {
-			wfid,
-			nodeid,
+			wfid: todo.wfid,
+			nodeid: todo.nodeid,
 			workid: todo.workid,
 			status: todo.status,
 		});
@@ -653,8 +659,8 @@ const __doneTodo = async function (
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.__doneTodo");
 	if (Tools.isEmpty(wf.wftitle)) {
 		throw new EmpError("WORK_WFTITLE_IS_EMPTY", "Todo wftitle is empty unexpectedly", {
-			wfid,
-			nodeid,
+			wfid: todo.wfid,
+			nodeid: todo.nodeid,
 			workid: todo.workid,
 			todoid: todo.todoid,
 			status: todo.status,
@@ -785,7 +791,7 @@ const __doneTodo = async function (
 	workDecision = workDecision ? workDecision : "";
 	log(
 		tenant,
-		wfid,
+		todo.wfid,
 		`[DoTask] [${todo.title}] [${todo.tplid}] [${doer}] [${userDecision}] [${workDecision}] [${completeFlag}] [${CFNameMap[completeFlag]}]`,
 	);
 
@@ -838,8 +844,8 @@ const __doneTodo = async function (
 		workNode.attr("decision", workDecision);
 		workNode.attr("doneat", isoNow);
 		//place todo decision into kvarsFromBrowserInput;
-		kvarsFromBrowserInput["$decision_" + nodeid] = {
-			name: "$decision_" + nodeid,
+		kvarsFromBrowserInput["$decision_" + todo.nodeid] = {
+			name: "$decision_" + todo.nodeid,
 			value: workDecision,
 		};
 		//////////////////////////////////////////////////
@@ -886,7 +892,7 @@ const __doneTodo = async function (
 				let kvarsForScript = await Parser.userGetVars(
 					tenant,
 					"EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
-					wfid,
+					todo.wfid,
 					Const.FOR_WHOLE_PROCESS, //整个工作流
 					[],
 					[],
@@ -951,8 +957,8 @@ const __doneTodo = async function (
 				//直接忽略掉脚本中的Return, 而是使用用户的 userChoice来决定流程流向
 				if (codeRetDecision !== "DEFAULT" && codeRetDecision !== "undefined") {
 					workResultRoute = codeRetDecision;
-					codeRetObj["$decision_" + nodeid] = {
-						name: "$decision_" + nodeid,
+					codeRetObj["$decision_" + todo.nodeid] = {
+						name: "$decision_" + todo.nodeid,
 						value: codeRetDecision,
 					};
 				}
@@ -961,7 +967,7 @@ const __doneTodo = async function (
 						tenant,
 						todo.round,
 						wf.wfid,
-						nodeid,
+						todo.nodeid,
 						workid,
 						codeRetObj,
 						"EMP",
@@ -980,7 +986,7 @@ const __doneTodo = async function (
 				wfid: todo.wfid,
 				tpRoot: tpRoot,
 				wfRoot: wfRoot,
-				this_nodeid: nodeid,
+				this_nodeid: todo.nodeid,
 				this_workid: todo.workid,
 				decision: workResultRoute, //用户所做的选择
 				nexts: nexts, //TODO: 在这里处理关键逻辑
@@ -989,7 +995,7 @@ const __doneTodo = async function (
 				starter: wf.starter,
 			});
 			console.log(
-				`From ${nodeid} by ${workResultRoute} to ${JSON.stringify(
+				`From ${todo.nodeid} by ${workResultRoute} to ${JSON.stringify(
 					nexts.map((x) => x.selector),
 					null,
 					2,
@@ -1080,10 +1086,16 @@ const __doneTodo = async function (
 		sendCCMessage(
 			tenant,
 			cced,
-			`[MTC cc]: Task ${todo.title} done by ${await Cache.getUserName(todo.tenant, todo.doer)}.`,
+			`[MTC cc]: Task ${todo.title} done by ${await Cache.getUserName(
+				todo.tenant.toString(),
+				todo.doer,
+			)}.`,
 			`Task </BR><B><a href="${frontendUrl}/work/${todo.todoid}">${
 				todo.title
-			}</a></B></BR> was done by ${await Cache.getUserName(todo.tenant, todo.doer)}  </BR>
+			}</a></B></BR> was done by ${await Cache.getUserName(
+				todo.tenant.toString(),
+				todo.doer,
+			)}  </BR>
 </BR></BR>In workflow process:
 <a href="${frontendUrl}/workflow/${wf.wfid}">${wf.wfid}</a>`,
 			wf.rehearsal,
@@ -1334,7 +1346,7 @@ const setPeopleFromContent = async function (
 	emailDomainReferenceUser,
 	content,
 	people,
-	emails,
+	eids,
 ) {
 	let tmp = Tools.getUidsFromText(content);
 	for (let i = 0; i < tmp.length; i++) {
@@ -1342,22 +1354,22 @@ const setPeopleFromContent = async function (
 		let receiverCN = await Cache.getUserName(tenant, toWhomEmail, "setPeopleFromContent");
 		if (receiverCN !== "USER_NOT_FOUND") {
 			people.push(tmp[i]);
-			emails.push(toWhomEmail);
+			eids.push(toWhomEmail);
 		}
 	}
-	emails = [...new Set(emails)];
+	eids = [...new Set(eids)];
 	people = [...new Set(people)];
 	people = people.map((p) => Tools.getEmailPrefix(p));
-	return [people, emails];
+	return [people, eids];
 };
 
 //对每个@somebody存储，供somebody反向查询comment
 const postCommentForTodo = async function (tenant, doer, todo, content) {
 	if (content.trim().length === 0) return;
-	let emails = [todo.wfstarter];
+	let eids = [todo.wfstarter];
 	let people = [Tools.getEmailPrefix(todo.wfstarter)];
 	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForTodo");
-	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
+	[people, eids] = await setPeopleFromContent(tenant, doer, content, people, eids);
 	let msg = {
 		tenant: todo.tenant,
 		doer: doer,
@@ -1384,7 +1396,7 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 		content,
 		context,
 		people,
-		emails,
+		eids,
 		todo.rehearsal,
 		msg,
 	);
@@ -1400,9 +1412,9 @@ const postCommentForComment = async function (tenant, doer, cmtid, content, thre
 	let theTodo = await Todo.findOne({ tenant: tenant, todoid: cmt.context.todoid }).lean();
 	let people = cmt.people;
 	people.push(Tools.getEmailPrefix(cmt.who));
-	let emails = people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
+	let eids = people.map((eid) => Tools.makeEmailSameDomain(eid, doer));
 	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForComment");
-	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
+	[people, eids] = await setPeopleFromContent(tenant, doer, content, people, eids);
 	let msg = {
 		tenant: tenant,
 		doer: doer,
@@ -1426,7 +1438,7 @@ const postCommentForComment = async function (tenant, doer, cmtid, content, thre
 		content,
 		cmt.context, //继承上一个comment的业务上下文
 		people,
-		emails,
+		eids,
 		cmt.rehearsal,
 		msg,
 		threadid,
@@ -1441,14 +1453,15 @@ const __postComment = async function (
 	content,
 	context,
 	thePeople,
-	emails,
+	eids,
 	rehearsal,
 	emailMsg = null,
 	threadid = null,
-) {
+): Promise<CommentType> {
 	try {
 		//找里面的 @somebody， regexp是@后面跟着的连续非空字符
-		let comment = new Comment({
+		let comment: CommentType = null;
+		comment = new Comment({
 			tenant: tenant,
 			rehearsal: rehearsal,
 			who: doer,
@@ -1459,13 +1472,13 @@ const __postComment = async function (
 			content: content,
 			context: context,
 			threadid: threadid ? threadid : "",
-		});
-		comment = await comment.save();
+		}) as CommentType;
+		comment = (await comment.save()) as CommentType;
 		await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${comment.context.wfid}`);
 		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
 		//对TODO的comment是thread级Comment，需要将其threadid设置为其自身的_id
 		if (comment.objtype === "TODO") {
-			comment.threadid = comment._id;
+			comment.threadid = comment._id.toString();
 			comment = await comment.save();
 		} else if (threadid) {
 			//对Comment的Comment需要将其thread  Comment的 updatedAt进行更新
@@ -1481,12 +1494,12 @@ const __postComment = async function (
 			setTimeout(async () => {
 				let theComment = await Comment.findOne({ tenant: tenant, _id: comment._id });
 				if (theComment) {
-					for (let i = 0; i < emails.length; i++) {
-						if (emails[i] === doer) {
+					for (let i = 0; i < eids.length; i++) {
+						if (eids[i] === doer) {
 							console.log("Bypass: comment's author email to him/herself");
 							continue;
 						}
-						let receiverCN = await Cache.getUserName(tenant, emails[i], "__postComment");
+						let receiverCN = await Cache.getUserName(tenant, eids[i], "__postComment");
 						if (receiverCN === "USER_NOT_FOUND") continue;
 						let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
 						let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
@@ -1495,14 +1508,14 @@ const __postComment = async function (
 
 						sendTenantMail(
 							tenant, //not rehearsal
-							rehearsal ? doer : emails[i],
+							rehearsal ? doer : eids[i],
 							subject,
 							body,
 							"COMMENT_MAIL",
 						).then((res) => {
 							console.log(
 								"Mailer send email to ",
-								rehearsal ? doer + "(" + emails[i] + ")" : emails[i],
+								rehearsal ? doer + "(" + eids[i] + ")" : eids[i],
 								"subject:",
 								subject,
 							);
@@ -1514,7 +1527,7 @@ const __postComment = async function (
 			}, (Const.DEL_NEW_COMMENT_TIMEOUT + 5) * 1000);
 			//}, 1000);
 		}
-		comment = JSON.parse(JSON.stringify(comment));
+		comment = JSON.parse(JSON.stringify(comment)) as CommentType;
 		comment.whoCN = await Cache.getUserName(tenant, comment.who, "__postComment");
 		comment.towhomCN = await Cache.getUserName(tenant, toWhom, "__postComment");
 		comment.splitted = splitComment(comment.content);
@@ -1522,13 +1535,13 @@ const __postComment = async function (
 		comment.mdcontent = tmpret.mdcontent;
 		comment.mdcontent2 = tmpret.mdcontent2;
 		let people = [];
-		let emails = [];
-		[people, emails] = await setPeopleFromContent(
+		let eids = [];
+		[people, eids] = await setPeopleFromContent(
 			tenant,
 			comment.who, //Email domain reference user
 			comment.content,
 			people,
-			emails,
+			eids,
 		);
 		comment.people = people;
 		comment.transition = true;
@@ -1544,13 +1557,13 @@ const __postComment = async function (
 const convertDoersToHTMLMessage = (doers: DoersArray): string => {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
-		ret += doers[i].cn + "(" + doers[i].uid + ")" + "</BR>";
+		ret += doers[i].cn + "(" + doers[i].eid + ")" + "</BR>";
 	}
 	return ret;
 };
 
 const sendCCMessage = async (
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	cced: DoersArray,
 	subject: string,
 	body: string,
@@ -1561,13 +1574,13 @@ const sendCCMessage = async (
 		try {
 			sendTenantMail(
 				tenant, //not rehearsal
-				rehearsal ? starter : cced[i].uid,
+				rehearsal ? starter : cced[i].eid,
 				subject,
 				body,
 				"TASK_CC_MAIL",
 			).then((res) => {});
 		} catch (error) {
-			console.log("Mailer send email to TASK cc ", rehearsal ? starter : cced[i].uid, "failed");
+			console.log("Mailer send email to TASK cc ", rehearsal ? starter : cced[i].eid, "failed");
 		}
 	}
 };
@@ -1875,13 +1888,14 @@ const addAdhoc = async function (payload) {
 		byroute: "DEFAULT",
 		status: "ST_RUN",
 	});
-	await adhocWork.save();
+	adhocWork = await adhocWork.save();
+	return adhocWork.workid;
 };
 
 /**
- * explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, uid, pds, 除pds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
+ * explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, eid, pds, 除pds外，其它均可选。 如果wfid存在，则使用eid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了eid，则
  *
- * @param {...} payload: {tenant, wfid, pds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user uid
+ * @param {...} payload: {tenant, wfid, pds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user eid
  *
  * @return {...}
  */
@@ -2465,7 +2479,7 @@ const replaceUser_child = async function (msg) {
 };
 
 //Client是指接受 yarkNode消息的client
-const yarkNode_internal = async function (obj) {
+const yarkNode_internal = async function (obj: NextDef) {
 	let nexts = [];
 	let parent_nexts = [];
 	if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
@@ -2581,8 +2595,8 @@ const yarkNode_internal = async function (obj) {
 			);
 			if (Array.isArray(doers) === false) {
 				console.error("C.GetDoer should return array", 5);
-				//if doers.uid, then doers is a single user,so place it into array;
-				if ((doers as any).uid) doers = [doers];
+				//if doers.eid, then doers is a single user,so place it into array;
+				if ((doers as any).eid) doers = [doers];
 				else {
 					doers = [];
 				}
@@ -2684,7 +2698,7 @@ const yarkNode_internal = async function (obj) {
 				//根据doer取用户
 				try {
 					for (let i = 0; i < doers.length; i++) {
-						let recipient = doers[i].uid;
+						let recipient = doers[i].eid;
 						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
 						try {
 							let tmp_subject = tpNode.find("subject").first().text();
@@ -3222,7 +3236,7 @@ const yarkNode_internal = async function (obj) {
 		}
 		log(tenant, obj.wfid, "End");
 		let sendEmailTo = obj.starter;
-		let ew = await Cache.getUserEw(sendEmailTo);
+		let ew = await Cache.getUserEw(obj.tenant, sendEmailTo);
 		let withEmail = ew && ew.email;
 		if (withEmail) {
 			let cn = await Cache.getUserName(tenant, sendEmailTo, "yarkNode_internal");
@@ -3295,10 +3309,9 @@ const yarkNode_internal = async function (obj) {
 			doerOrDoers = [];
 			if (cells && Array.isArray(cells) && cells.length > 0) {
 				for (let ri = 1; ri < cells.length; ri++) {
-					let doerEmail = Tools.makeEmailSameDomain(cells[ri][0], obj.starter);
 					doerOrDoers.push({
-						uid: doerEmail,
-						cn: await Cache.getUserName(tenant, doerEmail, "yarkNode_internal"),
+						eid: cells[ri][0],
+						cn: await Cache.getUserName(tenant, cells[ri][0], "yarkNode_internal"),
 					});
 				}
 			}
@@ -3533,7 +3546,7 @@ const rerunNode = async function (tenant: string, wfid: string, nodeid: string) 
 		byroute: workNode.attr("byroute"),
 		selector: "#" + nodeid,
 		starter: wf.starter,
-		round: workNode.attr("round"),
+		round: parseInt(workNode.attr("round")),
 	};
 	await sendNexts([an]);
 };
@@ -3593,24 +3606,18 @@ const createTodo = async function (obj) {
 		obj.doer = [obj.doer];
 	}
 	for (let i = 0; i < obj.doer.length; i++) {
-		let doerEmail = "";
-		if (obj.doer[i].uid) doerEmail = obj.doer[i].uid;
+		let doerEid = "";
+		if (obj.doer[i].eid) doerEid = obj.doer[i].eid;
 		else {
-			if (typeof obj.doer[i] === "string") doerEmail = obj.doer[i];
+			if (typeof obj.doer[i] === "string") doerEid = obj.doer[i];
 		}
-		let doerName = "";
-		if (obj.doer[i].cn) doerName = obj.doer[i].cn;
-		else doerName = await Cache.getUserName(obj.tenant, doerEmail, "createTodo");
+		let doerName = await Cache.getUserName(obj.tenant, doerEid, "createTodo");
 
-		if (Tools.isEmpty(doerName)) {
-			console.warn(`in createTodo: doer: ${doerEmail} does not exist. set doerName to "UNKNOWN"`);
-			doerName = "UNKNOWN";
-		}
 		//在新建单人TODO时替换doerCN
 		let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
 		let cellInfo = "";
 		if (obj.cells && obj.cells.length > 0) {
-			cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
+			cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEid);
 		}
 		let todoid = IdGenerator();
 
@@ -3619,7 +3626,7 @@ const createTodo = async function (obj) {
 			 * 用户离职后，在User数据表中，将其设置为active=false，并设置其succeed继承人
 			 */
 			// 如active=true，则返回自身，否则，使用继承者
-			let doer = await getSucceed(obj.tenant, doerEmail);
+			let doer = await getSucceed(obj.tenant, doerEid);
 
 			//检查是否已存在相同wfid，相同workid，相同doer，状态为ST_RUN的Todo
 			const existing = await Todo.findOne(
@@ -3899,23 +3906,32 @@ const getRoundWork = async function (tenant, round, wfid, path) {
 	}
 };
 
-const transferWork = async function (tenant, whom, myEmail, todoid) {
-	let whomUser = await User.findOne(
-		{ tenant: tenant, email: whom + myEmail.substring(myEmail.indexOf("@")) },
-		{ email: 1, username: 1, _id: 0 },
+const transferWork = async function (
+	tenant: string | Types.ObjectId,
+	whom: string,
+	myEid: string,
+	todoid: string,
+) {
+	let whomEmployee = await Employee.findOne(
+		{ tenant: tenant, eid: whom },
+		{ eid: 1, nickname: 1, _id: 0 },
 	);
-	if (!whomUser) return whomUser;
-	let filter = { tenant: tenant, doer: myEmail, todoid: todoid, status: "ST_RUN" };
-	let todo = await Todo.findOneAndUpdate(filter, { $set: { doer: whomUser.email } }, { new: true });
+	if (!whomEmployee) return whomEmployee;
+	let filter = { tenant: tenant, doer: myEid, todoid: todoid, status: "ST_RUN" };
+	let todo = await Todo.findOneAndUpdate(
+		filter,
+		{ $set: { doer: whomEmployee.eid } },
+		{ new: true },
+	);
 
-	let newDoer = whomUser.email;
-	let ew = await Cache.getUserEw(newDoer);
+	let newDoer = whomEmployee.eid;
+	let ew = await Cache.getUserEw(tenant, newDoer);
 	if (ew === false) {
 		console.log(newDoer, " does not receive email on new task");
-		return whomUser;
+		return whomEmployee;
 	}
 
-	let fromCN = await Cache.getUserName(tenant, myEmail, "transferWork");
+	let fromCN = await Cache.getUserName(tenant, myEid, "transferWork");
 	let newCN = await Cache.getUserName(tenant, newDoer, "transferWork");
 	await informUserOnNewTodo({
 		tenant: tenant,
@@ -3930,11 +3946,11 @@ const transferWork = async function (tenant, whom, myEmail, todoid) {
 		cellInfo: "",
 	});
 
-	return whomUser;
+	return whomEmployee;
 };
 
 const sendTenantMail = async function (
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	recipients: string | string[],
 	subject: string,
 	mail_body: string,
@@ -4006,7 +4022,7 @@ const informUserOnNewTodo = async function (inform) {
 	try {
 		let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
 		console.log("\t==>sendEmailTo", sendEmailTo);
-		let ew = await Cache.getUserEw(sendEmailTo);
+		let ew = await Cache.getUserEw(inform.tenant, sendEmailTo);
 		let withEmail = true;
 		if (typeof ew === "boolean" && ew === false) {
 			console.log(inform.doer, " does not receive email on new task");
@@ -4107,10 +4123,11 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 	}
 };
 
-const getSucceed = async (tenant, doerEmail) => {
-	let user = await User.findOne({ tenant: tenant, email: doerEmail }, { active: 1, succeed: 1 });
-	if (!user) return doerEmail;
-	return user.active ? doerEmail : user.succeed;
+//TODO: get succeed eid from cache
+const getSucceed = async (tenant: string, doerEid: string) => {
+	let user = await Employee.findOne({ tenant: tenant, eid: doerEid }, { active: 1, succeed: 1 });
+	if (!user) return doerEid;
+	return user.active ? doerEid : user.succeed;
 };
 
 const WreckPost = async (url, content) => {
@@ -4169,7 +4186,7 @@ const log = function (tenant, wfid, txt, json = null, withConsole = false) {
 	}
 };
 
-const getWfLogFilename = function (tenant: string, wfid: string) {
+const getWfLogFilename = function (tenant: string | Types.ObjectId, wfid: string) {
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_log_folder = emp_runtime_folder + "/" + tenant + "/log";
@@ -4180,33 +4197,25 @@ const getWfLogFilename = function (tenant: string, wfid: string) {
 	let logfile = `${wfidfolder}/process.log`;
 	return logfile;
 };
-/**
- *
- * @param {...} tenant,
- * @param {...} wfid,
- * @param {...} tpl_node -
- * @param {...} kvars_json -
- * @param {...} code -
- *
- * @return {...}
- */
 const runCode = async function (
-	tenant,
-	tenantDomain,
-	tplid,
-	wfid,
-	starter,
-	kvars_json,
-	pdsResolved_json,
-	code,
-	callbackId,
-	isTry = false,
+	tenant: string | Types.ObjectId,
+	tenantDomain: string,
+	tplid: string,
+	wfid: string,
+	starter: string,
+	kvars_json: Record<string, any>,
+	pdsResolved_json: Record<string, any>,
+	code: string,
+	callbackId: string,
+	isTry: boolean = false,
 ) {
 	//dev/emplabs/tenant每个租户自己的node_modules
 	let result = "DEFAULT";
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+	if (!fs.existsSync(emp_tenant_folder))
+		fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
 
 	let all_code = `
 module.paths.push('${emp_node_modules}');
@@ -4284,7 +4293,7 @@ const MtcPDSHasDoer = function(pds, who){
   }
   if(pdsDoers[pds]){
     for(let i=0; i<pdsDoers[pds].length; i++){
-      if(pdsDoers[pds][i]["uid"] === who){
+      if(pdsDoers[pds][i]["eid"] === who){
         ret = true;
         break;
       }
@@ -4435,9 +4444,9 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 
 const startWorkflow = async function (
 	rehearsal: boolean,
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	tplid: string,
-	starter: string,
+	starter: any,
 	textPbo: string,
 	teamid: string,
 	wfid: string,
@@ -4471,10 +4480,10 @@ const startWorkflow = async function (
 
 const startWorkflow_with = async function (
 	rehearsal: boolean,
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	tplid: string,
 	theTemplate: Emp.TemplateObj,
-	starter: string,
+	starter: any,
 	textPbo: string,
 	teamid: string,
 	wfid: string,
@@ -4485,22 +4494,25 @@ const startWorkflow_with = async function (
 	runmode = "standalone",
 	uploadedFiles: any,
 ) {
+	if (!starter.nickname) {
+		throw new EmpError("STARTER_SHOULD_BE_EMPLOYEE", "Starter should be an employee object");
+	}
 	if (parent_vars === null || parent_vars === undefined) {
 		parent_vars = {};
 	}
 	parent_vars["starter"] = {
 		label: "Starter",
-		value: starter,
+		value: starter.eid,
 		type: "plaintext",
 		name: "starter",
 	};
 	parent_vars["starterCN"] = {
-		value: await Cache.getUserName(tenant, starter, "startWorkflow_with"),
+		value: starter.nickname,
 		label: "StarterCN",
 		type: "plaintext",
 		name: "starterCN",
 	};
-	let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
+	let starterStaff = await OrgChartHelper.getStaff(tenant, starter.eid);
 	if (starterStaff) {
 		parent_vars["ou_SOU"] = {
 			label: "StarterOU",
@@ -4528,7 +4540,7 @@ const startWorkflow_with = async function (
 	let startDoc =
 		`<div class="process">` +
 		theTemplate.doc +
-		`<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
+		`<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter.eid}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
 		"</div>";
 	//KVAR above
 	let pboat = theTemplate.pboat;
@@ -4542,7 +4554,7 @@ const startWorkflow_with = async function (
 		wftitle: wftitle,
 		teamid: teamid,
 		tplid: tplid,
-		starter: starter,
+		starter: starter.eid,
 		status: "ST_RUN",
 		doc: startDoc,
 		rehearsal: rehearsal,
@@ -4553,7 +4565,7 @@ const startWorkflow_with = async function (
 	let attachments = [...textPbo, ...uploadedFiles];
 	attachments = attachments.map((x) => {
 		if (x.serverId) {
-			x.author = starter;
+			x.author = starter.eid;
 			x.forWhat = Const.ENTITY_WORKFLOW;
 			x.forWhich = wfid;
 			x.forKey = "pbo";
@@ -4585,12 +4597,12 @@ const startWorkflow_with = async function (
 		rehearsal: rehearsal,
 		selector: ".START",
 		byroute: "DEFAULT",
-		starter: starter,
+		starter: starter.eid,
 		round: 0,
 	};
 
 	await sendNexts([an]);
-	clearOlderRehearsal(tenant, starter, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
+	clearOlderRehearsal(tenant, starter.eid, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
 		(ret) => {},
 	);
 	clearOlderScripts(tenant).then((ret) => {
@@ -4605,17 +4617,17 @@ const startWorkflow_with = async function (
 /**
  * clearnout rehearsal workflow and todos old than 1 day.
  */
-const clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit: any = "h") {
+const clearOlderRehearsal = async function (tenant, starter_eid, howmany = 24, unit: any = "h") {
 	let theMoment = moment().subtract(howmany, unit);
 	let wfFilter = {
 		tenant: tenant,
-		starter: starter,
+		starter: starter_eid,
 		rehearsal: true,
 		updatedAt: { $lt: new Date(theMoment.toDate()) },
 	};
 	//TODO: keep using Mongoose instead of Redis?
-	let wfids = await Workflow.find(wfFilter, { wfid: 1, _id: 0 }).lean();
-	wfids = wfids.map((x) => x.wfid);
+	let wfs = await Workflow.find(wfFilter, { wfid: 1, _id: 0 }).lean();
+	let wfids = wfs.map((x) => x.wfid);
 	if (wfids.length > 0) {
 		for (let i = 0; i < wfids.length; i++) {
 			//TODO: deelte from redis also
@@ -4631,6 +4643,8 @@ const clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit:
 const clearOlderScripts = async function (tenant) {
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+	if (!fs.existsSync(emp_tenant_folder))
+		fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
 	//定义两个函数
 	const getDirectories = (srcPath) =>
 		fs.readdirSync(srcPath).filter((file) => fs.statSync(path.join(srcPath, file)).isDirectory());
@@ -4803,22 +4817,27 @@ const restartWorkflow = async function (
 	return wf;
 };
 
-const destroyWorkflow = async function (tenant, myEmail, wfid) {
+const destroyWorkflow = async function (
+	tenant: string | Types.ObjectId,
+	myEid: string,
+	wfid: string,
+) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.destroyWorkflow");
-	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "delete"))
+	const myEmployee = (await Employee.findOne({ tenant: tenant, eid: myEid })) as EmployeeType;
+	if (!SystemPermController.hasPerm(myEmployee, Const.ENTITY_WORKFLOW, wf, "delete"))
 		throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
-	let myGroup = await Cache.getMyGroup(myEmail);
+	let myGroup = await Cache.getEmployeeGroup(tenant, myEid);
 	//管理员可以destory
 	//starter可以destroy rehearsal
 	//starter可以destroy 尚在第一个活动上的流程
-	if (myGroup === "ADMIN" || (wf.starter === myEmail && (wf.rehearsal || wf.pnodeid === "start"))) {
-		__destroyWorkflow(tenant, wfid).then((ret) => {});
+	if (myGroup === "ADMIN" || (wf.starter === myEid && (wf.rehearsal || wf.pnodeid === "start"))) {
+		return __destroyWorkflow(tenant, wfid).then((ret) => {});
 	} else {
 		throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
 	}
 };
 
-const __destroyWorkflow = async function (tenant, wfid) {
+const __destroyWorkflow = async function (tenant: string | Types.ObjectId, wfid: string) {
 	console.log("Destroy workflow:", wfid);
 	//TODO: reset TODO ETAG
 	try {
@@ -4892,12 +4911,14 @@ const __destroyWorkflow = async function (tenant, wfid) {
 		process.stdout.write("\tDestroy attached files\r");
 		for (let i = 0; i < wf.attachments.length; i++) {
 			let serverId = wf.attachments[i].serverId;
-			let author = wf.attachments[i].author;
-			let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
-			try {
-				fs.unlinkSync(pondServerFile.fullPath);
-			} catch (err) {
-				console.log("\tDestroy attached: ", err.message);
+			if (serverId) {
+				let author = wf.attachments[i].author;
+				let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
+				try {
+					fs.unlinkSync(pondServerFile.fullPath);
+				} catch (err) {
+					console.log("\tDestroy attached: ", err.message);
+				}
 			}
 		}
 		console.log("Destroy workflow:", wfid, ", Done");
@@ -4934,7 +4955,7 @@ const workflowGetList = async function (tenant, email, filter, sortdef) {
 	let option: any = {};
 	if (sortdef) option.sort = sortdef;
 	//TODO: this is not findOne, but find, should we keep it in mongoose?
-	let wfs = await Workflow.find(filter, { doc: 0 }, option).lean();
+	let wfs = (await Workflow.find(filter, { doc: 0 }, option).lean()) as WorkflowType[];
 	for (let i = 0; i < wfs.length; i++) {
 		wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter, "workflowGetList");
 	}
@@ -4993,7 +5014,11 @@ const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	// Extremely important  END
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	if (!SystemPermController.hasPerm(shouldDoer, "work", todo, "read"))
+	let shouldEmployee = (await Employee.findOne({
+		tenant: tenant,
+		eid: shouldDoer,
+	})) as EmployeeType;
+	if (!SystemPermController.hasPerm(shouldEmployee, "work", todo, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this work");
 	try {
 		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.getWorkInfo");
@@ -5018,12 +5043,12 @@ const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	}
 };
 
-const getWfHistory = async function (email, tenant, wfid, wf) {
+const getWfHistory = async function (tenant: string, eid: string, wfid: string, wf: any) {
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
 
-	return await __getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
+	return await __getWorkflowWorksHistory(tenant, eid, tpRoot, wfRoot, wfid);
 };
 
 const splitComment = function (str) {
@@ -5036,18 +5061,18 @@ const splitComment = function (str) {
 	if (Array.isArray(tmp)) return tmp;
 	else return [];
 };
-//为MD中的@uid添加<span>
-const splitMarked = async function (tenant, cmt) {
+//为MD中的@eid添加<span>
+const splitMarked = async function (tenant: string | Types.ObjectId, cmt: CommentType) {
 	let mdcontent = Marked.parse(cmt.content, {});
 	let splittedMd = splitComment(mdcontent);
 	let people = [];
-	let emails = [];
-	[people, emails] = await setPeopleFromContent(
+	let eids = [];
+	[people, eids] = await setPeopleFromContent(
 		tenant,
 		cmt.who, //Email domain reference user
 		cmt.content,
 		people,
-		emails,
+		eids,
 	);
 	for (let c = 0; c < splittedMd.length; c++) {
 		if (splittedMd[c].startsWith("@")) {
@@ -5151,7 +5176,7 @@ const getComments = async function (tenant, objtype, objid, depth = -1, skip = -
 
 const loadWorkflowComments = async function (tenant, wfid) {
 	let cmts = [];
-	let workComments = await Comment.find(
+	let workComments = (await Comment.find(
 		{
 			tenant: tenant,
 			"context.wfid": wfid,
@@ -5161,7 +5186,7 @@ const loadWorkflowComments = async function (tenant, wfid) {
 			__v: 0,
 		},
 		{ sort: "-updatedAt" },
-	).lean();
+	).lean()) as CommentType[];
 	for (let i = 0; i < workComments.length; i++) {
 		let todo = await Todo.findOne(
 			{
@@ -5201,13 +5226,13 @@ const loadWorkflowComments = async function (tenant, wfid) {
 		cmts[i].mdcontent = tmpret.mdcontent;
 		cmts[i].mdcontent2 = tmpret.mdcontent2;
 		let people = [];
-		let emails = [];
-		[people, emails] = await setPeopleFromContent(
+		let eids = [];
+		[people, eids] = await setPeopleFromContent(
 			tenant,
 			cmts[i].who, //Email domain reference user
 			cmts[i].content,
 			people,
-			emails,
+			eids,
 		);
 		cmts[i].people = people;
 		//每个 comment 自身还会有被评价
@@ -5440,7 +5465,7 @@ const __getWorkFullInfo = async function (
 		ret,
 	);
 
-	ret.wf.history = await __getWorkflowWorksHistory(TodoOwner, tenant, tpRoot, wfRoot, wfid);
+	ret.wf.history = await __getWorkflowWorksHistory(tenant, TodoOwner, tpRoot, wfRoot, wfid);
 	ret.version = Const.VERSION;
 
 	return ret;
@@ -5463,11 +5488,11 @@ const __getWorkFullInfo = async function (
  * ]
  */
 const __getWorkflowWorksHistory = async function (
-	email,
-	tenant,
-	tpRoot,
-	wfRoot,
-	wfid,
+	tenant: string,
+	eid: string,
+	tpRoot: any,
+	wfRoot: any,
+	wfid: string,
 ): Promise<any[]> {
 	let ret = [];
 	let tmpRet = [];
@@ -5499,7 +5524,7 @@ const __getWorkflowWorksHistory = async function (
 		if (todos[i].decision) todoEntry.decision = todos[i].decision;
 		let kvars = await Parser.userGetVars(
 			tenant,
-			email,
+			eid,
 			todos[i].wfid,
 			todos[i].workid,
 			[],
@@ -5519,7 +5544,7 @@ const __getWorkflowWorksHistory = async function (
 			//组织这个work的doers（多个用户）
 			tmpRet[i].doers = [];
 			tmpRet[i].doers.push({
-				uid: tmpRet[i].doer,
+				eid: tmpRet[i].doer,
 				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
 				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
@@ -5540,7 +5565,7 @@ const __getWorkflowWorksHistory = async function (
       }
       */
 			ret[existing_index].doers.push({
-				uid: tmpRet[i].doer,
+				eid: tmpRet[i].doer,
 				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
 				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
@@ -5876,20 +5901,16 @@ const getStatusFromClass = function (node) {
 /**
  * getWorkflowOrNodeStatus = async() Get status of workflow or a worknode
  *
- * @param {...} getWorkflowOrNodeStatus = asynctenant -
- * @param {...} wfid - the id of workflow
- * @param {...} workid - the id of work
- *
- * @return {...} status of workid is present, status of workflow if workid is absent
  */
 const getWorkflowOrNodeStatus = async function (
-	email: string,
 	tenant: string,
+	eid: string,
 	wfid: string,
 	workid = null,
 ) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getWorkflowOrNodeStatus");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
+	const theEmployee = (await Employee.findOne({ tenant: tenant, eid: eid })) as EmployeeType;
+	if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
@@ -5904,14 +5925,11 @@ const getWorkflowOrNodeStatus = async function (
 
 /**
  *
- * @param {...}
- * @param {...} wfid -
- *
- * @return {...}
  */
-const pauseWorkflow = async function (tenant: string, email: string, wfid: string) {
+const pauseWorkflow = async function (tenant: string, eid: string, wfid: string) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.pauseWorkflow");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
+	const theEmployee = (await Employee.findOne({ tenant: tenant, eid: eid })) as EmployeeType;
+	if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
@@ -5946,7 +5964,7 @@ const pauseWorkflow = async function (tenant: string, email: string, wfid: strin
 	return ret;
 };
 
-const resetTodosETagByWfId = async function (tenant: string, wfid: string) {
+const resetTodosETagByWfId = async function (tenant: string | Types.ObjectId, wfid: string) {
 	let todos = await Todo.find({ tenant: tenant, wfid: wfid }, { doer: 1 });
 	for (let i = 0; i < todos.length; i++) {
 		await Cache.resetETag("ETAG:TODOS:${todos[i].doer}");
@@ -6060,16 +6078,17 @@ const resumeDelayTimers = async function (tenant, wfid) {
  * 如果忽略workid,则取工作流的变量
  * 如果有workID, 则取工作项的变量
  */
-const getKVars = async function (tenant: string, email: string, wfid: string, workid: string) {
+const getKVars = async function (tenant: string, eid: string, wfid: string, workid: string) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getKVars");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
+	const theEmployee = (await Employee.findOne({ tenant: tenant, eid: eid })) as EmployeeType;
+	if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 	if (workid) {
-		return await Parser.userGetVars(tenant, email, wfid, workid, [], [], Const.VAR_IS_EFFICIENT);
+		return await Parser.userGetVars(tenant, eid, wfid, workid, [], [], Const.VAR_IS_EFFICIENT);
 	} else {
 		return await Parser.userGetVars(
 			tenant,
-			email,
+			eid,
 			wfid,
 			Const.FOR_WHOLE_PROCESS,
 			[],
@@ -6104,10 +6123,11 @@ const getActiveDelayTimers = async function (tenant, wfid) {
  *
  * @return {...}  Array :[ {from_workid, from_nodeid} ]
  */
-const getTrack = async function (email: string, tenant: string, wfid: string, workid: string) {
+const getTrack = async function (tenant: string, eid: string, wfid: string, workid: string) {
 	try {
 		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getTrack");
-		if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
+		const theEmployee = (await Employee.findOne({ tenant: tenant, eid: eid })) as EmployeeType;
+		if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "read"))
 			throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 		let wfIO = await Parser.parse(wf.doc);
 		let wfRoot = wfIO(".workflow");
@@ -6271,7 +6291,7 @@ const checkVisi = async function (tenant, tplid, email, withTpl = null) {
 				email: tpl.author,
 				insertDefault: true,
 			});
-			visiPeople = tmp.map((x) => x.uid);
+			visiPeople = tmp.map((x) => x.eid);
 		}
 	}
 	ret = visiPeople.includes(email) || visiPeople.includes("all");
@@ -6284,8 +6304,8 @@ const checkVisi = async function (tenant, tplid, email, withTpl = null) {
 const clearUserVisiedTemplate = async function (tenant) {
 	let uvtKeyPrefix = "uvt_" + tenant + "_";
 	let ubtKeyPrefix = "ubt_" + tenant + "_";
-	let tmp = await User.find({ tenant: tenant }, { _id: 0, email: 1 }).lean();
-	tmp = tmp.map((x) => x.email);
+	let employees = await Employee.find({ tenant: tenant }, { _id: 0, eid: 1 }).lean();
+	const tmp = employees.map((x) => x.eid);
 	for (let i = 0; i < tmp.length; i++) {
 		let uvtKey = uvtKeyPrefix + tmp[i];
 		await redisClient.del(uvtKey);
@@ -7145,9 +7165,9 @@ const getEmailRecipientsFromDoers = function (doers) {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
 		if (i === 0) {
-			ret += doers[i].uid;
+			ret += doers[i].eid;
 		} else {
-			ret += ", " + doers[i].uid;
+			ret += ", " + doers[i].eid;
 		}
 	}
 	return ret;
@@ -7433,7 +7453,7 @@ const getDoer = async function (
 ) {
 	let ret = [];
 	if (!pds || (pds && pds === "DEFAULT")) {
-		return [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
+		return [{ eid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	//先吧kvarString变为kvar对象
 	let kvars = {};
@@ -7474,22 +7494,22 @@ const getDoer = async function (
 	);
 	//如果返回为空，并且需要插入缺省starter，则返回缺省starter
 	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length === 0))) {
-		ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
+		ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	return ret;
 };
 
 /**
  * 生成6位短信验证码
- * @returns 
+ * @returns
  */
 const randomNumber = () => {
-    let Num = Math.round(Math.random() * 1000000);
-    if (Num < 100000 || Num > 1000000) {
-        return randomNumber();
-    } else {
-        return Num;
-    }
+	let Num = Math.round(Math.random() * 1000000);
+	if (Num < 100000 || Num > 1000000) {
+		return randomNumber();
+	} else {
+		return Num;
+	}
 };
 
 if (isMainThread) init();
@@ -7556,5 +7576,5 @@ export default {
 	sendTenantMail,
 	sendSystemMail,
 	scanKShares,
-	randomNumber
+	randomNumber,
 };

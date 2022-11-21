@@ -2,7 +2,8 @@
 import Handlers from "./handlers";
 import Joi from "joi";
 const validation = {
-	username: /^[a-zA-Z0-9\u4e00-\u9fa5]{3,12}$/,
+	account: /^[a-zA-Z][a-zA-Z0-9_]{3,20}$/,
+	username: /^[a-zA-Z0-9\u4e00-\u9fa5]{3,40}$/,
 	password: /^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{6,20}$/,
 };
 
@@ -19,10 +20,9 @@ const internals = {
 				notes: "The user registration generates an email for verification",
 				validate: {
 					payload: {
+						account: Joi.string().regex(validation.account).lowercase().required(),
 						username: Joi.string().regex(validation.username).required(),
 						password: Joi.string().regex(validation.password).required(),
-						email: Joi.string().email().lowercase().required(),
-						joincode: Joi.string().optional().allow(null),
 						siteid: Joi.string().optional(),
 					},
 					validator: Joi,
@@ -34,11 +34,12 @@ const internals = {
 			path: "/check/freereg",
 			handler: Handlers.CheckFreeReg,
 			config: {
+				description: "Check account owned Tenant is able to able to register freely or not",
 				// Include this API in swagger documentation
 				tags: ["api"],
 				validate: {
 					payload: {
-						email: Joi.string().email().lowercase().required(),
+						account: Joi.string().email().lowercase().required(),
 					},
 					validator: Joi,
 				},
@@ -55,7 +56,7 @@ const internals = {
 				notes: "The user login will return a sessionToken",
 				validate: {
 					payload: {
-						email: Joi.string().lowercase().required(),
+						account: Joi.string().lowercase().required(),
 						//password required with same regex as client
 						password: Joi.string().required(),
 						siteid: Joi.string().optional(),
@@ -90,9 +91,9 @@ const internals = {
 				// auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { 
+					payload: {
 						code: Joi.string().required(),
-						phone: Joi.string().required()					
+						phone: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -191,11 +192,26 @@ const internals = {
 			handler: Handlers.VerifyEmail,
 			config: {
 				tags: ["api"],
-				description: "Verify user email",
+				description: "Verify user email with verification token(not authentication token)",
 				notes: "User clicks link in email sent during registration",
 				validate: {
 					payload: {
 						token: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/admin/set/emailVerified",
+			handler: Handlers.AdminSetEmailVerified,
+			config: {
+				tags: ["api"],
+				notes: "Admin set emailVerified for same domain users",
+				validate: {
+					payload: {
+						userids: Joi.array().items(Joi.string()).required(),
 					},
 					validator: Joi,
 				},
@@ -225,9 +241,6 @@ const internals = {
 				description: "User requests to reset password",
 				notes: "Email is sent to email address provided",
 				validate: {
-					payload: {
-						email: Joi.string().email().lowercase().required(),
-					},
 					validator: Joi,
 				},
 			},
@@ -271,51 +284,6 @@ const internals = {
 			},
 		},
 		{
-			method: "GET",
-			path: "/account/profile/{email}",
-			handler: Handlers.GetProfileByEmail,
-			config: {
-				auth: "token",
-				tags: ["api"],
-				description: "Get the user profile by email",
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/account/profile/update",
-			handler: Handlers.UpdateProfile,
-			config: {
-				tags: ["api"],
-				description: "Update user profile",
-				notes: "User is able to change their username and email and password",
-				auth: "token",
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					payload: {
-						//email required
-						value: {
-							signature: Joi.string().optional().allow(""),
-							avatar: Joi.string().optional().allow(""),
-							username: Joi.string().regex(validation.username).optional(),
-							password: Joi.string().regex(validation.password).optional(),
-							ew: Joi.object({ email: Joi.boolean(), wecom: Joi.boolean() }).optional(),
-							ps: Joi.number().min(5).max(100).optional(),
-							old_password: Joi.string().optional(),
-						},
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
 			method: "POST",
 			path: "/account/set/signature",
 			handler: Handlers.SetSignatureFile,
@@ -346,7 +314,9 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
-					payload: {},
+					payload: {
+						eid: Joi.string().optional(),
+					},
 					validator: Joi,
 				},
 			},
@@ -419,7 +389,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						emailtobedel: Joi.string().required(),
+						account: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -557,7 +527,6 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: {},
 					validator: Joi,
 				},
 			},
@@ -741,6 +710,16 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/tnt/join/clear",
+			handler: Handlers.ClearJoinApplication,
+			config: {
+				tags: ["api"],
+				description: "Clear Join a tenant in strict mode.",
+				auth: "token",
+			},
+		},
+		{
+			method: "POST",
 			path: "/tnt/approve",
 			handler: Handlers.JoinApprove,
 			config: {
@@ -748,8 +727,8 @@ const internals = {
 				description: "Approve a tenant join application in strict mode.",
 				auth: "token",
 				validate: {
-					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { ems: Joi.string().allow("").required(), password: Joi.string().required() },
+					//headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: { accounts: Joi.array().items(Joi.string().lowercase()).required() },
 					validator: Joi,
 				},
 			},
@@ -764,8 +743,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					//payload: { ems: Joi.string().allow("").required(), password: Joi.string().required() },
-					payload: { ems: Joi.string().allow("").required() },
+					payload: { eids: Joi.array().items(Joi.string()).required() },
 					validator: Joi,
 				},
 			},
@@ -781,8 +759,7 @@ const internals = {
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
-						ems: Joi.string().allow("").required(),
-						//password: Joi.string().required(),
+						eids: Joi.array().items(Joi.string()).required(),
 						member_group: Joi.string().required(),
 					},
 					validator: Joi,
@@ -800,8 +777,7 @@ const internals = {
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
-						ems: Joi.string().allow("").required(),
-						//password: Joi.string().required(),
+						eids: Joi.array().items(Joi.string()).required(),
 						set_password_to: Joi.string().regex(validation.password).required(),
 					},
 					validator: Joi,
@@ -846,7 +822,9 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { ems: Joi.string().required() },
+					payload: {
+						eids: Joi.array().items(Joi.string()).required(),
+					},
 					validator: Joi,
 				},
 			},
@@ -867,7 +845,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { email: Joi.string() },
+					payload: { eid: Joi.string() },
 					validator: Joi,
 				},
 			},
@@ -880,8 +858,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { 
-						userid: Joi.string().required()
+					payload: {
+						account: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -895,9 +873,9 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { 
+					payload: {
 						tenantid: Joi.string().required(),
-						userid: Joi.string().required()
+						account: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -912,8 +890,8 @@ const internals = {
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					params: { 
-						tenant_id: Joi.string().required()
+					params: {
+						tenant_id: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -927,8 +905,8 @@ const internals = {
 				// auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { 
-						tenantid: Joi.string().required()					
+					payload: {
+						tenantid: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -942,9 +920,9 @@ const internals = {
 				// auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { 
-						area: Joi.string().default('+86'),
-						phone: Joi.string().required()					
+					payload: {
+						area: Joi.string().default("+86"),
+						phone: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -957,8 +935,8 @@ const internals = {
 			config: {
 				description: "handle data flow",
 				validate: {
-					params: { 
-						code: Joi.string().optional()
+					params: {
+						code: Joi.string().optional(),
 					},
 					validator: Joi,
 				},

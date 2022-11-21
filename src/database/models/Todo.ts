@@ -1,23 +1,10 @@
-/**
- * # Todo.js
- *
- * The Todo document for Mongoose
- *
- *
-'use strict';
-/**
- * ## Imports
- *
- */
-const Joi = require("joi");
-//Mongoose - the ORM
-import Mongoose from "mongoose";
-//The document structure definition
+"use strict";
+import { Schema, InferSchemaType, model, HydratedDocument } from "mongoose";
 
 //Same fields as Parse.com
-const schema = new Mongoose.Schema(
+const schema = new Schema(
 	{
-		tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		round: { type: Number, default: 0 },
 		todoid: { type: String, required: [true, "不能为空"], index: true },
 		wfid: { type: String, required: [true, "不能为空"], index: true },
@@ -45,8 +32,11 @@ const schema = new Mongoose.Schema(
 		allowdiscuss: { type: Boolean, default: true },
 		postpone: { type: Number, default: 0 },
 		postponedAt: { type: Date, default: Date.now() },
+		createdAt: { type: Date },
+		updatedAt: { type: Date },
 	},
 	{ timestamps: true },
 );
 
-export default Mongoose.model("Todo", schema);
+export type TodoType = HydratedDocument<InferSchemaType<typeof schema>>;
+export const Todo = model("Todo", schema);

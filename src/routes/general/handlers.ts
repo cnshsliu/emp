@@ -5,8 +5,6 @@
  *
  */
 "use strict";
-import LoginTenant from "../../database/models/LoginTenant"
-import User from "../../database/models/User"
 
 /**
  * ## Declaration

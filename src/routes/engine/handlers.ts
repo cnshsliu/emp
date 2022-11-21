@@ -1,31 +1,37 @@
-import Cheerio from "cheerio";
+import {
+	MtcCredentials,
+	PondFileInfoFromPayloadType,
+	PondFileInfoOnServerType,
+} from "../../lib/EmpTypes";
 import Boom from "@hapi/boom";
+import { expect } from "@hapi/code";
+import { Request, ResponseToolkit } from "@hapi/hapi";
 import assert from "assert";
 import Parser from "../../lib/Parser";
 import moment from "moment";
+import type { DurationInputArg1, DurationInputArg2 } from "moment";
 import fs from "fs";
 import path from "path";
 import Excel from "exceljs";
 import Joi from "joi";
 import IdGenerator from "../../lib/IdGenerator";
 import TimeZone from "../../lib/timezone";
-import Tenant from "../../database/models/Tenant";
-import Template from "../../database/models/Template";
-import Crontab from "../../database/models/Crontab";
+import { Tenant } from "../../database/models/Tenant";
+import { Template, TemplateType } from "../../database/models/Template";
+import { User } from "../../database/models/User";
+import { Employee, EmployeeType } from "../../database/models/Employee";
+import { Workflow } from "../../database/models/Workflow";
+import { PondFile } from "../../database/models/PondFile";
+import { Crontab } from "../../database/models/Crontab";
 import Webhook from "../../database/models/Webhook";
-import EdittingLog from "../../database/models/EdittingLog";
+import { EdittingLog } from "../../database/models/EdittingLog";
 import Crypto from "../../lib/Crypto";
-import Workflow from "../../database/models/Workflow";
-import User from "../../database/models/User";
-import Todo from "../../database/models/Todo";
+import { Todo } from "../../database/models/Todo";
 import Work from "../../database/models/Work";
 import Route from "../../database/models/Route";
-import KVar from "../../database/models/KVar";
 import List from "../../database/models/List";
-import Cell from "../../database/models/Cell";
-import PondFile from "../../database/models/PondFile";
-import Comment from "../../database/models/Comment";
-import Kicklist from "../../database/models/Kicklist";
+import { Cell, CellType } from "../../database/models/Cell";
+import { Comment } from "../../database/models/Comment";
 import KsTpl from "../../database/models/KsTpl";
 import Thumb from "../../database/models/Thumb";
 import Mailman from "../../lib/Mailman";
@@ -39,7 +45,7 @@ import OrgChartHelper from "../../lib/OrgChartHelper";
 import replyHelper from "../../lib/helpers";
 import Tools from "../../tools/tools.js";
 import Engine from "../../lib/Engine";
-import SystemPermController from "../../lib/SystemPermController";
+import SPC from "../../lib/SystemPermController";
 import EmpError from "../../lib/EmpError";
 import lodash from "lodash";
 import Cache from "../../lib/Cache";
@@ -49,26 +55,20 @@ import RCL from "../../lib/RedisCacheLayer";
 import { redisClient } from "../../database/redis";
 
 const EmailSchema = Joi.string().email();
-const asyncFilter = async (arr, predicate) => {
+/* const asyncFilter = async (arr: Array<any>, predicate: any) => {
 	const results = await Promise.all(arr.map(predicate));
 
 	return arr.filter((_v, index) => results[index]);
-};
+}; */
 
-async function TemplateCreate(req, h) {
-	let tplid = req.payload.tplid.trim();
+async function TemplateCreate(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as MtcCredentials;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myUid = myEmail.substring(0, myEmail.indexOf("@"));
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let author = myEmail;
-		let authorName = req.auth.credentials.username;
-		let desc = req.payload.desc;
 		let doc = `
-<div class='template' id='${tplid}'>
+<div class='template' id='${PLD.tplid}'>
     <div class='node START' id='start' style='left:200px; top:200px;'><p>START</p></div>
     <div class='node ACTION' id='hellohyperflow' style='left:300px; top:300px;'><p>Hello, HyperFlow</p><div class="kvars">e30=</div></div>
     <div class='node END' id='end' style='left:400px; top:400px;'><p>END</p> </div>
@@ -76,53 +76,49 @@ async function TemplateCreate(req, h) {
     <div class='link' from='hellohyperflow' to='end'></div>
 </div>
     `;
-		let tmp = Parser.splitStringToArray(req.payload.tags);
-		let theTags = tmp.map((x) => {
-			return { owner: author, text: x, group: myGroup };
+		let tmp = Parser.splitStringToArray(PLD.tags);
+		let theTags = tmp.map((x: string) => {
+			return { owner: CRED.employee.eid, text: x, group: CRED.employee.group };
 		});
-		theTags.unshift({ owner: myEmail, text: "mine", group: myGroup });
+		theTags.unshift({ owner: CRED.employee.eid, text: "mine", group: CRED.employee.group });
 		//let bdoc = await Tools.zipit(doc, {});
 		let obj = new Template({
-			tenant: tenant,
-			tplid: tplid,
-			author: author,
-			authorName: authorName,
+			tenant: CRED.tenant._id,
+			tplid: PLD.tplid,
+			author: CRED.employee.eid,
+			authorName: CRED.employee.nickname,
 			doc: doc,
 			//bdoc: bdoc,
-			desc: desc ? desc : "",
+			desc: PLD.desc ? PLD.desc : "",
 			tags: theTags,
-			visi: "@" + myUid,
+			visi: "@" + CRED.employee.eid,
 		});
 		obj = await obj.save();
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 		return h.response(obj);
 	} catch (err) {
 		console.log(err);
 		if (err.message.indexOf("duplicate key") > -1) {
-			err = new EmpError("TPL_ALREADY_EXIST", "Template already exists", { tplid });
+			err = new EmpError("TPL_ALREADY_EXIST", "Template already exists", { tplid: PLD.tplid });
 			return h.response(replyHelper.constructErrorResponse(err)).code(500);
 		}
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TemplateDesc(req, h) {
+async function TemplateDesc(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
-		let desc = req.payload.desc;
-		let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
-		if (
-			!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", obj, "update"))
-		)
+		let obj = await Template.findOne({ tenant: CRED.tenant._id, tplid: PLD.tplid });
+		if (!(await SPC.hasPerm(CRED.employee, "template", obj, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to update template");
 		obj = await Template.findOneAndUpdate(
 			{
-				tenant: tenant,
-				tplid: tplid,
+				tenant: CRED.tenant._id,
+				tplid: PLD.tplid,
 			},
-			{ $set: { desc: desc ? desc : "" } },
+			{ $set: { desc: PLD.desc ? PLD.desc : "" } },
 			{ new: true, upsert: false },
 		);
 		return h.response(obj.desc);
@@ -132,16 +128,14 @@ async function TemplateDesc(req, h) {
 	}
 }
 
-async function TemplateBasic(req, h) {
+async function TemplateBasic(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let tplid = req.payload.tplid;
 		let tpl = await Template.findOne(
 			{
-				tenant: tenant,
-				tplid: tplid,
+				tenant: CRED.tenant._id,
+				tplid: PLD.tplid,
 			},
 			{ doc: 0 },
 		);
@@ -152,110 +146,38 @@ async function TemplateBasic(req, h) {
 	}
 }
 
-async function WorkflowUpgrade(req, h) {
+async function WorkflowGetFirstTodoid(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfs = await Workflow.find({ tenant: tenant });
-		for (let i = 0; i < wfs.length; i++) {
-			let wf = wfs[i];
-			let wfIO = await Parser.parse(wf.doc);
-			let tpRoot = wfIO(".template");
-			let wfRoot = wfIO(".workflow");
-			let kvars = wfRoot.find(".kvars").first();
-			for (let i = 0; i < kvars.length; i++) {
-				let cheerObj = Cheerio(kvars.get(i));
-				let doer = cheerObj.attr("doer");
-				if (!doer) doer = "EMP";
-				let base64_string = cheerObj.text();
-				let wfid = wf.wfid;
-				let code = Parser.base64ToCode(base64_string);
-				if (base64_string !== "e30=") {
-					console.log(doer, code);
-					let obj = new KVar({
-						tenant: tenant,
-						wfid: wfid,
-						objid: "workflow",
-						doer: doer,
-						content: base64_string,
-					});
-					obj = await obj.save();
-				}
-			}
-			let works = wfRoot.find(".work");
-			for (let i = 0; i < works.length; i++) {
-				let work = Cheerio(works.get(i));
-				kvars = work.find(".kvars");
-				for (let k = 0; k < kvars.length; k++) {
-					let kvar = Cheerio(kvars.get(k));
-					let doer = kvar.attr("doer");
-					if (!doer) doer = "EMP";
-					let base64_string = kvar.text();
-					let wfid = wf.wfid;
-					let workid = work.attr("id");
-					if (base64_string !== "e30=") {
-						console.log(doer, wfid, workid, base64_string);
-
-						let obj = new KVar({
-							tenant: tenant,
-							wfid: wfid,
-							objid: workid,
-							doer: doer,
-							content: base64_string,
-						});
-						obj = await obj.save();
-					}
-				}
-			}
-		}
-
-		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
-		return h.response("done");
+		let todo = await Todo.findOne(
+			{
+				tenant: CRED.tenant._id,
+				wfid: PLD.wfid,
+				doer: CRED.employee.eid,
+				status: "ST_RUN",
+			},
+			{ todoid: 1 },
+		);
+		return h.response(todo ? todo.todoid : "");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function WorkflowGetFirstTodoid(req, h) {
+async function WorkflowReadlog(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-
-		let wfid = req.payload.wfid;
-
-		let todoFilter = {
-			tenant: tenant,
-			wfid: wfid,
-			doer: myEmail,
-			status: "ST_RUN",
-		};
-
-		let todo = await Todo.findOne(todoFilter, { todoid: 1 });
-
-		if (todo) return h.response(todo.todoid);
-		else return h.response("");
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
-}
-
-async function WorkflowReadlog(req, h) {
-	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-
-		let wfid = req.payload.wfid;
-		//TODO: change to perm cache
 		let wf = await RCL.getWorkflow(
-			{ tenant: tenant, wfid: wfid },
+			{ tenant: CRED.tenant._id, wfid: PLD.wfid },
 			"engine/handler.WorkflowReadlog",
 		);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 			return "You don't have permission to read this workflow";
 
-		let logFilename = Engine.getWfLogFilename(tenant, wfid);
+		let logFilename = Engine.getWfLogFilename(CRED.tenant._id, PLD.wfid);
 
 		return h.response(fs.readFileSync(logFilename));
 	} catch (err) {
@@ -265,21 +187,21 @@ async function WorkflowReadlog(req, h) {
 	}
 }
 
-async function SeeItWork(req, h) {
+async function SeeItWork(req: Request, h: ResponseToolkit) {
+	//const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		const tenant = req.auth.credentials.tenant._id;
-		let author = req.auth.credentials.email;
 		let doc = `
 <div class="template" id="Metatocome Learning Guide"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left: 360px; top: 200px; z-index: 0;" role="DEFAULT"><p>LG-Step1: Get familiar with metatocome</p><div class="kvars">e30=</div><div class="instruct">PGgxPkdldCBmYW1pbGlhciB3aXRoIHd3dy5tZXRhdG9jb21lLmNvbTwvaDE+Cjxici8+Ck1ldGF0b2NvbWUgcHJvdmlkZSAKPGgyPmhhaGFoYTwvaDI+CjxhIGhyZWY9Ii9kb2NzLyNpbnRyb2R1Y3Rpb24iPk1ldGF0b2NvbWUgSW50cm9kdWN0aW9uPC9hPgo8YSBocmVmPSIvZG9jcy8jdGhlc2l0ZSI+d3d3Lm1ldGF0b2NvbWUuY29tIGludHJvZHVjdGlvbjwvYT4=</div></div><div class="node END" id="end" style="left: 1240px; top: 920px; z-index: 0;"><p>END</p> </div><div id="71k3oibjJ4FQUFkva62tJo" class="node ACTION" style="top: 340px; left: 360px; z-index: 4;" role="DEFAULT"><p>LG-Step2: The site</p><div class="kvars">e30=</div><div class="instruct">PGEgaHJlZj0iL2RvY3MjdGhlc2l0ZSIgdGFyZ2V0PSJfYmxhbmsiPlRoZSBzaXRlPC9hPg==</div></div><div id="u3zuqQEruTzGGaq4PvpTsH" class="node ACTION" style="top: 440px; left: 360px; z-index: 5;" role="DEFAULT"><p>LG-step3: Key concept</p><div class="kvars">e30=</div><div class="instruct">PGEgaHJlZj0iL2RvY3Mja2V5Y29uZWNwdHMiPktleSBDb25jZXB0PC9hPg==</div></div><div id="rKvK4i2b2aKCKnp4nDBmxa" class="node ACTION" style="top: 540px; left: 360px; z-index: 6;" role="DEFAULT"><p>LG-step4: Workflow Template</p><div class="kvars">e30=</div><div class="instruct">QSB0ZW1wbGF0ZSBpcyAuLi4KCjxhIGhyZWY9Ii9kb2NzI3RlbXBsYXRlIj5TZWUgZGV0YWlscyAuLi48L2E+</div></div><div id="iVq2QorpGf2kFXq4YyTxfW" class="node ACTION" style="top: 640px; left: 360px; z-index: 7;" role="DEFAULT"><p>LG-step5: Workflow Process</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4iTURhFXJnnUTSyorQuEKE" class="node ACTION" style="top: 740px; left: 360px; z-index: 8;" role="DEFAULT"><p>LG-step6: Works</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="3XfczPQZCXHQAQ1RTEzuSG" class="node ACTION" style="top: 800px; left: 200px; z-index: 9;" role="DEFAULT"><p>LG_step7: Work Form</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="gd42tjiXY1WSn3V67B5bGf" class="node ACTION" style="top: 940px; left: 200px; z-index: 10;" role="DEFAULT"><p>LG-step8：User Choice</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4CcpXjn9e1o3wMrdBC36HV" class="node ACTION" style="top: 860px; left: 400px; z-index: 11;" role="DEFAULT"><p>LG-Step91： Approve</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="i1MnFC4Xrhub8XMR7zRTjL" class="node ACTION" style="top: 1020px; left: 400px; z-index: 13;" role="DEFAULT"><p>LG-Step92： Reject</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="w5mrnmJSGkGZ7tBgiPFhcT" class="node ACTION" style="top: 920px; left: 540px; z-index: 14;" role="DEFAULT"><p>LG-Step10: User Input</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="9t5jUp7VTCqTnq7Lx4EMEa" class="node SCRIPT" style="top: 920px; left: 700px; z-index: 15;"><p>Script</p></div><div id="ud8F2jXbKkwRPhpg6Wa7pK" class="node ACTION" style="top: 700px; left: 860px; z-index: 16;" role="DEFAULT"><p>A1</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="fKnv9oJFSmYQWnSEXSEZgu" class="node ACTION" style="top: 780px; left: 860px; z-index: 17;" role="DEFAULT"><p>A2</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4N7FVVX3KM449au8B4hUJn" class="node ACTION" style="top: 880px; left: 860px; z-index: 18;" role="DEFAULT"><p>A3</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="rjFWZpL1mbUS37ThUYSQn5" class="node ACTION" style="top: 960px; left: 860px; z-index: 19;" role="DEFAULT"><p>B1</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="n77n7D6ihMwcsMw7Jpj2N5" class="node ACTION" style="top: 1040px; left: 860px; z-index: 20;" role="DEFAULT"><p>B2</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="4JRPNS5uZfkJ3Tk8zorABj" class="node ACTION" style="top: 1160px; left: 860px; z-index: 21;" role="DEFAULT"><p>B3</p><div class="kvars">e30=</div><div class="instruct"></div></div><div id="wqF5XEzdA9RgVLvgJxx6wF" class="node OR" style="top: 920px; left: 1120px; z-index: 22;"><p>OR</p></div><div id="bMi2AwsMDEssqujs39WnUE" class="node ACTION" style="top: 1260px; left: 860px; z-index: 22;" role="DEFAULT"><p>DEFAULT</p><div class="kvars">e30=</div><div class="instruct"></div></div><div class="link" from="start" to="hellohyperflow"></div><div class="link" from="hellohyperflow" to="71k3oibjJ4FQUFkva62tJo"></div><div class="link" from="71k3oibjJ4FQUFkva62tJo" to="u3zuqQEruTzGGaq4PvpTsH"></div><div class="link" from="u3zuqQEruTzGGaq4PvpTsH" to="rKvK4i2b2aKCKnp4nDBmxa"></div><div class="link" from="rKvK4i2b2aKCKnp4nDBmxa" to="iVq2QorpGf2kFXq4YyTxfW"></div><div class="link" from="iVq2QorpGf2kFXq4YyTxfW" to="4iTURhFXJnnUTSyorQuEKE"></div><div class="link" from="4iTURhFXJnnUTSyorQuEKE" to="3XfczPQZCXHQAQ1RTEzuSG"></div><div class="link" from="3XfczPQZCXHQAQ1RTEzuSG" to="gd42tjiXY1WSn3V67B5bGf"></div><div class="link" from="gd42tjiXY1WSn3V67B5bGf" to="4CcpXjn9e1o3wMrdBC36HV" case="Approve"></div><div class="link" from="gd42tjiXY1WSn3V67B5bGf" to="i1MnFC4Xrhub8XMR7zRTjL" case="Reject"></div><div class="link" from="4CcpXjn9e1o3wMrdBC36HV" to="w5mrnmJSGkGZ7tBgiPFhcT"></div><div class="link" from="i1MnFC4Xrhub8XMR7zRTjL" to="w5mrnmJSGkGZ7tBgiPFhcT"></div><div class="link" from="w5mrnmJSGkGZ7tBgiPFhcT" to="9t5jUp7VTCqTnq7Lx4EMEa"></div><div class="link" from="ud8F2jXbKkwRPhpg6Wa7pK" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="fKnv9oJFSmYQWnSEXSEZgu" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="4N7FVVX3KM449au8B4hUJn" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="rjFWZpL1mbUS37ThUYSQn5" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="n77n7D6ihMwcsMw7Jpj2N5" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="4JRPNS5uZfkJ3Tk8zorABj" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="ud8F2jXbKkwRPhpg6Wa7pK" case="A1"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="fKnv9oJFSmYQWnSEXSEZgu" case="A2"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="4N7FVVX3KM449au8B4hUJn" case="A3"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="rjFWZpL1mbUS37ThUYSQn5" case="B1"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="n77n7D6ihMwcsMw7Jpj2N5" case="B2"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="4JRPNS5uZfkJ3Tk8zorABj" case="B3"></div><div class="link" from="9t5jUp7VTCqTnq7Lx4EMEa" to="bMi2AwsMDEssqujs39WnUE" case="DEFAULT"></div><div class="link" from="bMi2AwsMDEssqujs39WnUE" to="wqF5XEzdA9RgVLvgJxx6wF"></div><div class="link" from="wqF5XEzdA9RgVLvgJxx6wF" to="end"></div></div>
     `;
 		let tplid = "Metatocome Learning Guide";
-		let filter: any = { tenant: tenant, tplid: tplid },
+		let filter: any = { tenant: CRED.tenant._id, tplid: tplid },
 			update = {
 				$set: {
-					author: author,
-					authorName: await Cache.getUserName(tenant, author, "SeeItWork"),
+					author: CRED.employee.eid,
+					authorName: await Cache.getUserName(CRED.tenant._id, CRED.employee.eid, "SeeItWork"),
 					doc: doc,
 					ins: false,
 				},
@@ -288,9 +210,9 @@ async function SeeItWork(req, h) {
 		await Template.findOneAndUpdate(filter, update, options);
 		let wfDoc = await Engine.startWorkflow(
 			false,
-			tenant,
+			CRED.tenant._id,
 			tplid,
-			author,
+			CRED.employee.eid,
 			"https://www.metatocome.com/docs",
 			"",
 			null,
@@ -309,34 +231,33 @@ async function SeeItWork(req, h) {
 	}
 }
 
-async function TemplatePut(req, h) {
+async function TemplatePut(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		const tenant = req.auth.credentials.tenant._id;
-		let lastUpdatedAt = req.payload.lastUpdatedAt;
-		let myEmail = req.auth.credentials.email;
-		if (Tools.isEmpty(req.payload.doc)) {
+		let lastUpdatedAt = PLD.lastUpdatedAt;
+		if (Tools.isEmpty(PLD.doc))
 			throw new EmpError("NO_CONTENT", "Template content can not be empty");
-		}
-		let tplid = req.payload.tplid;
-		let bwid = req.payload.bwid;
-		if (!bwid) bwid = myEmail;
-		let forceupdate = req.payload.forceupdate;
-		if (Tools.isEmpty(tplid)) {
+		let bwid = PLD.bwid;
+		if (!bwid) bwid = CRED.employee.eid;
+		let forceupdate = PLD.forceupdate;
+		if (Tools.isEmpty(PLD.tplid)) {
 			throw new EmpError("NO_TPLID", "Template id can not be empty");
 		}
-		let obj = await Template.findOne({ tenant: tenant, tplid: tplid });
+		let obj: TemplateType = await Template.findOne({ tenant: CRED.tenant._id, tplid: PLD.tplid });
 		if (obj) {
 			if (forceupdate === false && obj.updatedAt.toISOString() !== lastUpdatedAt) {
 				throw new EmpError("CHECK_LASTUPDATEDAT_FAILED", "Editted by other or in other window");
 			}
-			//let bdoc = await Tools.zipit(req.payload.doc, {});
-			let filter: any = { tenant: tenant, tplid: tplid },
+
+			//let bdoc = await Tools.zipit(PLD.doc, {});
+			let filter: any = { tenant: CRED.employee.eid, tplid: PLD.tplid },
 				update = {
 					$set: {
-						doc: req.payload.doc,
-						lastUpdateBy: myEmail,
+						doc: PLD.doc,
+						lastUpdateBy: CRED.employee.eid,
 						lastUpdateBwid: bwid, //Browser Window ID
 					},
 				},
@@ -344,46 +265,45 @@ async function TemplatePut(req, h) {
 			obj = await Template.findOneAndUpdate(filter, update, options);
 		} else {
 			obj = new Template({
-				tenant: tenant,
-				tplid: tplid,
-				author: myEmail,
-				authorName: await Cache.getUserName(tenant, myEmail, "TemplatePut"),
-
-				doc: req.payload.doc,
-				lastUpdateBy: myEmail,
-				lastUpdateBwid: req.payload.bwid,
+				tenant: CRED.tenant._id,
+				tplid: PLD.tplid,
+				author: CRED.employee.eid,
+				authorName: CRED.employee.nickname,
+				doc: PLD.doc,
+				lastUpdateBy: CRED.employee.eid,
+				lastUpdateBwid: bwid,
+				desc: PLD.desc,
 			});
 			obj = await obj.save();
 		}
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 		let edittingLog = new EdittingLog({
-			tenant: tenant,
+			tenant: CRED.tenant._id,
 			objtype: "Template",
 			objid: obj.tplid,
-			editor: myEmail,
-			editorName: await Cache.getUserName(tenant, myEmail, "TemplatePut"),
+			editor: CRED.employee.eid,
+			editorName: CRED.employee.nickname,
 		});
 		edittingLog = await edittingLog.save();
-		if (tplid.startsWith("TMP_KSHARE_")) {
+		if (PLD.tplid.startsWith("TMP_KSHARE_")) {
 			let ksid = obj.ksid;
-			await KsTpl.findOneAndUpdate({ ksid: ksid }, { $set: { doc: req.payload.doc } });
+			await KsTpl.findOneAndUpdate({ ksid: ksid }, { $set: { doc: PLD.doc } });
 		}
-		return h.response({ _id: obj._id, tplid: obj.tplid, updatedAt: obj.updatedAt });
+		return h.response({ _id: obj._id, tplid: obj.tplid, desc: obj.desc, updatedAt: obj.updatedAt });
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TemplateEditLog(req, h) {
+async function TemplateEditLog(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
 
-		let filter: any = { tenant: tenant, objtype: "Template", objid: tplid };
+		let filter: any = { tenant: CRED.tenant._id, objtype: "Template", objid: PLD.tplid };
 		return h.response(
 			await EdittingLog.find(filter, { editor: 1, editorName: 1, updatedAt: 1 }).lean(),
 		);
@@ -393,38 +313,38 @@ async function TemplateEditLog(req, h) {
 	}
 }
 
-async function TemplateAddCron(req, h) {
+async function TemplateAddCron(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let tplid = req.payload.tplid;
-		let expr = req.payload.expr;
-		let starters = req.payload.starters.trim();
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		//////////////////////////////////////////////////
 		// ADMIN unlimited, normal user 3
 		//////////////////////////////////////////////////
-		let allowedCronNumber = myGroup !== "ADMIN" ? 3 : -1;
+		let allowedCronNumber = CRED.employee.group !== "ADMIN" ? 3 : -1;
 		//
 		//
 		//////////////////////////////////////////////////
 		//ADMIN can add cron for other users
 		//////////////////////////////////////////////////
-		if (myGroup !== "ADMIN") {
+		let starters = PLD.starters;
+		if (CRED.employee.group !== "ADMIN") {
 			//Normal user only add cron for himeself
-			starters = "@" + Tools.getEmailPrefix(myEmail);
-			let cnt = await Crontab.countDocuments({ tenant: tenant, creator: myEmail });
+			starters = "@" + CRED.employee.eid;
+			let cnt = await Crontab.countDocuments({
+				tenant: CRED.tenant._id,
+				creator: CRED.employee.eid,
+			});
 			if (cnt >= allowedCronNumber) {
 				throw new EmpError("QUOTA EXCEEDED", `Exceed cron entry quota ${allowedCronNumber}`);
 			}
 		}
 
 		let existing = await Crontab.findOne({
-			tenant: tenant,
-			tplid: tplid,
-			expr: expr,
+			tenant: CRED.tenant._id,
+			tplid: PLD.tplid,
+			expr: PLD.expr,
 			starters: starters,
 			method: "STARTWORKFLOW",
 		});
@@ -435,21 +355,21 @@ async function TemplateAddCron(req, h) {
 		//////////////////////////////////////////////////
 		//
 		let cronTab = new Crontab({
-			tenant: tenant,
-			tplid: tplid,
+			tenant: CRED.tenant._id,
+			tplid: PLD.tplid,
 			nodeid: "", //no use for STARTWORKFLOW
 			wfid: "", //no use for STARTWORKFLOW
 			workid: "", //no use for STARTWORKFLOW
-			expr: expr,
+			expr: PLD.expr,
 			starters: starters,
-			creator: myEmail,
+			creator: CRED.employee.eid,
 			scheduled: false,
 			method: "STARTWORKFLOW",
 			extra: "{}",
 		});
 		cronTab = await cronTab.save();
 		await Engine.rescheduleCrons();
-		let filter: any = { tenant: tenant, tplid: tplid, creator: myEmail };
+		let filter: any = { tenant: CRED.tenant._id, tplid: PLD.tplid, creator: CRED.employee.eid };
 		let crons = await Crontab.find(filter).lean();
 		return h.response(crons);
 	} catch (err) {
@@ -458,20 +378,12 @@ async function TemplateAddCron(req, h) {
 	}
 }
 
-async function TemplateBatchStart(req, h) {
+async function TemplateBatchStart(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
-		let starters = req.payload.starters.trim();
-		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") {
-			throw new EmpError(
-				"NOT_ADMIN",
-				`Only admins can start workflow in batch mode. ${myEmail} ${myGroup}`,
-			);
-		}
-		await Engine.startBatchWorkflow(tenant, starters, tplid, myEmail);
+		expect(CRED.employee.group).to.equal("ADMIN");
+		await Engine.startBatchWorkflow(CRED.tenant._id, PLD.starters, PLD.tplid, CRED.employee.eid);
 		return h.response("Done");
 	} catch (err) {
 		console.error(err);
@@ -479,16 +391,14 @@ async function TemplateBatchStart(req, h) {
 	}
 }
 
-async function TemplateDelCron(req, h) {
+async function TemplateDelCron(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
-		let id = req.payload.id;
-		let filter: any = { tenant: tenant, _id: id, creator: myEmail };
+		let filter: any = { tenant: CRED.tenant._id, _id: PLD.id, creator: CRED.employee.eid };
 		await Crontab.deleteOne(filter);
-		Engine.stopCronTask(id);
-		filter = { tenant: tenant, tplid: tplid, creator: myEmail };
+		Engine.stopCronTask(PLD.id);
+		filter = { tenant: CRED.tenant._id, tplid: PLD.tplid, creator: CRED.employee.eid };
 		let crons = await Crontab.find(filter).lean();
 		return h.response(crons);
 	} catch (err) {
@@ -497,14 +407,13 @@ async function TemplateDelCron(req, h) {
 	}
 }
 
-async function TemplateGetCrons(req, h) {
+async function TemplateGetCrons(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
-		let filter: any = { tenant: tenant, tplid: tplid, creator: myEmail };
+		let filter: any = { tenant: CRED.tenant._id, tplid: PLD.tplid, creator: CRED.employee.eid };
 		let crons = await Crontab.find(filter).lean();
 		return h.response(crons);
 	} catch (err) {
@@ -516,35 +425,34 @@ async function TemplateGetCrons(req, h) {
 /**
  * Rename Template from tplid: fromid to tplid: tplid
  */
-async function TemplateRename(req, h) {
+async function TemplateRename(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: tenant, tplid: req.payload.fromid };
+		let filter: any = { tenant: CRED.tenant._id, tplid: PLD.fromid };
 		let tpl = await Template.findOne(filter);
-		if (
-			!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "update"))
-		)
+		if (!(await SPC.hasPerm(CRED.employee, "template", tpl, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to rename this template");
-		tpl.tplid = req.payload.tplid;
+		tpl.tplid = PLD.tplid;
 		if (Tools.isEmpty(tpl.authorName)) {
-			tpl.authorName = await Cache.getUserName(tenant, tpl.author, "TemplateRename");
+			tpl.authorName = await Cache.getUserName(CRED.tenant._id, tpl.author, "TemplateRename");
 		}
-		let oldTplId = req.payload.fromid;
-		let newTplId = req.payload.tplid;
+		let oldTplId = PLD.fromid;
+		let newTplId = PLD.tplid;
 		try {
 			tpl = await tpl.save();
 			//Move cover image
 			try {
 				fs.renameSync(
-					path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
-					path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
+					path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
+					path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
 				);
 			} catch (err) {}
-			await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 			return h.response(tpl.tplid);
 		} catch (err) {
 			if (err.message.indexOf("duplicate key"))
-				throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
+				throw new EmpError("ALREADY_EXIST", PLD.tplid + " already exists");
 			else throw new EmpError("DB_ERROR", err.message);
 		}
 	} catch (err) {
@@ -553,27 +461,26 @@ async function TemplateRename(req, h) {
 	}
 }
 
-async function TemplateRenameWithIid(req, h) {
+async function TemplateRenameWithIid(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: tenant, _id: req.payload._id };
+		let filter: any = { tenant: CRED.tenant._id, _id: PLD._id };
 		let tpl = await Template.findOne(filter);
 		let oldTplId = tpl.tplid;
-		let newTplId = req.payload.tplid;
-		if (
-			!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "update"))
-		)
+		let newTplId = PLD.tplid;
+		if (!(await SPC.hasPerm(CRED.employee, "template", tpl, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to rename this template");
 		tpl.tplid = newTplId;
 		tpl = await tpl.save();
 		try {
 			fs.renameSync(
-				path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
-				path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
+				path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
+				path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
 			);
 		} catch (err) {}
 
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 		return h.response(tpl);
 	} catch (err) {
 		console.error(err);
@@ -581,24 +488,22 @@ async function TemplateRenameWithIid(req, h) {
 	}
 }
 
-async function TemplateMakeCopyOf(req, h) {
+async function TemplateMakeCopyOf(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let me = await User.findOne({ _id: req.auth.credentials._id });
-		let filter: any = { tenant: tenant, _id: req.payload._id };
+		let filter: any = { tenant: CRED.tenant._id, _id: PLD._id };
 		let oldTpl = await Template.findOne(filter);
 		let oldTplId = oldTpl.tplid;
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
 		let newObj = new Template({
 			tenant: oldTpl.tenant,
 			tplid: oldTpl.tplid + "_copy",
-			author: me.email,
-			authorName: me.username,
+			author: CRED.employee.eid,
+			authorName: CRED.employee.nickname,
 			doc: oldTpl.doc,
-			tags: [{ owner: myEmail, text: "mine", group: myGroup }],
+			tags: [{ owner: CRED.employee.eid, text: "mine", group: CRED.employee.group }],
 			hasCover: oldTpl.hasCover,
 		});
 		newObj = await newObj.save();
@@ -606,12 +511,12 @@ async function TemplateMakeCopyOf(req, h) {
 
 		try {
 			fs.copyFileSync(
-				path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
-				path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
+				path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
+				path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
 			);
 		} catch (err) {}
 
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 		return h.response(newObj);
 	} catch (err) {
 		console.error(err);
@@ -619,47 +524,44 @@ async function TemplateMakeCopyOf(req, h) {
 	}
 }
 
-async function TemplateCopyto(req, h) {
+async function TemplateCopyto(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		let me = await User.findOne({ _id: req.auth.credentials._id });
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myUid = myEmail.substring(0, myEmail.indexOf("@"));
-		let filter: any = { tenant: tenant, tplid: req.payload.fromid };
 
-		let oldTplId = req.payload.fromid;
-		let newTplId = req.payload.tplid;
+		let oldTplId = PLD.fromid;
+		let newTplId = PLD.tplid;
 
-		let oldTpl = await Template.findOne(filter);
+		let oldTpl = await Template.findOne({ tenant: CRED.tenant._id, tplid: PLD.fromid });
 		let newObj = new Template({
 			tenant: oldTpl.tenant,
 			tplid: newTplId,
-			author: me.email,
-			authorName: me.username,
+			author: CRED.employee.eid,
+			authorName: CRED.employee.nickname,
 			doc: oldTpl.doc,
 			ins: oldTpl.ins,
 			tags: oldTpl.tags,
-			visi: "@" + myUid,
+			visi: "@" + CRED.employee.eid,
 			hasCover: oldTpl.hasCover,
 		});
 		try {
 			newObj = await newObj.save();
 		} catch (err) {
 			if (err.message.indexOf("duplicate key"))
-				throw new EmpError("ALREADY_EXIST", req.payload.tplid + " already exists");
+				throw new EmpError("ALREADY_EXIST", PLD.tplid + " already exists");
 			else throw new EmpError("DB_ERROR", err.message);
 		}
 		try {
 			fs.copyFileSync(
-				path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"),
-				path.join(Tools.getTenantFolders(tenant).cover, newTplId + ".png"),
+				path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
+				path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
 			);
 		} catch (err) {
 			//可能被copy的png文件不存在，忽略这个错误即可
 		}
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 		return h.response(newObj);
 	} catch (err) {
 		console.error(err);
@@ -667,70 +569,72 @@ async function TemplateCopyto(req, h) {
 	}
 }
 
-async function TemplateDelete(req, h) {
+async function TemplateDelete(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: tenant, _id: req.payload._id };
-		let ret = await Template.findOne(filter, { doc: 0 });
-		let oldTplId = ret.tplid;
-		if (
-			!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", ret, "delete"))
-		)
+		const tenant = CRED.tenant._id;
+		let filter: any = { tenant: tenant, _id: PLD._id };
+		const theTpl = await Template.findOne(filter, { doc: 0 });
+		let oldTplId = theTpl.tplid;
+		if (!(await SPC.hasPerm(CRED.employee, "template", theTpl, "delete")))
 			throw new EmpError("NO_PERM", "You don't have permission to delete this template");
-		ret = await Template.deleteOne(filter);
+		let deletedRet = await Template.deleteOne(filter);
 		try {
 			fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
 		} catch (err) {}
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
-		return h.response(ret);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+		return h.response(deletedRet);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TemplateDeleteByName(req, h) {
+async function TemplateDeleteByTplid(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: tenant, tplid: req.payload.tplid };
+		const tenant = CRED.tenant._id;
+		let filter: any = { tenant: tenant, tplid: PLD.tplid };
 
-		let oldTplId = req.payload.tplid;
-		let ret = await Template.findOne(filter, { doc: 0 });
-		if (
-			!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", ret, "delete"))
-		)
+		let oldTplId = PLD.tplid;
+		const theTpl = await Template.findOne(filter, { doc: 0 });
+		if (!(await SPC.hasPerm(CRED.employee, "template", theTpl, "delete")))
 			throw new EmpError("NO_PERM", "You don't have permission to delete this template");
-		ret = await Template.deleteOne(filter);
+		const delRet = await Template.deleteOne(filter);
 		try {
 			fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
 		} catch (err) {}
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
-		return h.response(ret);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+		return h.response(delRet);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TemplateDeleteMulti(req, h) {
+async function TemplateDeleteMulti(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
 		assert.equal(
-			await Cache.getMyGroup(myEmail),
+			CRED.employee.group,
 			"ADMIN",
 			new EmpError("NOT_ADMIN", "Only ADMIN can delete templates in batch"),
 		);
 
-		let filter: any = { tenant: tenant, tplid: { $in: req.payload.tplids } };
+		let filter: any = { tenant: tenant, tplid: { $in: PLD.tplids } };
 		await Template.deleteMany(filter);
-		for (let i = 0; i < req.payload.tplids.length; i++) {
+		for (let i = 0; i < PLD.tplids.length; i++) {
 			try {
-				fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, req.payload.tplids[i] + ".png"));
+				fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, PLD.tplids[i] + ".png"));
 			} catch (err) {}
 		}
 
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 		return h.response("Deleted");
 	} catch (err) {
 		console.error(err);
@@ -738,21 +642,20 @@ async function TemplateDeleteMulti(req, h) {
 	}
 }
 
-async function WorkflowRead(req, h) {
+async function WorkflowRead(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let withDoc = req.payload.withdoc;
-		let wf = await RCL.getWorkflow(
-			{ tenant, wfid: req.payload.wfid },
-			"engine/handler.WorkflowRead",
-		);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let withDoc = PLD.withdoc;
+		let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowRead");
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		if (wf) {
 			let retWf = JSON.parse(JSON.stringify(wf));
 			retWf.beginat = retWf.createdAt;
-			retWf.history = await Engine.getWfHistory(myEmail, tenant, req.payload.wfid, wf);
+			retWf.history = await Engine.getWfHistory(tenant, myEid, PLD.wfid, wf);
 			if (withDoc === false) delete retWf.doc;
 			if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
 			retWf.starterCN = await Cache.getUserName(tenant, wf.starter, "WorkflowRead");
@@ -775,17 +678,14 @@ async function WorkflowRead(req, h) {
 	}
 }
 
-async function WorkflowGetAttachments(req, h) {
+async function WorkflowGetAttachments(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let withDoc = req.payload.withdoc;
-		let wf = await RCL.getWorkflow(
-			{ tenant, wfid: req.payload.wfid },
-			"engine/handler.WorkflowRead",
-		);
+		const tenant = CRED.tenant._id;
+		let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowRead");
 		if (wf) {
-			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+			if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this template");
 			return wf.attachments;
 		} else {
@@ -797,31 +697,28 @@ async function WorkflowGetAttachments(req, h) {
 	}
 }
 
-async function WorkflowGetPbo(req, h) {
+async function WorkflowGetPbo(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let withDoc = req.payload.withdoc;
-		let pboType = req.payload.pbotype;
-		let wf = await RCL.getWorkflow(
-			{ tenant, wfid: req.payload.wfid },
-			"engine/handler.WorkflowRead",
-		);
+		const tenant = CRED.tenant._id;
+		let pboType = PLD.pbotype;
+		let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowRead");
 		if (wf) {
-			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+			if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this template");
 			let ret = wf.attachments;
-			switch (pboType.toLowerCase) {
+			switch (pboType.toLowerCase()) {
 				case "all":
 					ret = wf.attachments;
 					break;
 				case "text":
-					ret = ret.filter((x) => {
+					ret = ret.filter((x: any) => {
 						return typeof x === "string";
 					});
 					break;
 				case "file":
-					ret = ret.filter((x) => {
+					ret = ret.filter((x: any) => {
 						return typeof x !== "string";
 					});
 					break;
@@ -836,46 +733,40 @@ async function WorkflowGetPbo(req, h) {
 	}
 }
 
-async function WorkflowSetPbo(req, h) {
+async function WorkflowSetPbo(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let withDoc = req.payload.withdoc;
-		let newPbo = req.payload.pbo;
-		let pbotype = req.payload.pbotype;
+		const tenant = CRED.tenant._id;
+		let newPbo = PLD.pbo;
+		let pbotype = PLD.pbotype;
 		if (pbotype !== "text") {
 			throw new EmpError("NOT_SUPPORT", "Only texttype pbo is supported at this moment");
 		}
 		if (!Array.isArray(newPbo)) {
 			newPbo = [newPbo];
 		}
-		let wf = await RCL.getWorkflow(
-			{ tenant, wfid: req.payload.wfid },
-			"engine/handler.WorkflowSetPbo",
-		);
+		let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowSetPbo");
 		if (wf) {
-			if (!(await SystemPermController.hasPerm(myEmail, "workflow", wf, "update")))
+			if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "update")))
 				throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 
 			//保留文件型attachments， 去除所有text类型attachments
-			wf.attachments = wf.attachments.filter((x) => {
+			wf.attachments = wf.attachments.filter((x: any) => {
 				return x.serverId ? true : false;
 			});
 			//将新的text类型attachments放到最前面;
 			wf.attachments.unshift(...newPbo);
 			await Workflow.updateOne(
-				{ tenant, wfid: req.payload.wfid },
+				{ tenant, wfid: PLD.wfid },
 				{ $set: { attachments: wf.attachments } },
 			);
 			await RCL.resetCache(
-				{ tenant, wfid: req.payload.wfid },
+				{ tenant, wfid: PLD.wfid },
 				"engine/handler.WorkflowSetPbo",
 				RCL.CACHE_ELEVEL_REDIS,
 			);
-			wf = await RCL.getWorkflow(
-				{ tenant, wfid: req.payload.wfid },
-				"engine/handler.WorkflowSetPbo",
-			);
+			wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowSetPbo");
 			return wf.attachments;
 		} else {
 			throw new EmpError("NOT_FOUND", "Workflow not found");
@@ -886,13 +777,14 @@ async function WorkflowSetPbo(req, h) {
 	}
 }
 
-async function WorkflowCheckStatus(req, h) {
+async function WorkflowCheckStatus(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
 		let wf = await RCL.getWorkflow(
 			{
-				tenant: req.auth.credentials.tenant._id,
-				wfid: req.payload.wfid,
+				tenant: CRED.tenant._id,
+				wfid: PLD.wfid,
 			},
 			"engine/handler.WorkflowCheckStatus",
 		);
@@ -900,14 +792,14 @@ async function WorkflowCheckStatus(req, h) {
 		if (!wf) {
 			ret = "NOTFOUND";
 		} else {
-			/* if (wf.updatedAt.toISOString() === req.payload.updatedAt) {
+			/* if (wf.updatedAt.toISOString() === PLD.updatedAt) {
         ret = "NOCHANGE";
       } else { */
 			ret["wfid"] = wf.wfid;
 			ret["nodeStatus"] = await Engine.getNodeStatus(wf);
 			ret["doc"] = wf.doc;
 			ret["routeStatus"] = await Route.find({
-				tenant: req.auth.credentials.tenant._id,
+				tenant: CRED.tenant._id,
 				wfid: wf.wfid,
 			});
 			ret["updatedAt"] = wf.updatedAt;
@@ -921,10 +813,11 @@ async function WorkflowCheckStatus(req, h) {
 	}
 }
 
-async function WorkflowRoutes(req, h) {
+async function WorkflowRoutes(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
-		let filter: any = { tenant: req.auth.credentials.tenant._id, wfid: req.payload.wfid };
+		let filter: any = { tenant: CRED.tenant._id, wfid: PLD.wfid };
 		return await Route.find(filter);
 	} catch (err) {
 		console.error(err);
@@ -932,21 +825,23 @@ async function WorkflowRoutes(req, h) {
 	}
 }
 
-async function WorkflowDumpInstemplate(req, h) {
+async function WorkflowDumpInstemplate(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let wf = await RCL.getWorkflow(
 			{
-				tenant: req.auth.credentials.tenant._id,
-				wfid: req.payload.wfid,
+				tenant: CRED.tenant._id,
+				wfid: PLD.wfid,
 			},
 			"engine/handler.WorkflowDumpInstemplate",
 		);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		let wfIO = await Parser.parse(wf.doc);
 		let tpRoot = wfIO(".template");
-		let tplid = req.payload.wfid + "_instemplate";
+		let tplid = PLD.wfid + "_instemplate";
 		let theTemplateDoc = `<div class="template" >${tpRoot.html()}</div>`;
 
 		let obj = await Template.findOneAndUpdate(
@@ -958,12 +853,8 @@ async function WorkflowDumpInstemplate(req, h) {
 				$set: {
 					tenant: tenant,
 					tplid: tplid,
-					author: req.auth.credentials.email,
-					authorName: await Cache.getUserName(
-						tenant,
-						req.auth.credentials.email,
-						"WorkflowDumpInstemplate",
-					),
+					author: CRED.employee.eid,
+					authorName: CRED.employee.nickname,
 					doc: theTemplateDoc,
 					ins: true,
 				},
@@ -978,20 +869,22 @@ async function WorkflowDumpInstemplate(req, h) {
 	}
 }
 
-async function WorkflowStart(req, h) {
+async function WorkflowStart(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let starter = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
-		let wfid = req.payload.wfid;
-		let wftitle = req.payload.wftitle;
-		let teamid = req.payload.teamid;
-		let rehearsal = req.payload.rehearsal;
-		let textPbo = req.payload.textPbo;
-		let kvars = req.payload.kvars;
-		let uploadedFiles = req.payload.uploadedFiles;
+		const tenant = CRED.tenant._id;
+		let starter = CRED.employee;
+		let tplid = PLD.tplid;
+		let wfid = PLD.wfid;
+		let wftitle = PLD.wftitle;
+		let teamid = PLD.teamid;
+		let rehearsal = PLD.rehearsal;
+		let textPbo = PLD.textPbo;
+		let kvars = PLD.kvars;
+		let uploadedFiles = PLD.uploadedFiles;
 
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to start a workflow");
 
 		textPbo = textPbo ? textPbo : "";
@@ -1024,22 +917,23 @@ async function WorkflowStart(req, h) {
 	}
 }
 
-async function WorkflowAddFile(req, h) {
+async function WorkflowAddFile(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
-		let pondfiles = req.payload.pondfiles;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
+		let pondfiles = PLD.pondfiles;
 		let attachFiles = [];
-		let csvFiles = [];
+		let csvFiles: PondFileInfoFromPayloadType[] = [];
 		if (pondfiles.length > 0) {
-			pondfiles = pondfiles.map((x) => {
-				x.author = myEmail;
-				x.forKey = req.payload.forKey;
+			pondfiles = pondfiles.map((x: PondFileInfoFromPayloadType) => {
+				x.author = CRED.employee.eid;
+				x.forKey = PLD.forKey;
 				return x;
 			});
-			attachFiles = pondfiles.filter((x) => x.forKey.startsWith("csv_") === false);
-			csvFiles = pondfiles.filter((x) => x.forKey.startsWith("csv_") === true);
+			attachFiles = pondfiles.filter((x: any) => x.forKey.startsWith("csv_") === false);
+			csvFiles = pondfiles.filter((x: any) => x.forKey.startsWith("csv_") === true);
 			//非csv_开头的文件，加入workflowAttachment
 			//csv_开头的文件，单独处理
 			if (attachFiles.length > 0) {
@@ -1054,7 +948,7 @@ async function WorkflowAddFile(req, h) {
 			}
 
 			if (csvFiles.length > 0) {
-				let csvSaveResult = await __saveCSVAsCells(tenant, myEmail, wfid, csvFiles);
+				let csvSaveResult = await __saveCSVAsCells(tenant, wfid, csvFiles);
 				return h.response(csvSaveResult);
 			}
 		}
@@ -1066,17 +960,20 @@ async function WorkflowAddFile(req, h) {
 	}
 }
 
-async function __getCells(tenant, myEmail, pondFile, poindServerFile) {
+async function __getCells(
+	pondFile: PondFileInfoFromPayloadType,
+	pondServerFile: PondFileInfoOnServerType,
+) {
 	let cells = [];
 	console.log(pondFile.contentType);
 	switch (pondFile.contentType) {
 		case "text/csv":
-			cells = await __getCSVCells(tenant, myEmail, poindServerFile);
+			cells = await __getCSVCells(pondServerFile);
 			break;
 		case "application/vnd.ms-excel":
 			throw new EmpError("NOT_SUPPORT_OLD_EXCEL", "We don't support old xls, use xlsx please");
 		case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-			cells = await __getExcelCells(tenant, myEmail, poindServerFile);
+			cells = await __getExcelCells(pondServerFile);
 			break;
 		default:
 			throw new EmpError(
@@ -1087,12 +984,10 @@ async function __getCells(tenant, myEmail, pondFile, poindServerFile) {
 	return cells;
 }
 
-async function __getCSVCells(tenant, myEmail, pondServerFile) {
+async function __getCSVCells(pondServerFile: PondFileInfoOnServerType) {
 	let cells = [];
-	let missedUIDs = [];
 	let csv = fs.readFileSync(pondServerFile.fullPath, "utf8");
 	let rows = csv.split(/[\n|\r]/);
-	let colsCount = 0;
 	let firstRow = -1;
 	for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
 		if (rows[rowIndex].trim().length === 0) continue;
@@ -1108,20 +1003,18 @@ async function __getCSVCells(tenant, myEmail, pondServerFile) {
 	return cells;
 }
 
-async function __getExcelCells(tenant, myEmail, pondServerFile) {
+async function __getExcelCells(pondServerFile: PondFileInfoOnServerType) {
 	let cells = [];
-	let missedUIDs = [];
-	let csv = fs.readFileSync(pondServerFile.fullPath, "utf8");
 
 	let workbook = new Excel.Workbook();
 	await workbook.xlsx.readFile(pondServerFile.fullPath);
 	let worksheet = workbook.getWorksheet(1);
 
-	worksheet.eachRow(function (row, rowIndex) {
-		let rowSize = row.cellCount;
-		let numValues = row.actualCellCount;
+	worksheet.eachRow(function (row /*, rowIndex*/) {
+		/* let rowSize = row.cellCount;
+		let numValues = row.actualCellCount; */
 		let cols = [];
-		row.eachCell(function (cell, colIndex) {
+		row.eachCell(function (cell /*, colIndex*/) {
 			if (cell.type === 6) {
 				cols.push(cell.result);
 			} else {
@@ -1134,17 +1027,25 @@ async function __getExcelCells(tenant, myEmail, pondServerFile) {
 	return cells;
 }
 
-async function __saveCSVAsCells(tenant, myEmail, wfid, csvPondFiles) {
-	const __doConvert = async (pondFile) => {
-		let pondServerFile = Tools.getPondServerFile(tenant, pondFile.author, pondFile.serverId);
+async function __saveCSVAsCells(
+	tenant: string,
+	wfid: string,
+	csvPondFiles: PondFileInfoFromPayloadType[],
+) {
+	const __doConvert = async (pondFile: PondFileInfoFromPayloadType) => {
+		let pondServerFile: PondFileInfoOnServerType = Tools.getPondServerFile(
+			tenant,
+			pondFile.author,
+			pondFile.serverId,
+		);
 		console.log("=====================");
 		console.log(pondFile.contentType);
 		console.log(pondFile.realName);
 		console.log(pondServerFile.fullPath);
 		console.log("=====================");
-		let cells = await __getCells(tenant, myEmail, pondFile, pondServerFile);
+		let cells = await __getCells(pondFile, pondServerFile);
 
-		let cell = await Cell.findOneAndUpdate(
+		/*let cell =*/ await Cell.findOneAndUpdate(
 			{ tenant: tenant, wfid: wfid, stepid: pondFile.stepid, forKey: pondFile.forKey },
 			{
 				$set: {
@@ -1159,14 +1060,13 @@ async function __saveCSVAsCells(tenant, myEmail, wfid, csvPondFiles) {
 		);
 		let missedUIDs = [];
 		for (let i = 1; i < cells.length; i++) {
-			let tobeCheckUid = cells[i][0];
 			if (
-				!(await User.findOne({
+				!(await Employee.findOne({
 					tenant: tenant,
-					email: Tools.makeEmailSameDomain(tobeCheckUid, myEmail),
+					eid: cells[i][0],
 				}))
 			) {
-				missedUIDs.push(tobeCheckUid);
+				missedUIDs.push(cells[i][0]);
 			}
 		}
 		return missedUIDs;
@@ -1178,12 +1078,14 @@ async function __saveCSVAsCells(tenant, myEmail, wfid, csvPondFiles) {
 	return missedUIDs;
 }
 
-async function WorkflowRemoveAttachment(req, h) {
+async function WorkflowRemoveAttachment(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
-		let attachmentsToDelete = req.payload.attachments;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let wfid = PLD.wfid;
+		let attachmentsToDelete = PLD.attachments;
 		if (attachmentsToDelete.length <= 0) return h.response("Done");
 
 		let wf = await RCL.getWorkflow(
@@ -1191,22 +1093,16 @@ async function WorkflowRemoveAttachment(req, h) {
 			"engine/handler.WorkflowRemoveAttachment",
 		);
 
-		let me = await User.findOne({ tenant: tenant, email: myEmail }).populate("tenant").lean();
 		let canDeleteAll = false;
-		let isAdmin = false;
-		try {
-			isAdmin = await Parser.isAdmin(me);
-		} catch (e) {
-			isAdmin = false;
-		}
-		if (isAdmin) canDeleteAll = true;
-		else if (wf.starter === myEmail) canDeleteAll = true;
+		if (CRED.employee.group === "ADMIN") canDeleteAll = true;
+		else if (wf.starter === CRED.employee.eid) canDeleteAll = true;
 
 		let wfAttachments = wf.attachments;
+		//TODO: to test it.
 		for (let i = 0; i < attachmentsToDelete.length; i++) {
 			let tobeDel = attachmentsToDelete[i];
 			if (typeof tobeDel === "string") {
-				wfAttachments = wfAttachments.filter((x) => {
+				wfAttachments = wfAttachments.filter((x: any) => {
 					return x !== tobeDel;
 				});
 			} else {
@@ -1214,7 +1110,7 @@ async function WorkflowRemoveAttachment(req, h) {
 				for (let i = 0; i < wfAttachments.length; i++) {
 					if (
 						wfAttachments[i].serverId === tobeDel.serverId &&
-						(canDeleteAll || wfAttachments[i].author === myEmail)
+						(canDeleteAll || wfAttachments[i].author === myEid)
 					) {
 						try {
 							let fileInfo = Tools.getPondServerFile(
@@ -1247,13 +1143,14 @@ async function WorkflowRemoveAttachment(req, h) {
 	}
 }
 
-async function WorkflowPause(req, h) {
+async function WorkflowPause(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
 		await Engine.resetTodosETagByWfId(tenant, wfid);
-		let status = await Engine.pauseWorkflow(tenant, myEmail, wfid);
+		let status = await Engine.pauseWorkflow(tenant, CRED.employee.eid, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1262,13 +1159,14 @@ async function WorkflowPause(req, h) {
 	}
 }
 
-async function WorkflowResume(req, h) {
+async function WorkflowResume(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
 		await Engine.resetTodosETagByWfId(tenant, wfid);
-		let status = await Engine.resumeWorkflow(tenant, myEmail, wfid);
+		let status = await Engine.resumeWorkflow(tenant, CRED.employee.eid, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1277,13 +1175,14 @@ async function WorkflowResume(req, h) {
 	}
 }
 
-async function WorkflowStop(req, h) {
+async function WorkflowStop(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
 		await Engine.resetTodosETagByWfId(tenant, wfid);
-		let status = await Engine.stopWorkflow(tenant, myEmail, wfid);
+		let status = await Engine.stopWorkflow(tenant, CRED.employee.eid, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1292,13 +1191,14 @@ async function WorkflowStop(req, h) {
 	}
 }
 
-async function WorkflowRestart(req, h) {
+async function WorkflowRestart(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
 		await Engine.resetTodosETagByWfId(tenant, wfid);
-		let status = await Engine.restartWorkflow(tenant, myEmail, wfid);
+		let status = await Engine.restartWorkflow(tenant, CRED.employee.eid, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return { wfid: wfid, status: status };
 	} catch (err) {
@@ -1307,34 +1207,36 @@ async function WorkflowRestart(req, h) {
 	}
 }
 
-async function WorkflowDestroy(req, h) {
+async function WorkflowDestroy(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
 		await Engine.resetTodosETagByWfId(tenant, wfid);
-		let ret = await Engine.destroyWorkflow(tenant, myEmail, wfid);
+		let ret = await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
-		return h.response(ret);
+		return h.response({ wfid: wfid, status: ret });
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function WorkflowDestroyMulti(req, h) {
+async function WorkflowDestroyMulti(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
 		assert.equal(
-			await Cache.getMyGroup(myEmail),
+			CRED.employee.group,
 			"ADMIN",
 			new EmpError("NOT_ADMIN", "Only ADMIN can delete workflows in batch"),
 		);
-		for (let i = 0; i < req.payload.wfids.length; i++) {
-			const wfid = req.payload.wfids[i];
+		for (let i = 0; i < PLD.wfids.length; i++) {
+			const wfid = PLD.wfids[i];
 			await Engine.resetTodosETagByWfId(tenant, wfid);
-			await Engine.destroyWorkflow(tenant, myEmail, wfid);
+			await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfid);
 		}
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Deleted");
@@ -1344,15 +1246,16 @@ async function WorkflowDestroyMulti(req, h) {
 	}
 }
 
-async function WorkflowDestroyByTitle(req, h) {
+async function WorkflowDestroyByTitle(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wftitle = req.payload.wftitle;
+		const tenant = CRED.tenant._id;
+		let wftitle = PLD.wftitle;
 		let wfs = await Workflow.find({ tenant: tenant, wftitle: wftitle }, { _id: 0, wfid: 1 }).lean();
 		for (let i = 0; i < wfs.length; i++) {
 			await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
-			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
+			await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfs[i].wfid);
 		}
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Done");
@@ -1362,15 +1265,16 @@ async function WorkflowDestroyByTitle(req, h) {
 	}
 }
 
-async function WorkflowDestroyByTplid(req, h) {
+async function WorkflowDestroyByTplid(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let tplid = req.payload.tplid;
+		const tenant = CRED.tenant._id;
+		let tplid = PLD.tplid;
 		let wfs = await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean();
 		for (let i = 0; i < wfs.length; i++) {
 			await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
-			await Engine.destroyWorkflow(tenant, myEmail, wfs[i].wfid);
+			await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfs[i].wfid);
 		}
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response("Done");
@@ -1380,15 +1284,16 @@ async function WorkflowDestroyByTplid(req, h) {
 	}
 }
 
-async function WorkflowRestartThenDestroy(req, h) {
+async function WorkflowRestartThenDestroy(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
 		await Engine.resetTodosETagByWfId(tenant, wfid);
-		let newWf = await Engine.restartWorkflow(tenant, myEmail, wfid);
+		let newWf = await Engine.restartWorkflow(tenant, CRED.employee.eid, wfid);
 		await Engine.resetTodosETagByWfId(tenant, newWf.wfid);
-		await Engine.destroyWorkflow(tenant, myEmail, wfid);
+		await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfid);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 		return h.response(newWf);
 	} catch (err) {
@@ -1397,32 +1302,33 @@ async function WorkflowRestartThenDestroy(req, h) {
 	}
 }
 
-async function WorkflowOP(req, h) {
+async function WorkflowOP(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
-		console.log(`[Workflow OP] ${myEmail} [${req.payload.op}] ${wfid}`);
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
+		console.log(`[Workflow OP] ${CRED.employee.eid} [${PLD.op}] ${wfid}`);
 		let ret = {};
-		switch (req.payload.op) {
+		switch (PLD.op) {
 			case "pause":
-				ret = { wfid: wfid, status: await Engine.pauseWorkflow(tenant, myEmail, wfid) };
+				ret = { wfid: wfid, status: await Engine.pauseWorkflow(tenant, CRED.employee.eid, wfid) };
 				break;
 			case "resume":
-				ret = { wfid: wfid, status: await Engine.resumeWorkflow(tenant, myEmail, wfid) };
+				ret = { wfid: wfid, status: await Engine.resumeWorkflow(tenant, CRED.employee.eid, wfid) };
 				break;
 			case "stop":
-				ret = { wfid: wfid, status: await Engine.stopWorkflow(tenant, myEmail, wfid) };
+				ret = { wfid: wfid, status: await Engine.stopWorkflow(tenant, CRED.employee.eid, wfid) };
 				break;
 			case "restart":
-				ret = { wfid: wfid, status: await Engine.restartWorkflow(tenant, myEmail, wfid) };
+				ret = { wfid: wfid, status: await Engine.restartWorkflow(tenant, CRED.employee.eid, wfid) };
 				break;
 			case "destroy":
-				ret = { wfid: wfid, status: await Engine.destroyWorkflow(tenant, myEmail, wfid) };
+				ret = { wfid: wfid, status: await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfid) };
 				break;
 			case "restartthendestroy":
-				ret = await Engine.restartWorkflow(tenant, myEmail, wfid);
-				await Engine.destroyWorkflow(tenant, myEmail, wfid);
+				ret = await Engine.restartWorkflow(tenant, CRED.employee.eid, wfid);
+				await Engine.destroyWorkflow(tenant, CRED.employee.eid, wfid);
 				break;
 			default:
 				throw new EmpError(
@@ -1439,22 +1345,23 @@ async function WorkflowOP(req, h) {
 	}
 }
 
-async function WorkflowSetTitle(req, h) {
+async function WorkflowSetTitle(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wftitle = req.payload.wftitle;
+		const tenant = CRED.tenant._id;
+		let wftitle = PLD.wftitle;
 		if (wftitle.length < 3) {
 			throw new EmpError("TOO_SHORT", "should be more than 3 chars");
 		}
 
-		let wfid = req.payload.wfid;
+		let wfid = PLD.wfid;
 		//TODO: should check hasPerm with new Mechanism
 		let wf = await RCL.getWorkflow(
 			{ tenant: tenant, wfid: wfid },
 			"engine/handler.WorkflowSetTitle",
 		);
-		if (!(await SystemPermController.hasPerm(myEmail, "workflow", wf, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 		wf = await RCL.updateWorkflow(
 			{ tenant: tenant, wfid: wfid },
@@ -1469,20 +1376,20 @@ async function WorkflowSetTitle(req, h) {
 	}
 }
 
-async function WorkflowList(req, h) {
+async function WorkflowList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let filter = req.payload.filter;
-		let sortDef = req.payload.sortdef;
-		return await Engine.workflowGetList(tenant, myEmail, filter, sortDef);
+		const tenant = CRED.tenant._id;
+		let filter = PLD.filter;
+		let sortDef = PLD.sortdef;
+		return await Engine.workflowGetList(tenant, CRED.employee.eid, filter, sortDef);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
-const __GetTSpanMomentOperators = function (tspan) {
-	let ret = null;
+const __GetTSpanMomentOperators = function (tspan: string): [DurationInputArg1, DurationInputArg2] {
 	if (Tools.isEmpty(tspan)) tspan = "1w";
 	if (Tools.isEmpty(tspan.trim())) tspan = "1w";
 	let res = tspan.match(/^(\d+)([hdwMQy])$/);
@@ -1490,10 +1397,10 @@ const __GetTSpanMomentOperators = function (tspan) {
 		tspan = "1w";
 		res = tspan.match(/^(\d+)([hdwMQy])$/);
 	}
-	return [res[1], res[2]];
+	return [res[1] as DurationInputArg1, res[2] as DurationInputArg2];
 };
 
-async function __GetTagsFilter(tagsForFilter, myEmail) {
+async function __GetTagsFilter(tagsForFilter: string[], myEid: string) {
 	let ret = null;
 	if (
 		tagsForFilter &&
@@ -1507,7 +1414,7 @@ async function __GetTagsFilter(tagsForFilter, myEmail) {
 			//每个tag，要么是自己设的，要么是管理员设置的
 			tagsMatchArr.push({
 				$elemMatch: {
-					$or: [{ owner: myEmail }, { group: "ADMIN" }],
+					$or: [{ owner: myEid }, { group: "ADMIN" }],
 					text: tagsForFilter[i],
 				},
 			});
@@ -1528,10 +1435,11 @@ async function __GetTagsFilter(tagsForFilter, myEmail) {
 	return ret;
 }
 
-async function WorkflowSearch(req, h) {
-	const tenant = req.auth.credentials.tenant._id;
-	let myEmail = req.auth.credentials.email;
-	let myGroup = await Cache.getMyGroup(myEmail);
+async function WorkflowSearch(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const tenant = CRED.tenant._id;
+	let myGroup = CRED.employee.group;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
 		let latestETag = Cache.getETag(`ETAG:WORKFLOWS:${tenant}`);
@@ -1545,43 +1453,42 @@ async function WorkflowSearch(req, h) {
 				.header("ETag", latestETag);
 		}
 		//检查当前用户是否有读取进程的权限
-		let me = await User.findOne({ _id: req.auth.credentials._id });
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read workflow");
-		let sortBy = req.payload.sortby;
+		let sortBy = PLD.sortby;
 
 		//开始组装Filter
-		let filter: any = { tenant: req.auth.credentials.tenant._id };
-		let todoFilter: any = { tenant: req.auth.credentials.tenant._id };
+		let filter: any = { tenant: CRED.tenant._id };
+		let todoFilter: any = { tenant: CRED.tenant._id };
 		let skip = 0;
-		if (req.payload.skip) skip = req.payload.skip;
+		if (PLD.skip) skip = PLD.skip;
 		let limit = 10000;
-		if (req.payload.limit) limit = req.payload.limit;
+		if (PLD.limit) limit = PLD.limit;
 		//按正则表达式匹配wftitle
-		if (req.payload.pattern) {
-			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
-			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
+		if (PLD.pattern) {
+			filter["wftitle"] = { $regex: `.*${PLD.pattern}.*` };
+			todoFilter["wftitle"] = { $regex: `.*${PLD.pattern}.*` };
 		}
 		//如果指定了tplid,则使用所指定的tplid
-		if (Tools.hasValue(req.payload.tplid)) {
-			filter["tplid"] = req.payload.tplid;
-			todoFilter["tplid"] = req.payload.tplid;
+		if (Tools.hasValue(PLD.tplid)) {
+			filter["tplid"] = PLD.tplid;
+			todoFilter["tplid"] = PLD.tplid;
 		} else {
-			let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
+			let tagsFilter = await __GetTagsFilter(PLD.tagsForFilter, CRED.employee.eid);
 			//tagsFilter的形式为 {$in: ARRAY OF TPLID}
 			if (tagsFilter) {
 				filter["tplid"] = tagsFilter;
 				todoFilter["tplid"] = tagsFilter;
 			}
 		}
-		if (req.payload.wfid) {
-			filter["wfid"] = req.payload.wfid;
-			todoFilter["wfid"] = req.payload.wfid;
+		if (PLD.wfid) {
+			filter["wfid"] = PLD.wfid;
+			todoFilter["wfid"] = PLD.wfid;
 		}
 
-		if (Tools.hasValue(req.payload.status)) {
-			filter["status"] = req.payload.status;
-			todoFilter["wfstatus"] = req.payload.status;
+		if (Tools.hasValue(PLD.status)) {
+			filter["status"] = PLD.status;
+			todoFilter["wfstatus"] = PLD.status;
 		}
 
 		if (Tools.isEmpty(filter.tplid)) {
@@ -1593,9 +1500,9 @@ async function WorkflowSearch(req, h) {
 			delete todoFilter.wfstatus;
 		}
 
-		if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
-			let cb = req.payload.calendar_begin;
-			let ce = req.payload.calendar_end;
+		if (Tools.hasValue(PLD.calendar_begin) && Tools.hasValue(PLD.calendar_end)) {
+			let cb = PLD.calendar_begin;
+			let ce = PLD.calendar_end;
 			let tz = await Cache.getOrgTimeZone(tenant);
 			let tzdiff = TimeZone.getDiff(tz);
 			cb = `${cb}T00:00:00${tzdiff}`;
@@ -1606,7 +1513,8 @@ async function WorkflowSearch(req, h) {
 			};
 			todoFilter.createdAt = filter.createdAt;
 		} else {
-			let tspan = req.payload.tspan;
+			//多长时间内
+			let tspan = PLD.tspan;
 			if (tspan !== "any") {
 				let tmp11 = __GetTSpanMomentOperators(tspan);
 				filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1]).toDate()) };
@@ -1620,15 +1528,15 @@ async function WorkflowSearch(req, h) {
       { $group: { _id: "$tplid", count: { $sum: 1 } } },
     ]);
      */
-		let starter = req.payload.starter;
+		let starter = PLD.starter;
 		if (starter) {
-			starter = Tools.makeEmailSameDomain(starter, myEmail);
+			starter = CRED.employee.eid;
 			filter["starter"] = starter;
 			todoFilter["starter"] = starter;
 		}
 		//如果当前用户不是ADMIN, 则需要检查进程是否与其相关
-		if (me.group !== "ADMIN") {
-			todoFilter.doer = myEmail;
+		if (myGroup !== "ADMIN") {
+			todoFilter.doer = CRED.employee.eid;
 			//console.log(`[WfIamIn Filter]  ${JSON.stringify(todoFilter)} `);
 			let todoGroup = await Todo.aggregate([
 				{ $match: todoFilter },
@@ -1639,7 +1547,7 @@ async function WorkflowSearch(req, h) {
 			//如果没有todo与template相关,也需要看是否是启动者
 			//因为,流程的启动者,也许刚好工作都是丢给别人的
 			if (WfsIamIn.length === 0) {
-				filter.starter = myEmail;
+				filter.starter = CRED.employee.eid;
 			} else {
 				//如果有相关todo与template相关,
 				//则需要同时考虑todo相关 和 starter相关
@@ -1650,7 +1558,7 @@ async function WorkflowSearch(req, h) {
 
 		let myBannedTemplatesIds = [];
 		if (myGroup !== "ADMIN") {
-			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, CRED.employee.eid);
 		}
 		if (filter.tplid) {
 			filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $nin: myBannedTemplatesIds } }];
@@ -1660,11 +1568,15 @@ async function WorkflowSearch(req, h) {
 		}
 
 		let fields = { doc: 0 };
-		if (req.payload.fields) fields = req.payload.fields;
+		if (PLD.fields) fields = PLD.fields;
 
 		let total = await Workflow.countDocuments(filter, { doc: 0 });
 		//console.log(JSON.stringify(filter, null, 2));
-		let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
+		let retObjs = (await Workflow.find(filter, fields)
+			.sort(sortBy)
+			.skip(skip)
+			.limit(limit)
+			.lean()) as unknown as any;
 
 		for (let i = 0; i < retObjs.length; i++) {
 			retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter, "WorkflowSearch");
@@ -1674,7 +1586,7 @@ async function WorkflowSearch(req, h) {
 			});
 		}
 		console.log(
-			`[Workflow Search] ${myEmail} [${total}] filter: ${JSON.stringify(
+			`[Workflow Search] ${CRED.employee.eid} [${total}] filter: ${JSON.stringify(
 				filter,
 			)} sortBy: ${sortBy} limit: ${limit}`,
 		);
@@ -1688,14 +1600,15 @@ async function WorkflowSearch(req, h) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	} finally {
-		Engine.clearOlderRehearsal(tenant, myEmail, 24);
+		Engine.clearOlderRehearsal(tenant, CRED.employee.eid, 24);
 	}
 }
 
-async function Mining_Workflow(req, h) {
-	const tenant = req.auth.credentials.tenant._id;
-	let myEmail = req.auth.credentials.email;
-	let myGroup = await Cache.getMyGroup(myEmail);
+async function Mining_Workflow(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const tenant = CRED.tenant._id;
+	let myGroup = CRED.employee.group;
 	try {
 		let ifNoneMatch = req.headers["if-none-match"];
 		let latestETag = Cache.getETag(`ETAG:MINING:${tenant}`);
@@ -1708,44 +1621,37 @@ async function Mining_Workflow(req, h) {
 				.header("X-Content-Type-Options", "nosniff")
 				.header("ETag", latestETag);
 		}
-		//检查当前用户是否有读取进程的权限
-		let me = await User.findOne({ _id: req.auth.credentials._id });
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read workflow");
-		let sortBy = req.payload.sortby;
 
 		//开始组装Filter
-		let filter: any = { tenant: req.auth.credentials.tenant._id };
-		let todoFilter: any = { tenant: req.auth.credentials.tenant._id };
-		let skip = 0;
-		if (req.payload.skip) skip = req.payload.skip;
-		let limit = 10000;
-		if (req.payload.limit) limit = req.payload.limit;
+		let filter: any = { tenant: CRED.tenant._id };
+		let todoFilter: any = { tenant: CRED.tenant._id };
 		//按正则表达式匹配wftitle
-		if (req.payload.pattern) {
-			filter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
-			todoFilter["wftitle"] = { $regex: `.*${req.payload.pattern}.*` };
+		if (PLD.pattern) {
+			filter["wftitle"] = { $regex: `.*${PLD.pattern}.*` };
+			todoFilter["wftitle"] = { $regex: `.*${PLD.pattern}.*` };
 		}
 		//如果指定了tplid,则使用所指定的tplid
-		if (Tools.hasValue(req.payload.tplid)) {
-			filter["tplid"] = req.payload.tplid;
-			todoFilter["tplid"] = req.payload.tplid;
+		if (Tools.hasValue(PLD.tplid)) {
+			filter["tplid"] = PLD.tplid;
+			todoFilter["tplid"] = PLD.tplid;
 		} else {
-			let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
+			let tagsFilter = await __GetTagsFilter(PLD.tagsForFilter, CRED.employee.eid);
 			//tagsFilter的形式为 {$in: ARRAY OF TPLID}
 			if (tagsFilter) {
 				filter["tplid"] = tagsFilter;
 				todoFilter["tplid"] = tagsFilter;
 			}
 		}
-		if (req.payload.wfid) {
-			filter["wfid"] = req.payload.wfid;
-			todoFilter["wfid"] = req.payload.wfid;
+		if (PLD.wfid) {
+			filter["wfid"] = PLD.wfid;
+			todoFilter["wfid"] = PLD.wfid;
 		}
 
-		if (Tools.hasValue(req.payload.status)) {
-			filter["status"] = req.payload.status;
-			todoFilter["wfstatus"] = req.payload.status;
+		if (Tools.hasValue(PLD.status)) {
+			filter["status"] = PLD.status;
+			todoFilter["wfstatus"] = PLD.status;
 		}
 
 		if (Tools.isEmpty(filter.tplid)) {
@@ -1757,9 +1663,9 @@ async function Mining_Workflow(req, h) {
 			delete todoFilter.wfstatus;
 		}
 
-		if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
-			let cb = req.payload.calendar_begin;
-			let ce = req.payload.calendar_end;
+		if (Tools.hasValue(PLD.calendar_begin) && Tools.hasValue(PLD.calendar_end)) {
+			let cb = PLD.calendar_begin;
+			let ce = PLD.calendar_end;
 			let tz = await Cache.getOrgTimeZone(tenant);
 			let tzdiff = TimeZone.getDiff(tz);
 			cb = `${cb}T00:00:00${tzdiff}`;
@@ -1770,7 +1676,7 @@ async function Mining_Workflow(req, h) {
 			};
 			todoFilter.createdAt = filter.createdAt;
 		} else {
-			let tspan = req.payload.tspan;
+			let tspan = PLD.tspan;
 			if (tspan !== "any") {
 				let tmp11 = __GetTSpanMomentOperators(tspan);
 				filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1]).toDate()) };
@@ -1784,15 +1690,15 @@ async function Mining_Workflow(req, h) {
       { $group: { _id: "$tplid", count: { $sum: 1 } } },
     ]);
      */
-		let starter = req.payload.starter;
+		let starter = PLD.starter;
 		if (starter) {
-			starter = Tools.makeEmailSameDomain(starter, myEmail);
+			starter = CRED.employee.eid;
 			filter["starter"] = starter;
 			todoFilter["starter"] = starter;
 		}
 		//如果当前用户不是ADMIN, 则需要检查进程是否与其相关
-		if (me.group !== "ADMIN") {
-			todoFilter.doer = myEmail;
+		if (myGroup !== "ADMIN") {
+			todoFilter.doer = CRED.employee.eid;
 			//console.log(`[WfIamIn Filter]  ${JSON.stringify(todoFilter)} `);
 			let todoGroup = await Todo.aggregate([
 				{ $match: todoFilter },
@@ -1803,7 +1709,7 @@ async function Mining_Workflow(req, h) {
 			//如果没有todo与template相关,也需要看是否是启动者
 			//因为,流程的启动者,也许刚好工作都是丢给别人的
 			if (WfsIamIn.length === 0) {
-				filter.starter = myEmail;
+				filter.starter = CRED.employee.eid;
 			} else {
 				//如果有相关todo与template相关,
 				//则需要同时考虑todo相关 和 starter相关
@@ -1814,7 +1720,7 @@ async function Mining_Workflow(req, h) {
 
 		let myBannedTemplatesIds = [];
 		if (myGroup !== "ADMIN") {
-			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, CRED.employee.eid);
 		}
 		if (filter.tplid) {
 			filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $nin: myBannedTemplatesIds } }];
@@ -1824,12 +1730,12 @@ async function Mining_Workflow(req, h) {
 		}
 
 		let fields = { doc: 0, __v: 0 };
-		if (req.payload.fields) fields = req.payload.fields;
+		if (PLD.fields) fields = PLD.fields;
 
 		//let total = await Workflow.countDocuments(filter, { doc: 0 });
 		//console.log(JSON.stringify(filter, null, 2));
 		//let retObjs = await Workflow.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
-		let retObjs = await Workflow.find(filter, fields).lean();
+		let retObjs = (await Workflow.find(filter, fields).lean()) as any[];
 
 		for (let i = 0; i < retObjs.length; i++) {
 			retObjs[i].starterCN = await Cache.getUserName(tenant, retObjs[i].starter, "WorkflowSearch");
@@ -1845,7 +1751,7 @@ async function Mining_Workflow(req, h) {
 			retObjs[i].lasting = 0;
 		}
 		console.log(
-			`[Workflow Search] ${myEmail} [${retObjs.length}] filter: ${JSON.stringify(
+			`[Workflow Search] ${CRED.employee.eid} [${retObjs.length}] filter: ${JSON.stringify(
 				filter,
 			)} no sort, no skip, no limit`,
 		);
@@ -1861,12 +1767,14 @@ async function Mining_Workflow(req, h) {
 	}
 }
 
-async function WorkflowGetLatest(req, h) {
+async function WorkflowGetLatest(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let filter = req.payload.filter;
-		return await Engine.workflowGetLatest(tenant, myEmail, filter);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let filter = PLD.filter;
+		return await Engine.workflowGetLatest(tenant, myEid, filter);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1874,21 +1782,21 @@ async function WorkflowGetLatest(req, h) {
 }
 
 /**
- * 要么myEmail用户是ADMIN，并且doerEmail在同一个Org中
- * 要么myEmail用户被doerEmail用户委托
+ * 要么myEid用户是ADMIN，并且doerEmail在同一个Org中
+ * 要么myEid用户被doerEmail用户委托
  */
 
-async function WorkSearch(req, h) {
-	const tenant = req.auth.credentials.tenant._id;
-	const myEmail = req.auth.credentials.email;
-	const myGroup = await Cache.getMyGroup(myEmail);
+async function WorkSearch(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const tenant = CRED.tenant._id;
+	const myEid = CRED.employee.eid;
+	const myGroup = CRED.employee.group;
 
-	let doer = req.payload.doer ? req.payload.doer : myEmail;
-	let reason = req.payload.reason ? req.payload.reason : "unknown";
-	let sortBy = req.payload.sortby;
-	doer = Tools.makeEmailSameDomain(doer, myEmail);
-	if (myGroup !== "ADMIN" && doer !== myEmail) {
-		doer = myEmail;
+	let doer = PLD.doer ? PLD.doer : myEid;
+	let reason = PLD.reason ? PLD.reason : "unknown";
+	if (myGroup !== "ADMIN" && doer !== myEid) {
+		doer = myEid;
 	}
 
 	try {
@@ -1905,7 +1813,7 @@ async function WorkSearch(req, h) {
 		}
 		//如果有wfid，则找只属于这个wfid工作流的workitems
 		/*
-		let kicked = await Kicklist.findOne({ email: myEmail }).lean();
+			 let kicked = await Kicklist.findOne({ tenant: tenant, eid: myEid }).lean();
 		if (kicked) {
 			throw new EmpError("KICKOUT", "your session is kicked out");
 		}
@@ -1914,68 +1822,63 @@ async function WorkSearch(req, h) {
 		let filter: any = {};
 		//filter.tenant = tenant;
 		filter.tenant = new Mongoose.Types.ObjectId(tenant);
-		let hasPermForWork = await Engine.hasPermForWork(
-			req.auth.credentials.tenant._id,
-			req.auth.credentials.email,
-			doer,
-		);
+		let hasPermForWork = await Engine.hasPermForWork(CRED.tenant._id, myEid, doer);
 		if (hasPermForWork === false) {
+			console.log(`${PLD.doer} -> ${doer} does not has Permission for Work`);
 			return { total: 0, objs: [] };
 		}
 		let sortByJson: any = {};
-		if (req.payload.sortby[0] === "-") {
-			sortByJson[req.payload.sortby.substring(1)] = -1;
+		if (PLD.sortby[0] === "-") {
+			sortByJson[PLD.sortby.substring(1)] = -1;
 		} else {
-			sortByJson[req.payload.sortby] = 1;
+			sortByJson[PLD.sortby] = 1;
 		}
-		let mappedField = req.payload.sort_field === "name" ? "title" : req.payload.sort_field;
+		//let mappedField = PLD.sort_field === "name" ? "title" : PLD.sort_field;
 		let skip = 0;
-		if (req.payload.skip) skip = req.payload.skip;
+		if (PLD.skip) skip = PLD.skip;
 		let limit = 10000;
-		if (req.payload.limit) limit = req.payload.limit;
-		if (req.payload.pattern) {
-			if (req.payload.pattern.startsWith("wf:")) {
+		if (PLD.limit) limit = PLD.limit;
+		if (PLD.pattern) {
+			if (PLD.pattern.startsWith("wf:")) {
 				let wfid =
-					req.payload.pattern.indexOf(" ") > 0
-						? req.payload.pattern.substring(3, req.payload.pattern.indexOf(" "))
-						: req.payload.pattern.substring(3);
+					PLD.pattern.indexOf(" ") > 0
+						? PLD.pattern.substring(3, PLD.pattern.indexOf(" "))
+						: PLD.pattern.substring(3);
 				let pattern =
-					req.payload.pattern.indexOf(" ") > 0
-						? req.payload.pattern.substring(req.payload.pattern.indexOf(" ") + 1)
-						: "";
+					PLD.pattern.indexOf(" ") > 0 ? PLD.pattern.substring(PLD.pattern.indexOf(" ") + 1) : "";
 				filter.wfid = wfid;
 				filter["title"] = { $regex: `.*${pattern}.*` };
 			} else {
-				filter["title"] = { $regex: `.*${req.payload.pattern}.*` };
+				filter["title"] = { $regex: `.*${PLD.pattern}.*` };
 			}
 		}
-		if (Tools.hasValue(req.payload.tplid)) filter.tplid = req.payload.tplid;
+		if (Tools.hasValue(PLD.tplid)) filter.tplid = PLD.tplid;
 		else {
 			if (
-				req.payload.tagsForFilter &&
-				Array.isArray(req.payload.tagsForFilter) &&
-				req.payload.tagsForFilter.length > 0 &&
-				req.payload.tagsForFilter[0].trim() !== ""
+				PLD.tagsForFilter &&
+				Array.isArray(PLD.tagsForFilter) &&
+				PLD.tagsForFilter.length > 0 &&
+				PLD.tagsForFilter[0].trim() !== ""
 			) {
-				let tagsFilter = await __GetTagsFilter(req.payload.tagsForFilter, myEmail);
+				let tagsFilter = await __GetTagsFilter(PLD.tagsForFilter, myEid);
 
 				if (tagsFilter) filter.tplid = tagsFilter;
 			}
 		}
-		if (Tools.hasValue(req.payload.wfid)) filter.wfid = req.payload.wfid;
-		if (Tools.hasValue(req.payload.nodeid)) filter.nodeid = req.payload.nodeid;
-		if (Tools.hasValue(req.payload.workid)) filter.workid = req.payload.workid;
-		if (Tools.hasValue(req.payload.status)) filter.status = req.payload.status;
+		if (Tools.hasValue(PLD.wfid)) filter.wfid = PLD.wfid;
+		if (Tools.hasValue(PLD.nodeid)) filter.nodeid = PLD.nodeid;
+		if (Tools.hasValue(PLD.workid)) filter.workid = PLD.workid;
+		if (Tools.hasValue(PLD.status)) filter.status = PLD.status;
 		if (["ST_RUN", "ST_PAUSE", "ST_DONE"].includes(filter.status) === false) {
 			delete filter.status;
 		}
-		if (Tools.hasValue(req.payload.wfstatus)) filter.wfstatus = req.payload.wfstatus;
+		if (Tools.hasValue(PLD.wfstatus)) filter.wfstatus = PLD.wfstatus;
 		if (["ST_RUN", "ST_PAUSE", "ST_DONE", "ST_STOP"].includes(filter.wfstatus) === false) {
 			delete filter.wfstatus;
 		}
-		if (Tools.hasValue(req.payload.calendar_begin) && Tools.hasValue(req.payload.calendar_end)) {
-			let cb = req.payload.calendar_begin;
-			let ce = req.payload.calendar_end;
+		if (Tools.hasValue(PLD.calendar_begin) && Tools.hasValue(PLD.calendar_end)) {
+			let cb = PLD.calendar_begin;
+			let ce = PLD.calendar_end;
 			let tz = await Cache.getOrgTimeZone(tenant);
 			let tzdiff = TimeZone.getDiff(tz);
 			cb = `${cb}T00:00:00${tzdiff}`;
@@ -1985,24 +1888,24 @@ async function WorkSearch(req, h) {
 				$lt: new Date(moment(ce).add(24, "h").toDate()),
 			};
 		} else {
-			let tspan = req.payload.tspan;
+			let tspan = PLD.tspan;
 			if (tspan !== "any") {
 				let tmp11 = __GetTSpanMomentOperators(tspan);
 				filter.createdAt = { $gte: new Date(moment().subtract(tmp11[0], tmp11[1]).toDate()) };
 			}
 		}
 
-		if (filter["status"] !== "ST_RUN" || req.payload.showpostponed === true) {
+		if (filter["status"] !== "ST_RUN" || PLD.showpostponed === true) {
 			filter["$or"] = [
 				{ rehearsal: false, doer: doer },
-				{ rehearsal: true, wfstarter: myEmail },
+				{ rehearsal: true, wfstarter: myEid },
 			];
 		} else {
 			filter["$and"] = [
 				{
 					$or: [
 						{ rehearsal: false, doer: doer },
-						{ rehearsal: true, wfstarter: myEmail },
+						{ rehearsal: true, wfstarter: myEid },
 					],
 				},
 				{
@@ -2028,13 +1931,11 @@ async function WorkSearch(req, h) {
 			];
 		}
 
-		if (req.payload.status === "ST_FOOTPRINT") {
+		if (PLD.status === "ST_FOOTPRINT") {
 			filter["status"] = { $in: ["ST_DONE", "ST_RUN"] };
-			filter["doer"] = myEmail;
+			filter["doer"] = myEid;
 		}
 
-		let fields = { doc: 0 };
-		if (req.payload.fields) fields = req.payload.fields;
 		let total = await Todo.find(filter).countDocuments();
 		let ret = await Todo.aggregate([
 			{ $match: filter },
@@ -2062,7 +1963,7 @@ async function WorkSearch(req, h) {
 			{ $limit: limit },
 		]);
 		for (let i = 0; i < ret.length; i++) {
-			if (req.payload.showpostponed === false) {
+			if (PLD.showpostponed === false) {
 				//如果不显示postponed，也就是搜索结果要么是没有postpone，
 				//要么是已经到了postpone时间的，那么，就可以对于这些已经到了postpone时间的，
 				//将其postpone设为0， 从而在后续搜索中，不再进行时间对比，直接
@@ -2083,7 +1984,7 @@ async function WorkSearch(req, h) {
 			});
 		}
 		console.log(
-			`[Work Search] ${myEmail} Reason[${reason}] [${total}] filter: ${JSON.stringify(
+			`[Work Search] ${myEid} Count:[${total}] Reason[${reason}] filter: ${JSON.stringify(
 				filter,
 			)} sortBy: ${JSON.stringify(sortByJson)} limit: ${limit}`,
 		);
@@ -2095,23 +1996,21 @@ async function WorkSearch(req, h) {
 			.header("ETag", latestETag);
 	} catch (err) {
 		if (err.error === "KICKOUT") {
-			console.log(myEmail, "is kick out");
+			console.log(myEid, "is kick out");
 		} else console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	} finally {
-		Engine.clearOlderRehearsal(tenant, myEmail, 24);
+		Engine.clearOlderRehearsal(tenant, myEid, 24);
 	}
 }
 
-async function WorkInfo(req, h) {
+async function WorkInfo(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
+		let myEid = CRED.employee.eid;
 		//如果有wfid，则找只属于这个wfid工作流的workitems
-		let workitem = await Engine.getWorkInfo(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.todoid,
-		);
+		let workitem = await Engine.getWorkInfo(myEid, CRED.tenant._id, PLD.todoid);
 		return workitem;
 	} catch (err) {
 		console.error(err);
@@ -2119,49 +2018,44 @@ async function WorkInfo(req, h) {
 	}
 }
 
-async function CheckCoworker(req, h) {
+async function CheckCoworker(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let whom = req.payload.whom;
-		let coWorkerEmail = whom;
-		let value = EmailSchema.validate(whom);
-		if (value.error) {
-			coWorkerEmail = whom + myEmail.substring(myEmail.indexOf("@"));
-		}
-		let user = await User.findOne(
-			{ tenant: tenant, email: coWorkerEmail },
-			{ email: 1, username: 1, _id: 0 },
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let whom = PLD.whom;
+		let employee = await Employee.findOne(
+			{ tenant: tenant, eid: whom },
+			{ eid: 1, nickname: 1, _id: 0 },
 		);
-		if (!user) {
+		if (!employee) {
 			throw new EmpError("USER_NOT_FOUND", `${whom} not exist`);
 		}
 
-		return user;
+		return employee;
 	} catch (err) {
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function CheckCoworkers(req, h) {
+async function CheckCoworkers(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let uids = req.payload.uids;
-		uids = [...new Set(uids)];
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let eids = PLD.eids;
+		eids = [...new Set(eids)];
 
 		let ret = "";
-		for (let i = 0; i < uids.length; i++) {
-			let uid = uids[i][0] === "@" ? uids[i].substring(1) : uids[i];
-			let cn = await Cache.getUserName(
-				tenant,
-				Tools.makeEmailSameDomain(uid, myEmail),
-				"CheckCoworkers",
-			);
+		for (let i = 0; i < eids.length; i++) {
+			let eid = eids[i][0] === "@" ? eids[i].substring(1) : eids[i];
+			let cn = await Cache.getUserName(tenant, eid, "CheckCoworkers");
 			if (cn === "USER_NOT_FOUND") {
-				ret += "<span class='text-danger'>" + uids[i] + "</span> ";
+				ret += "<span class='text-danger'>" + eids[i] + "</span> ";
 			} else {
-				ret += uids[i] + "(" + cn + ") ";
+				ret += eids[i] + "(" + cn + ") ";
 			}
 		}
 
@@ -2171,29 +2065,29 @@ async function CheckCoworkers(req, h) {
 	}
 }
 
-async function TransferWork(req, h) {
+async function TransferWork(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let whom = req.payload.whom;
-		let todoid = req.payload.todoid;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let whom = PLD.whom;
+		let todoid = PLD.todoid;
 
-		return Engine.transferWork(tenant, whom, myEmail, todoid);
+		return Engine.transferWork(tenant, whom, myEid, todoid);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function WorkGetHtml(req, h) {
+async function WorkGetHtml(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
+		let myEid = CRED.employee.eid;
 		//如果有wfid，则找只属于这个wfid工作流的workitems
-		let workitem = await Engine.getWorkInfo(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.workid,
-		);
+		let workitem = await Engine.getWorkInfo(myEid, CRED.tenant._id, PLD.workid);
 		let html = "<div class='container'>";
 		html += "Work:" + workitem.title;
 		html += "KVars:" + JSON.stringify(workitem.kvars);
@@ -2205,19 +2099,20 @@ async function WorkGetHtml(req, h) {
 	}
 }
 
-async function WorkDo(req, h) {
+async function WorkDo(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
+		let myEid = CRED.employee.eid;
 		return await Engine.doWork(
-			myEmail,
-			req.payload.todoid,
-			req.auth.credentials.tenant._id,
-			req.payload.doer,
-			req.payload.wfid,
-			req.payload.nodeid,
-			req.payload.route,
-			req.payload.kvars,
-			req.payload.comment,
+			myEid,
+			PLD.todoid,
+			CRED.tenant._id,
+			PLD.doer,
+			PLD.wfid,
+			PLD.route,
+			PLD.kvars,
+			PLD.comment,
 		);
 	} catch (err) {
 		console.error(err);
@@ -2225,13 +2120,13 @@ async function WorkDo(req, h) {
 	}
 }
 
-async function WorkPostpone(req, h) {
+async function WorkPostpone(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		const myEmail = req.auth.credentials.email;
-		const myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
 
-		const { todoid, days } = req.payload;
+		const { todoid, days } = PLD;
 		await Todo.findOneAndUpdate(
 			{ tenant: tenant, todoid: todoid },
 			{
@@ -2250,14 +2145,12 @@ async function WorkPostpone(req, h) {
 	}
 }
 
-async function WorkflowStatus(req, h) {
+async function WorkflowStatus(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
-		let ret = await Engine.getWorkflowOrNodeStatus(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.wfid,
-		);
+		let myEid = CRED.employee.eid;
+		let ret = await Engine.getWorkflowOrNodeStatus(CRED.tenant._id, myEid, PLD.wfid);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -2265,48 +2158,43 @@ async function WorkflowStatus(req, h) {
 	}
 }
 
-async function WorkStatus(req, h) {
+async function WorkStatus(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
-		return await Engine.getWorkflowOrNodeStatus(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.wfid,
-			req.payload.workid,
-		);
+		let myEid = CRED.employee.eid;
+		return await Engine.getWorkflowOrNodeStatus(CRED.tenant._id, myEid, PLD.wfid, PLD.workid);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function WorkRevoke(req, h) {
+async function WorkRevoke(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
-		return await Engine.revokeWork(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.wfid,
-			req.payload.todoid,
-			req.payload.comment,
-		);
+		let myEid = CRED.employee.eid;
+		return await Engine.revokeWork(myEid, CRED.tenant._id, PLD.wfid, PLD.todoid, PLD.comment);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function WorkExplainPds(req, h) {
+async function WorkExplainPds(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let useEmail = req.payload.email ? req.payload.email : req.auth.credentials.email;
+		let useEid = PLD.eid ? PLD.eid : CRED.employee.eid;
 		return h.response(
 			await Engine.explainPds({
-				tenant: req.auth.credentials.tenant._id,
-				email: useEmail,
-				wfid: req.payload.wfid,
-				teamid: req.payload.teamid,
-				pds: Tools.qtb(req.payload.pds),
-				kvar: req.payload.kvar,
+				tenant: CRED.tenant._id,
+				eid: useEid,
+				wfid: PLD.wfid,
+				teamid: PLD.teamid,
+				pds: Tools.qtb(PLD.pds),
+				kvar: PLD.kvar,
 				insertDefault: false,
 			}),
 		);
@@ -2316,26 +2204,28 @@ async function WorkExplainPds(req, h) {
 	}
 }
 
-async function WorkReset(req, h) {
+async function WorkReset(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("ONLY_ADMIN", "Only Admin are able to reset");
 		}
 
-		let wfid = req.payload.wfid;
-		let workid = req.payload.workid;
+		let wfid = PLD.wfid;
+		let workid = PLD.workid;
 		let workFilter = { tenant: tenant, wfid: wfid, workid: workid };
 		let theWork = await Work.findOne(workFilter);
 		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "engine/handler.WorkReset");
 		let wfIO = await Parser.parse(wf.doc);
-		let tpRoot = wfIO(".template");
+		//let tpRoot = wfIO(".template");
 		let wfRoot = wfIO(".workflow");
 
 		//Reset work node
-		let tpNode = tpRoot.find("#" + theWork.nodeid);
+		//let tpNode = tpRoot.find("#" + theWork.nodeid);
 		let workNode = wfRoot.find("#" + theWork.workid);
 		workNode.removeClass("ST_DONE");
 		workNode.addClass("ST_RUN");
@@ -2368,17 +2258,19 @@ async function WorkReset(req, h) {
 	}
 }
 
-async function WorkAddAdhoc(req, h) {
+async function WorkAddAdhoc(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
 		return h.response(
 			await Engine.addAdhoc({
-				tenant: req.auth.credentials.tenant._id,
-				wfid: req.payload.wfid,
-				todoid: req.payload.todoid,
-				rehearsal: req.payload.rehearsal,
-				title: req.payload.title,
-				doer: req.payload.doer,
-				comment: req.payload.comment,
+				tenant: CRED.tenant._id,
+				wfid: PLD.wfid,
+				todoid: PLD.todoid,
+				rehearsal: PLD.rehearsal,
+				title: PLD.title,
+				doer: PLD.doer,
+				comment: PLD.comment,
 			}),
 		);
 	} catch (err) {
@@ -2387,17 +2279,19 @@ async function WorkAddAdhoc(req, h) {
 	}
 }
 
-async function WorkSendback(req, h) {
+async function WorkSendback(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
+		let myEid = CRED.employee.eid;
 		return await Engine.sendback(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.wfid,
-			req.payload.todoid,
-			req.payload.doer,
-			req.payload.kvars,
-			req.payload.comment,
+			myEid,
+			CRED.tenant._id,
+			PLD.wfid,
+			PLD.todoid,
+			PLD.doer,
+			PLD.kvars,
+			PLD.comment,
 		);
 	} catch (err) {
 		console.error(err);
@@ -2409,26 +2303,25 @@ async function WorkSendback(req, h) {
  * Engine.getTrack = async() 返回work的执行轨迹，倒着往回找
  */
 
-async function WorkGetTrack(req, h) {
+async function WorkGetTrack(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
-		return await Engine.getTrack(
-			myEmail,
-			req.auth.credentials.tenant._id,
-			req.payload.wfid,
-			req.payload.workid,
-		);
+		let myEid = CRED.employee.eid;
+		return await Engine.getTrack(CRED.tenant._id, myEid, PLD.wfid, PLD.workid);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TemplateList(req, h) {
+async function TemplateList(req: Request, h: ResponseToolkit) {
+	//const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read template");
-		let ret = await Template.find({ tenant: req.auth.credentials.tenant._id }, { doc: 0 })
+		let ret = await Template.find({ tenant: CRED.tenant._id }, { doc: 0 })
 			.sort("-updatedAt")
 			.lean();
 		return ret;
@@ -2438,11 +2331,13 @@ async function TemplateList(req, h) {
 	}
 }
 
-async function TemplateIdList(req, h) {
+async function TemplateIdList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
+		let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -2453,19 +2348,17 @@ async function TemplateIdList(req, h) {
 				.header("ETag", latestETag);
 		}
 		let filter: any = { tenant: tenant, ins: false };
-		let myEmail = req.auth.credentials.email;
-		let tagsArr = req.payload.tags
-			? req.payload.tags.split(";").filter((x) => x.trim().length > 0)
-			: [];
+		let myEid = CRED.employee.eid;
+		let tagsArr = PLD.tags ? PLD.tags.split(";").filter((x: string) => x.trim().length > 0) : [];
 		if (tagsArr.length > 0) {
-			//filter["tags.text"] = { $all: req.payload.tagsForFilter };
-			//filter["tags.owner"] = myEmail;
-			//filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
+			//filter["tags.text"] = { $all: PLD.tagsForFilter };
+			//filter["tags.owner"] = myEid;
+			//filter["tags"] = { text: { $all: PLD.tagsForFilter }, owner: myEid };
 			let tagsMatchArr = [];
 			for (let i = 0; i < tagsArr.length; i++) {
 				tagsMatchArr.push({
 					$elemMatch: {
-						$or: [{ owner: myEmail }, { group: "ADMIN" }],
+						$or: [{ owner: myEid }, { group: "ADMIN" }],
 						text: tagsArr[i],
 					},
 				});
@@ -2492,43 +2385,45 @@ async function TemplateIdList(req, h) {
 
 /*
 
-async function TemplateSearch_backup (req, h) {
+async function TemplateSearch_backup (req: Request, h:ResponseToolkit) {
+const PLD=req.payload as any;
+const CRED = req.auth.credentials as any;
   try {
-const tenant = req.auth.credentials.tenant._id;
-    let myEmail = req.auth.credentials.email;
-    if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+const tenant = CRED.tenant._id;
+    let myEid = CRED.employee.eid;
+    if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
       throw new EmpError("NO_PERM", "no permission to read template");
 
-    let mappedField = req.payload.sort_field === "name" ? "tplid" : req.payload.sort_field;
-    let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
+    let mappedField = PLD.sort_field === "name" ? "tplid" : PLD.sort_field;
+    let sortBy = `${PLD.sort_order < 0 ? "-" : ""}${mappedField}`;
     let filter:any = { tenant: tenant, ins: false };
     let skip = 0;
-    if (req.payload.skip) skip = req.payload.skip;
+    if (PLD.skip) skip = PLD.skip;
     let limit = 10000;
-    if (req.payload.limit) limit = req.payload.limit;
-    if (req.payload.pattern) {
-      filter["tplid"] = { $regex: `.*${req.payload.pattern}.*` };
+    if (PLD.limit) limit = PLD.limit;
+    if (PLD.pattern) {
+      filter["tplid"] = { $regex: `.*${PLD.pattern}.*` };
     }
-    if (req.payload.tplid) {
+    if (PLD.tplid) {
       //如果制定了tplid，则使用指定tplid搜索
-      filter["tplid"] = req.payload.tplid;
+      filter["tplid"] = PLD.tplid;
       limit = 1;
     }
     if (
-      req.payload.tagsForFilter &&
-      Array.isArray(req.payload.tagsForFilter) &&
-      req.payload.tagsForFilter.length > 0 &&
-      req.payload.tagsForFilter[0].length > 0
+      PLD.tagsForFilter &&
+      Array.isArray(PLD.tagsForFilter) &&
+      PLD.tagsForFilter.length > 0 &&
+      PLD.tagsForFilter[0].length > 0
     ) {
-      //filter["tags.text"] = { $all: req.payload.tagsForFilter };
-      //filter["tags.owner"] = myEmail;
-      //filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
+      //filter["tags.text"] = { $all: PLD.tagsForFilter };
+      //filter["tags.owner"] = myEid;
+      //filter["tags"] = { text: { $all: PLD.tagsForFilter }, owner: myEid };
       let tagsMatchArr = [];
-      for (let i = 0; i < req.payload.tagsForFilter.length; i++) {
+      for (let i = 0; i < PLD.tagsForFilter.length; i++) {
         tagsMatchArr.push({
           $elemMatch: {
-            $or: [{ owner: myEmail }, { group: "ADMIN" }],
-            text: req.payload.tagsForFilter[i],
+            $or: [{ owner: myEid }, { group: "ADMIN" }],
+            text: PLD.tagsForFilter[i],
           },
         });
       }
@@ -2537,11 +2432,11 @@ const tenant = req.auth.credentials.tenant._id;
       };
     }
 
-    if (Tools.hasValue(req.payload.author)) {
-      filter["author"] = req.payload.author;
+    if (Tools.hasValue(PLD.author)) {
+      filter["author"] = PLD.author;
     }
 
-    //let tspan = req.payload.tspan;
+    //let tspan = PLD.tspan;
     let tspan = "any";
     if (tspan !== "any") {
       let tmp11 = __GetTSpanMomentOperators(tspan);
@@ -2552,17 +2447,17 @@ const tenant = req.auth.credentials.tenant._id;
       `[Template Search] filter: ${JSON.stringify(filter)} sortBy: ${sortBy} limit: ${limit}`
     );
     let fields = { doc: 0 };
-    if (req.payload.fields) fields = req.payload.fields;
+    if (PLD.fields) fields = PLD.fields;
 
     //模版的搜索结果, 需要调用Engine.checkVisi检查模版是否对当前用户可见
     let allObjs = await Template.find(filter, { doc: 0 });
     allObjs = await asyncFilter(allObjs, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEmail, x);
+      return await Engine.checkVisi(tenant, x.tplid, myEid, x);
     });
     let total = allObjs.length;
     let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
     ret = await asyncFilter(ret, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEmail, x);
+      return await Engine.checkVisi(tenant, x.tplid, myEid, x);
     });
     for (let i = 0; i < ret.length; i++) {
       ret[i].cron = (
@@ -2571,7 +2466,7 @@ const tenant = req.auth.credentials.tenant._id;
     }
 
     ret = ret.map((x) => {
-      x.tags = x.tags.filter((t) => t.owner === myEmail);
+      x.tags = x.tags.filter((t) => t.owner === myEid);
       return x;
     });
     return { total, objs: ret }; //Template Search Result
@@ -2582,13 +2477,15 @@ const tenant = req.auth.credentials.tenant._id;
 };
 */
 
-async function TemplateSearch(req, h) {
+async function TemplateSearch(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = Cache.getETag(`ETAG:TEMPLATES:${tenant}`);
+		let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -2598,52 +2495,49 @@ async function TemplateSearch(req, h) {
 				.header("X-Content-Type-Options", "nosniff")
 				.header("ETag", latestETag);
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
 			throw new EmpError("NO_PERM", "no permission to read template");
 
 		let myBannedTemplatesIds = [];
 		if (myGroup !== "ADMIN") {
-			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+			myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEid);
 		}
 
-		let sortBy = req.payload.sortby;
+		let sortBy = PLD.sortby;
 		let filter: any = { tenant: tenant, ins: false };
 		let skip = 0;
-		if (req.payload.skip) skip = req.payload.skip;
+		if (PLD.skip) skip = PLD.skip;
 		let limit = 10000;
-		if (req.payload.limit) limit = req.payload.limit;
-		if (req.payload.pattern) {
-			//filter["tplid"] = { $regex: `.*${req.payload.pattern}.*` };
+		if (PLD.limit) limit = PLD.limit;
+		if (PLD.pattern) {
+			//filter["tplid"] = { $regex: `.*${PLD.pattern}.*` };
 			filter["$and"] = [
-				{ tplid: { $regex: `.*${req.payload.pattern}.*` } },
+				{ tplid: { $regex: `.*${PLD.pattern}.*` } },
 				{ tplid: { $nin: myBannedTemplatesIds } },
 			];
-		} else if (req.payload.tplid) {
+		} else if (PLD.tplid) {
 			//如果制定了tplid，则使用指定tplid搜索
-			//filter["tplid"] = req.payload.tplid;
-			filter["$and"] = [
-				{ tplid: { $eq: req.payload.tplid } },
-				{ tplid: { $nin: myBannedTemplatesIds } },
-			];
+			//filter["tplid"] = PLD.tplid;
+			filter["$and"] = [{ tplid: { $eq: PLD.tplid } }, { tplid: { $nin: myBannedTemplatesIds } }];
 			limit = 1;
 		} else {
 			filter["tplid"] = { $nin: myBannedTemplatesIds };
 		}
 		if (
-			req.payload.tagsForFilter &&
-			Array.isArray(req.payload.tagsForFilter) &&
-			req.payload.tagsForFilter.length > 0 &&
-			req.payload.tagsForFilter[0].length > 0
+			PLD.tagsForFilter &&
+			Array.isArray(PLD.tagsForFilter) &&
+			PLD.tagsForFilter.length > 0 &&
+			PLD.tagsForFilter[0].length > 0
 		) {
-			//filter["tags.text"] = { $all: req.payload.tagsForFilter };
-			//filter["tags.owner"] = myEmail;
-			//filter["tags"] = { text: { $all: req.payload.tagsForFilter }, owner: myEmail };
+			//filter["tags.text"] = { $all: PLD.tagsForFilter };
+			//filter["tags.owner"] = myEid;
+			//filter["tags"] = { text: { $all: PLD.tagsForFilter }, owner: myEid };
 			let tagsMatchArr = [];
-			for (let i = 0; i < req.payload.tagsForFilter.length; i++) {
+			for (let i = 0; i < PLD.tagsForFilter.length; i++) {
 				tagsMatchArr.push({
 					$elemMatch: {
-						$or: [{ owner: myEmail }, { group: "ADMIN" }],
-						text: req.payload.tagsForFilter[i],
+						$or: [{ owner: myEid }, { group: "ADMIN" }],
+						text: PLD.tagsForFilter[i],
 					},
 				});
 			}
@@ -2652,22 +2546,23 @@ async function TemplateSearch(req, h) {
 			};
 		}
 
-		if (req.payload.author) {
-			filter["author"] = Tools.makeEmailSameDomain(req.payload.author, myEmail);
+		if (PLD.author) {
+			filter["author"] = Tools.makeEmailSameDomain(PLD.author, myEid);
 		}
 
-		//let tspan = req.payload.tspan;
+		//let tspan = PLD.tspan;
 		let tspan = "any";
 		if (tspan !== "any") {
 			let tmp11 = __GetTSpanMomentOperators(tspan);
 			filter.createdAt = { $gte: moment().subtract(tmp11[0], tmp11[1]).toDate() };
 		}
 
-		let fields = { doc: 0 };
-		if (req.payload.fields) fields = req.payload.fields;
-
 		let total = await Template.countDocuments(filter, { doc: 0 });
-		let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
+		let ret = (await Template.find(filter, PLD.fields ? PLD.fields : { doc: 0 })
+			.sort(sortBy)
+			.skip(skip)
+			.limit(limit)
+			.lean()) as TemplateType[];
 		for (let i = 0; i < ret.length; i++) {
 			ret[i].cron = (
 				await Crontab.find({ tenant: tenant, tplid: ret[i].tplid }, { _id: 1 })
@@ -2675,11 +2570,11 @@ async function TemplateSearch(req, h) {
 		}
 
 		ret = ret.map((x) => {
-			x.tags = x.tags.filter((t) => t.owner === myEmail);
+			x.tags = x.tags.filter((t: any) => t.owner === myEid);
 			return x;
 		});
 		console.log(
-			`[Template Search] ${myEmail} [${total}] filter: ${JSON.stringify(
+			`[Template Search] ${myEid} [${total}] filter: ${JSON.stringify(
 				filter,
 			)} sortBy: ${sortBy} limit: ${limit}\nGot ${total}`,
 		);
@@ -2695,23 +2590,23 @@ async function TemplateSearch(req, h) {
 	}
 }
 
-async function TemplateRead(req, h) {
+async function TemplateRead(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let filter: any = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
-		if (req.payload.bwid) {
-			filter["lastUpdateBwid"] = { $ne: req.payload.bwid };
+		let filter: any = { tenant: CRED.tenant._id, tplid: PLD.tplid };
+		if (PLD.bwid) {
+			filter["lastUpdateBwid"] = { $ne: PLD.bwid };
 		}
 
 		let tpl = await Template.findOne(filter).lean();
-		if (req.payload.bwid && !tpl) {
+		if (PLD.bwid && !tpl) {
 			return "MAYBE_LASTUPDATE_BY_YOUSELF";
 		} else {
-			if (
-				!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read"))
-			)
+			if (!(await SPC.hasPerm(CRED.employee, "template", tpl, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this template");
-			if (req.payload.checkUpdatedAt) {
-				if (tpl.updatedAt.toISOString() === req.payload.checkUpdatedAt) {
+			if (PLD.checkUpdatedAt) {
+				if (tpl.updatedAt.toISOString() === PLD.checkUpdatedAt) {
 					return "NOCHANGE";
 				}
 			}
@@ -2723,19 +2618,21 @@ async function TemplateRead(req, h) {
 	}
 }
 
-async function TemplateImport(req, h) {
+async function TemplateImport(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let author = myEmail;
-		let authorName = req.auth.credentials.username;
-		let fileInfo = req.payload.file;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let author = myEid;
+		let authorName = CRED.username;
+		let fileInfo = PLD.file;
 		let doc = fs.readFileSync(fileInfo.path, "utf8");
-		let myGroup = await Cache.getMyGroup(myEmail);
+		let myGroup = CRED.employee.group;
 
-		let tplid = req.payload.tplid;
+		let tplid = PLD.tplid;
 		if (Tools.isEmpty(tplid)) {
 			throw new EmpError("NO_TPLID", "Template id can not be empty");
 		}
@@ -2746,7 +2643,7 @@ async function TemplateImport(req, h) {
 			authorName: authorName,
 			ins: false,
 			doc: doc,
-			tags: [{ owner: myEmail, text: "mine", group: myGroup }],
+			tags: [{ owner: myEid, text: "mine", group: myGroup }],
 		});
 		let filter: any = { tenant: tenant, tplid: tplid },
 			update = {
@@ -2762,7 +2659,7 @@ async function TemplateImport(req, h) {
 		fs.unlink(fileInfo.path, () => {
 			console.log("Unlinked temp file:", fileInfo.path);
 		});
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 		return h.response(obj);
 	} catch (err) {
 		console.error(err);
@@ -2770,16 +2667,14 @@ async function TemplateImport(req, h) {
 	}
 }
 
-async function TemplateCopyFrom(req, h) {
+async function TemplateCopyFrom(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create template");
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let author = myEmail;
-		let authorName = req.auth.credentials.username;
-		const { fromtplid, totplid } = req.payload;
+		const tenant = CRED.tenant._id;
+		const { fromtplid, totplid } = PLD;
 
 		let fromDoc = await Template.findOne({ tenant: tenant, tplid: fromtplid }, { _id: 0, doc: 1 });
 		assert(fromDoc && fromDoc.doc);
@@ -2788,7 +2683,7 @@ async function TemplateCopyFrom(req, h) {
 			{ $set: { doc: fromDoc.doc } },
 			{ upsert: false, new: true },
 		);
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 		return h.response(obj);
 	} catch (err) {
 		console.error(err);
@@ -2796,35 +2691,36 @@ async function TemplateCopyFrom(req, h) {
 	}
 }
 
-async function TemplateSetAuthor(req, h) {
+async function TemplateSetAuthor(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 
-		let tplid = req.payload.tplid;
+		let tplid = PLD.tplid;
 
-		let newAuthorPrefix = req.payload.author.trim();
-		if (newAuthorPrefix.length > 0 && newAuthorPrefix[0] === "@")
-			newAuthorPrefix = newAuthorPrefix.substring(1);
-		let toWhomEmail = Tools.makeEmailSameDomain(newAuthorPrefix, myEmail);
-		let newOwner = await User.findOne({ tenant: tenant, email: toWhomEmail });
+		let newAuthorEid = PLD.author.trim();
+		if (newAuthorEid.length > 0 && newAuthorEid[0] === "@")
+			newAuthorEid = newAuthorEid.substring(1);
+		let newOwner = await Employee.findOne({ tenant: tenant, eid: newAuthorEid });
 		if (!newOwner) {
-			throw new EmpError("NO_USER", `User ${toWhomEmail} not found`);
+			throw new EmpError("NO_USER", `Employee ${newAuthorEid} not found`);
 		}
 
 		let filter: any = { tenant: tenant, tplid: tplid };
-		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") filter["author"] = myEmail;
+		let myGroup = CRED.employee.group;
+		if (myGroup !== "ADMIN") filter["author"] = myEid;
 		let tpl = await Template.findOneAndUpdate(
 			filter,
-			{ $set: { author: newOwner.email, authorName: newOwner.username } },
+			{ $set: { author: newOwner.eid, authorName: newOwner.nickname } },
 			{ upsert: false, new: true },
 		);
 		if (!tpl) {
 			throw new EmpError("NO_TPL", `Not admin or owner`);
 		}
 		tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 
 		return h.response(tpl);
 	} catch (err) {
@@ -2833,23 +2729,25 @@ async function TemplateSetAuthor(req, h) {
 	}
 }
 
-async function TemplateSetProp(req, h) {
+async function TemplateSetProp(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 
-		let tplid = req.payload.tplid;
+		let tplid = PLD.tplid;
 
 		let filter: any = { tenant: tenant, tplid: tplid };
-		let myGroup = await Cache.getMyGroup(myEmail);
-		if (myGroup !== "ADMIN") filter["author"] = myEmail;
+		let myGroup = CRED.employee.group;
+		if (myGroup !== "ADMIN") filter["author"] = myEid;
 		let tpl = await Template.findOneAndUpdate(
 			filter,
 			{
 				$set: {
-					pboat: req.payload.pboat,
-					endpoint: req.payload.endpoint,
-					endpointmode: req.payload.endpointmode,
+					pboat: PLD.pboat,
+					endpoint: PLD.endpoint,
+					endpointmode: PLD.endpointmode,
 				},
 			},
 			{ upsert: false, new: true },
@@ -2866,25 +2764,27 @@ async function TemplateSetProp(req, h) {
 	}
 }
 
-async function WorkflowSetPboAt(req, h) {
+async function WorkflowSetPboAt(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 
-		let wfid = req.payload.wfid;
+		let wfid = PLD.wfid;
 
 		//TODO: huge change
 		let wf = await RCL.getWorkflow(
 			{ tenant: tenant, wfid: wfid },
 			"engine/handler.WorkflowSetPboAt",
 		);
-		if (!wf || (myGroup !== "ADMIN" && wf.starter !== myEmail)) {
+		if (!wf || (myGroup !== "ADMIN" && wf.starter !== myEid)) {
 			throw new EmpError("NO_AUTH", `Not admin or owner`);
 		}
 		wf = await RCL.updateWorkflow(
 			{ tenant: tenant, wfid: wfid },
-			{ $set: { pboat: req.payload.pboat } },
+			{ $set: { pboat: PLD.pboat } },
 			"engine/handler.WorkflowSetPboAt",
 		);
 		await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
@@ -2896,17 +2796,19 @@ async function WorkflowSetPboAt(req, h) {
 	}
 }
 
-async function TemplateSetVisi(req, h) {
+async function TemplateSetVisi(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let author = myEmail;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let author = myEid;
 
-		let tplid = req.payload.tplid;
+		let tplid = PLD.tplid;
 		await Cache.removeVisi(tplid);
 		let tpl = await Template.findOneAndUpdate(
 			{ tenant: tenant, author: author, tplid: tplid },
-			{ $set: { visi: req.payload.visi } },
+			{ $set: { visi: PLD.visi } },
 			{ upsert: false, new: true },
 		);
 		if (!tpl) {
@@ -2917,7 +2819,7 @@ async function TemplateSetVisi(req, h) {
 
 		await Engine.clearUserVisiedTemplate(tenant);
 
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 		return h.response(tpl);
 	} catch (err) {
 		console.error(err);
@@ -2925,31 +2827,24 @@ async function TemplateSetVisi(req, h) {
 	}
 }
 
-/**
- * Clear a template visibility setting from template
- *
- * @param {...} req -
- * @param {...} h -
- *
- * @return {...}
- */
-
-async function TemplateClearVisi(req, h) {
+async function TemplateClearVisi(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let author = myEmail;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let author = myEid;
 
-		let tplid = req.payload.tplid;
+		let tplid = PLD.tplid;
 		await Cache.removeVisi(tplid);
-		let tpl = await Template.findOneAndUpdate(
+		await Template.findOneAndUpdate(
 			{ tenant: tenant, author: author, tplid: tplid },
 			{ $set: { visi: "" } },
 			{ upsert: false, new: true },
 		);
 
 		await Engine.clearUserVisiedTemplate(tenant);
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 
 		return h.response("Done");
 	} catch (err) {
@@ -2958,11 +2853,13 @@ async function TemplateClearVisi(req, h) {
 	}
 }
 
-async function TemplateDownload(req, h) {
+async function TemplateDownload(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let filter: any = { tenant: req.auth.credentials.tenant._id, tplid: req.payload.tplid };
+		let filter: any = { tenant: CRED.tenant._id, tplid: PLD.tplid };
 		let tpl = await Template.findOne(filter);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "template", tpl, "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "template", tpl, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this template");
 		return (
 			h
@@ -2971,10 +2868,10 @@ async function TemplateDownload(req, h) {
 				.header("Pragma", "no-cache")
 				.header("Access-Control-Allow-Origin", "*")
 				.header("Content-Type", "application/xml")
-				//.header('Content-Disposition', `attachment;filename="${req.payload.tplid}.xml";filename*=utf-8''${req.payload.tplid}.xml`)
+				//.header('Content-Disposition', `attachment;filename="${PLD.tplid}.xml";filename*=utf-8''${PLD.tplid}.xml`)
 				.header(
 					"Content-Disposition",
-					`attachment;filename=${encodeURIComponent(req.payload.tplid + ".xml")}`,
+					`attachment;filename=${encodeURIComponent(PLD.tplid + ".xml")}`,
 				)
 		);
 	} catch (err) {
@@ -2983,16 +2880,18 @@ async function TemplateDownload(req, h) {
 	}
 }
 
-async function WorkflowDownload(req, h) {
+async function WorkflowDownload(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
 		let wf = await RCL.getWorkflow(
 			{
-				tenant: req.auth.credentials.tenant._id,
-				wfid: req.payload.wfid,
+				tenant: CRED.tenant._id,
+				wfid: PLD.wfid,
 			},
 			"engine/handler.WorkflowDownload",
 		);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "workflow", wf, "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 		return wf;
 	} catch (err) {
@@ -3001,15 +2900,12 @@ async function WorkflowDownload(req, h) {
 	}
 }
 
-async function WorkflowGetKVars(req, h) {
+async function WorkflowGetKVars(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let myEmail = req.auth.credentials.email;
-		let kvars = Engine.getKVars(
-			req.auth.credentials.tenant._id,
-			myEmail,
-			req.payload.wfid,
-			req.payload.workid,
-		);
+		let myEid = CRED.employee.eid;
+		let kvars = Engine.getKVars(CRED.tenant._id, myEid, PLD.wfid, PLD.workid);
 		return kvars;
 	} catch (err) {
 		console.error(err);
@@ -3017,9 +2913,11 @@ async function WorkflowGetKVars(req, h) {
 	}
 }
 
-async function GetDelayTimers(req, h) {
+async function GetDelayTimers(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let timers = Engine.getDelayTimers(req.auth.credentials.tenant._id, req.payload.wfid);
+		let timers = Engine.getDelayTimers(CRED.tenant._id, PLD.wfid);
 		return timers;
 	} catch (err) {
 		console.error(err);
@@ -3027,9 +2925,11 @@ async function GetDelayTimers(req, h) {
 	}
 }
 
-async function GetActiveDelayTimers(req, h) {
+async function GetActiveDelayTimers(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let timers = Engine.getActiveDelayTimers(req.auth.credentials.tenant._id, req.payload.wfid);
+		let timers = Engine.getActiveDelayTimers(CRED.tenant._id, PLD.wfid);
 		return timers;
 	} catch (err) {
 		console.error(err);
@@ -3037,11 +2937,13 @@ async function GetActiveDelayTimers(req, h) {
 	}
 }
 
-async function TeamPutDemo(req, h) {
+async function TeamPutDemo(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let author = req.payload.author;
-		let teamid = req.payload.teamid;
+		const tenant = CRED.tenant._id;
+		let author = PLD.author;
+		let teamid = PLD.teamid;
 
 		let team = new Team({
 			tenant: tenant,
@@ -3057,15 +2959,16 @@ async function TeamPutDemo(req, h) {
 	}
 }
 
-async function TeamFullInfoGet(req, h) {
+async function TeamFullInfoGet(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
 		let team = await Team.findOne({ tenant: tenant, teamid: req.params.teamid });
 		if (!team) {
 			return Boom.notFound(`${req.params.teamid} not found`);
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this team");
 		return team;
 	} catch (err) {
@@ -3074,12 +2977,14 @@ async function TeamFullInfoGet(req, h) {
 	}
 }
 
-async function TeamRead(req, h) {
+async function TeamRead(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		let team = await Team.findOne({ tenant: tenant, teamid: req.payload.teamid });
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+		let team = await Team.findOne({ tenant: tenant, teamid: PLD.teamid });
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this team");
 		return team;
 	} catch (err) {
@@ -3088,20 +2993,22 @@ async function TeamRead(req, h) {
 	}
 }
 
-async function TeamUpload(req, h) {
+async function TeamUpload(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let author = req.auth.credentials.email;
-		let teamid = req.payload.teamid;
-		let tmap = req.payload.tmap;
+		const tenant = CRED.tenant._id;
+		let author = CRED.email;
+		let teamid = PLD.teamid;
+		let tmap = PLD.tmap;
 
 		let teamFilter = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(teamFilter);
 		if (team) {
-			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+			if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 				throw new EmpError("NO_PERM", "You don't have permission to update this team");
 		} else {
-			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+			if (!(await SPC.hasPerm(CRED.employee, "team", "", "create")))
 				throw new EmpError("NO_PERM", "You don't have permission to create team");
 		}
 		team = await Team.findOneAndUpdate(
@@ -3116,11 +3023,13 @@ async function TeamUpload(req, h) {
 	}
 }
 
-async function TeamImport(req, h) {
+async function TeamImport(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let author = req.auth.credentials.email;
-		let fileInfo = req.payload.file;
+		const tenant = CRED.tenant._id;
+		let author = CRED.email;
+		let fileInfo = PLD.file;
 		let csv = fs.readFileSync(fileInfo.path, "utf8");
 
 		let tmap = {};
@@ -3131,19 +3040,19 @@ async function TeamImport(req, h) {
 				continue;
 			}
 			if (tmap[fields[0]]) {
-				tmap[fields[0]].push({ uid: fields[1], cn: fields[2] });
+				tmap[fields[0]].push({ eid: fields[1], cn: fields[2] });
 			} else {
-				tmap[fields[0]] = [{ uid: fields[1], cn: fields[2] }];
+				tmap[fields[0]] = [{ eid: fields[1], cn: fields[2] }];
 			}
 		}
-		let teamid = req.payload.teamid;
+		let teamid = PLD.teamid;
 		let teamFilter = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(teamFilter);
 		if (team) {
-			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+			if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 				throw new EmpError("NO_PERM", "You don't have permission to update this team");
 		} else {
-			if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+			if (!(await SPC.hasPerm(CRED.employee, "team", "", "create")))
 				throw new EmpError("NO_PERM", "You don't have permission to create team");
 		}
 		team = await Team.findOneAndUpdate(
@@ -3158,14 +3067,16 @@ async function TeamImport(req, h) {
 	}
 }
 
-async function TeamDownload(req, h) {
+async function TeamDownload(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let teamid = req.payload.teamid;
-		let filename = req.payload.filename;
+		const tenant = CRED.tenant._id;
+		let teamid = PLD.teamid;
+		let filename = PLD.filename;
 		let teamFilter = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(teamFilter);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read this team");
 		if (!filename) {
 			filename = teamid;
@@ -3176,7 +3087,7 @@ async function TeamDownload(req, h) {
 			let role = allRoles[r];
 			let members = team.tmap[role];
 			for (let i = 0; i < members.length; i++) {
-				csvContent += `${role},${members[i].uid},${members[i].cn}\n`;
+				csvContent += `${role},${members[i].eid},${members[i].cn}\n`;
 			}
 		}
 
@@ -3187,7 +3098,7 @@ async function TeamDownload(req, h) {
 				.header("Pragma", "no-cache")
 				.header("Access-Control-Allow-Origin", "*")
 				.header("Content-Type", "text/csv")
-				//.header('Content-Disposition', `attachment;filename="${req.payload.tplid}.xml";filename*=utf-8''${req.payload.tplid}.xml`)
+				//.header('Content-Disposition', `attachment;filename="${PLD.tplid}.xml";filename*=utf-8''${PLD.tplid}.xml`)
 				.header("Content-Disposition", `attachment;filename=${filename}.csv`)
 		);
 	} catch (err) {
@@ -3196,28 +3107,30 @@ async function TeamDownload(req, h) {
 	}
 }
 
-async function TeamDeleteRoleMembers(req, h) {
+async function TeamDeleteRoleMembers(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		let teamid = req.payload.teamid;
+		let teamid = PLD.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(filter);
 		if (!team) {
 			throw `Team ${teamid} not found`;
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to change this team");
 		let tmap = team.tmap;
-		let role = req.payload.role;
-		let members = req.payload.members;
+		let role = PLD.role;
+		let members = PLD.members;
 
 		let touched = false;
 		if (tmap[role]) {
-			tmap[role] = tmap[role].filter((aMember) => {
+			tmap[role] = tmap[role].filter((aMember: { eid: string }) => {
 				let tobeDelete = false;
 				for (let i = 0; i < members.length; i++) {
-					if (members[i]["uid"] === aMember.uid) {
+					if (members[i]["eid"] === aMember.eid) {
 						tobeDelete = true;
 						break;
 					}
@@ -3242,28 +3155,30 @@ async function TeamDeleteRoleMembers(req, h) {
 	}
 }
 
-async function TeamAddRoleMembers(req, h) {
+async function TeamAddRoleMembers(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		let teamid = req.payload.teamid;
+		let teamid = PLD.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(filter);
 		if (!team) {
 			throw `Team ${teamid} not found`;
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to update this team");
 		let tmap = team.tmap;
-		let role = req.payload.role;
-		let members = req.payload.members;
+		let role = PLD.role;
+		let members = PLD.members;
 
 		if (tmap[role]) {
 			let oldMembers = tmap[role];
 			for (let m = 0; m < members.length; m++) {
 				let user_existing = false;
 				for (let i = 0; i < oldMembers.length; i++) {
-					if (oldMembers[i]["uid"] === members[m]["uid"]) {
+					if (oldMembers[i]["eid"] === members[m]["eid"]) {
 						user_existing = true;
 						oldMembers[i]["cn"] = members[m]["cn"];
 						break;
@@ -3295,20 +3210,22 @@ async function TeamAddRoleMembers(req, h) {
 	}
 }
 
-async function TeamCopyRole(req, h) {
+async function TeamCopyRole(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		let teamid = req.payload.teamid;
+		let teamid = PLD.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(filter);
 		if (!team) {
 			throw `Team ${teamid} not found`;
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to update this team");
-		let role = req.payload.role;
-		let newrole = req.payload.newrole;
+		let role = PLD.role;
+		let newrole = PLD.newrole;
 
 		team.tmap[newrole] = team.tmap[role];
 
@@ -3322,20 +3239,22 @@ async function TeamCopyRole(req, h) {
 	}
 }
 
-async function TeamSetRole(req, h) {
+async function TeamSetRole(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		let teamid = req.payload.teamid;
+		let teamid = PLD.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(filter);
 		if (!team) {
 			throw `Team ${teamid} not found`;
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to update this team");
-		let role = req.payload.role.trim();
-		let members = req.payload.members;
+		let role = PLD.role.trim();
+		let members = PLD.members;
 
 		team.tmap[role] = members;
 		//Object类型的字段，需要标注为modified，在save时才会被更新
@@ -3349,19 +3268,21 @@ async function TeamSetRole(req, h) {
 	}
 }
 
-async function TeamDeleteRole(req, h) {
+async function TeamDeleteRole(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		let teamid = req.payload.teamid;
+		let teamid = PLD.teamid;
 		let filter: any = { tenant: tenant, teamid: teamid };
 		let team = await Team.findOne(filter);
 		if (!team) {
 			throw `Team ${teamid} not found`;
 		}
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to update this team");
-		let role = req.payload.role;
+		let role = PLD.role;
 
 		delete team.tmap[role];
 		team.markModified("tmap");
@@ -3373,12 +3294,14 @@ async function TeamDeleteRole(req, h) {
 	}
 }
 
-async function TeamDelete(req, h) {
+async function TeamDelete(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let teamid = req.payload.teamid;
+		const tenant = CRED.tenant._id;
+		let teamid = PLD.teamid;
 		let team = await Team.findOne({ tenant: tenant, teamid: teamid });
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "delete")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "delete")))
 			throw new EmpError("NO_PERM", "You don't have permission to delete this team");
 
 		let ret = await Team.deleteOne({ tenant: tenant, teamid: teamid });
@@ -3389,20 +3312,22 @@ async function TeamDelete(req, h) {
 	}
 }
 
-async function TeamSearch(req, h) {
+async function TeamSearch(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "read")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", "", "read")))
 			throw new EmpError("NO_PERM", "You don't have permission to read teams");
 
-		let mappedField = req.payload.sort_field === "name" ? "teamid" : req.payload.sort_field;
-		let sortBy = `${req.payload.sort_order < 0 ? "-" : ""}${mappedField}`;
-		let filter: any = { tenant: req.auth.credentials.tenant._id };
+		let mappedField = PLD.sort_field === "name" ? "teamid" : PLD.sort_field;
+		let sortBy = `${PLD.sort_order < 0 ? "-" : ""}${mappedField}`;
+		let filter: any = { tenant: CRED.tenant._id };
 		let skip = 0;
-		if (req.payload.skip) skip = req.payload.skip;
+		if (PLD.skip) skip = PLD.skip;
 		let limit = 10000;
-		if (req.payload.limit) limit = req.payload.limit;
-		if (req.payload.pattern) {
-			filter["teamid"] = { $regex: req.payload.pattern };
+		if (PLD.limit) limit = PLD.limit;
+		if (PLD.pattern) {
+			filter["teamid"] = { $regex: PLD.pattern };
 		}
 		let total = await Team.find(filter).countDocuments();
 		let ret = await Team.find(filter).sort(sortBy).skip(skip).limit(limit);
@@ -3413,19 +3338,21 @@ async function TeamSearch(req, h) {
 	}
 }
 
-async function TeamCopyto(req, h) {
+async function TeamCopyto(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", "", "create")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", "", "create")))
 			throw new EmpError("NO_PERM", "You don't have permission to create team");
 
-		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: tenant, teamid: req.payload.fromid };
-		let new_objid = req.payload.teamid;
+		const tenant = CRED.tenant._id;
+		let filter: any = { tenant: tenant, teamid: PLD.fromid };
+		let new_objid = PLD.teamid;
 		let oldObj = await Team.findOne(filter);
 		let newObj = new Team({
 			tenant: oldObj.tenant,
 			teamid: new_objid,
-			author: req.auth.credentials.email,
+			author: CRED.email,
 			tmap: oldObj.tmap,
 		});
 		newObj = await newObj.save();
@@ -3437,14 +3364,16 @@ async function TeamCopyto(req, h) {
 	}
 }
 
-async function TeamRename(req, h) {
+async function TeamRename(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let filter: any = { tenant: tenant, teamid: req.payload.fromid };
+		const tenant = CRED.tenant._id;
+		let filter: any = { tenant: tenant, teamid: PLD.fromid };
 		let team = await Team.findOne(filter);
-		if (!(await SystemPermController.hasPerm(req.auth.credentials.email, "team", team, "update")))
+		if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 			throw new EmpError("NO_PERM", "You don't have permission to update this team");
-		team.teamid = req.payload.teamid;
+		team.teamid = PLD.teamid;
 		team = await team.save();
 
 		return h.response(team);
@@ -3454,10 +3383,16 @@ async function TeamRename(req, h) {
 	}
 }
 
-async function AutoRegisterOrgChartUser(tenant, administrator, staffs, myDomain, defaultPassword) {
+async function AutoRegisterOrgChartUser(
+	tenant: string,
+	administrator: any,
+	staffs: any[],
+	myDomain: string,
+	defaultPassword: string,
+) {
 	//TODO:  email去重, orgchart不用去重，但register user时需要去重
 	for (let i = 0; i < staffs.length; i++) {
-		let staff_email = staffs[i].uid;
+		let staff_email = staffs[i].eid;
 		let staff_cn = staffs[i].cn;
 		//If user already registered, if yes, send invitation, if not, register this user and add this user to my current org automatically.
 		let existing_staff_user = await User.findOne({ email: staff_email });
@@ -3517,28 +3452,30 @@ async function AutoRegisterOrgChartUser(tenant, administrator, staffs, myDomain,
 	} //for
 }
 
-async function OrgChartImport(req, h) {
+async function OrgChartImport(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myId = req.auth.credentials._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myId = CRED._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
+		let myDomain = CRED.tenant.domain;
 		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", `Only Admin can import orgchart ${myEmail} ${myGroup}`);
+			throw new EmpError("NOT_ADMIN", `Only Admin can import orgchart ${myEid} ${myGroup}`);
 		}
-		if ((await Cache.setOnNonExist("admin_" + req.auth.credentials.email, "a", 10)) === false) {
+		if ((await Cache.setOnNonExist("admin_" + CRED.email, "a", 10)) === false) {
 			throw new EmpError("NO_BRUTE", "Please wait for 10 seconds");
 		}
 		let me = await User.findOne({ _id: myId }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		if (Crypto.decrypt(me.password) != PLD.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
 		}
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
-		let filePath = req.payload.file.path;
-		let admin_password = req.payload.password;
-		let default_user_password = req.payload.default_user_password;
+		await Parser.checkOrgChartAdminAuthorization(CRED);
+		let filePath = PLD.file.path;
+		let admin_password = PLD.password;
+		let default_user_password = PLD.default_user_password;
 
-		let myDomain = Tools.getEmailDomain(myEmail);
 		/* let test_tenant = Mongoose.Types.ObjectId("61aca9f500c96d4c54ccd7aa");
 
 const tenant = test_tenant; */
@@ -3607,7 +3544,7 @@ const tenant = test_tenant; */
 					ou: currentOU,
 					cn: currentCN,
 					//如果不是OU， 则cols[2]为邮箱名
-					uid: isOU ? "OU---" : cols[2],
+					eid: isOU ? "OU---" : cols[2],
 					//如果isOU，则position为空[]即可
 					//如果是用户，则position为第4列（cols[3]）所定义的内容用：分割的字符串数组
 					position: isOU ? [] : cols[3] ? cols[3].split(":") : ["staff"],
@@ -3626,7 +3563,7 @@ const tenant = test_tenant; */
 				await OrgChart.insertMany([orgChartArr[i]]);
 			} catch (err) {
 				errors.push(
-					`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].uid}`,
+					`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].eid}`,
 				);
 			}
 		}
@@ -3634,13 +3571,13 @@ const tenant = test_tenant; */
 		let uniqued_emails = [];
 		for (let i = 0; i < orgChartArr.length; i++) {
 			if (
-				orgChartArr[i].uid.startsWith("OU-") ||
-				uniqued_emails.indexOf(orgChartArr[i].uid) > -1 ||
-				myDomain !== Tools.getEmailDomain(orgChartArr[i].uid)
+				orgChartArr[i].eid.startsWith("OU-") ||
+				uniqued_emails.indexOf(orgChartArr[i].eid) > -1 ||
+				myDomain !== Tools.getEmailDomain(orgChartArr[i].eid)
 			)
 				continue;
-			uniqued_emails.push(orgChartArr[i].uid);
-			uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
+			uniqued_emails.push(orgChartArr[i].eid);
+			uniqued_orgchart_staffs.push({ eid: orgChartArr[i].eid, cn: orgChartArr[i].cn });
 		}
 		//Next funciton use tenant of the first argu: admin,
 		await AutoRegisterOrgChartUser(
@@ -3657,19 +3594,21 @@ const tenant = test_tenant; */
 	}
 }
 
-async function OrgChartAddOrDeleteEntry(req, h) {
+async function OrgChartAddOrDeleteEntry(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		const tenant = CRED.tenant._id;
+		let me = await User.findOne({ _id: CRED._id }).populate("tenant").lean();
+		if (Crypto.decrypt(me.password) != PLD.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
 		}
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
-		let myEmail = req.auth.credentials.email;
-		let default_user_password = req.payload.default_user_password;
+		await Parser.checkOrgChartAdminAuthorization(CRED);
+		let myEid = CRED.employee.eid;
+		let default_user_password = PLD.default_user_password;
 
-		let myDomain = Tools.getEmailDomain(myEmail);
-		let csv = req.payload.content;
+		let myDomain = Tools.getEmailDomain(myEid);
+		let csv = PLD.content;
 		let lines = csv.split("\n");
 		let ret = await importOrgLines(tenant, myDomain, me, default_user_password, lines);
 		return h.response(ret);
@@ -3679,36 +3618,38 @@ async function OrgChartAddOrDeleteEntry(req, h) {
 	}
 }
 
-async function OrgChartExport(req, h) {
+async function OrgChartExport(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		if (Crypto.decrypt(me.password) != req.payload.password) {
+		const tenant = CRED.tenant._id;
+		let me = await User.findOne({ _id: CRED._id }).populate("tenant").lean();
+		if (Crypto.decrypt(me.password) != PLD.password) {
 			throw new EmpError("wrong_password", "You are using a wrong password");
 		}
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+		await Parser.checkOrgChartAdminAuthorization(CRED);
 		let entries = [];
 
-		const getEntriesUnder = async function (entries, tenant, ou) {
-			let filter: any = { tenant: tenant, ou: ou, uid: "OU---" };
+		const getEntriesUnder = async function (entries: any[], tenant: string, ou: string) {
+			let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
 			let entry = await OrgChart.findOne(filter);
 			if (entry) {
 				entries.push({ ou: entry.ou, cn: entry.cn, email: "", pos: "" });
 
-				filter = { tenant: tenant, ou: ou, uid: { $ne: "OU---" } };
+				filter = { tenant: tenant, ou: ou, eid: { $ne: "OU---" } };
 				let users = await OrgChart.find(filter);
 				for (let i = 0; i < users.length; i++) {
-					let usrPos = users[i].position.filter((x) => x !== "staff");
+					let usrPos = users[i].position.filter((x: string) => x !== "staff");
 					entries.push({
 						ou: users[i].ou,
 						cn: users[i].cn,
-						email: users[i].uid,
+						email: users[i].eid,
 						pos: usrPos.join(":"),
 					});
 				}
 
 				let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
-				filter = { tenant: tenant, ou: ouFilter, uid: "OU---" };
+				filter = { tenant: tenant, ou: ouFilter, eid: "OU---" };
 				let ous = await OrgChart.find(filter);
 				for (let i = 0; i < ous.length; i++) {
 					await getEntriesUnder(entries, tenant, ous[i].ou);
@@ -3763,22 +3704,29 @@ async function OrgChartExport(req, h) {
 	}
 }
 
-async function OrgChartGetAllOUs(req, h) {
+async function OrgChartGetAllOUs(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let me = await User.findOne({ _id: CRED._id }).populate("tenant").lean();
+		await Parser.checkOrgChartAdminAuthorization(CRED);
 
 		let entries = [];
 
-		const getEntriesUnder = async function (entries, tenant, ou, level) {
-			let filter: any = { tenant: tenant, ou: ou, uid: "OU---" };
+		const getEntriesUnder = async function (
+			entries: any[],
+			tenant: string,
+			ou: string,
+			level: number,
+		) {
+			let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
 			let entry = await OrgChart.findOne(filter);
 			if (entry) {
 				entries.push({ ou: entry.ou, cn: entry.cn, email: "", pos: "", level: level });
 				let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
-				filter = { tenant: tenant, ou: ouFilter, uid: "OU---" };
+				filter = { tenant: tenant, ou: ouFilter, eid: "OU---" };
 				let ous = await OrgChart.find(filter);
 				for (let i = 0; i < ous.length; i++) {
 					await getEntriesUnder(entries, tenant, ous[i].ou, level + 1);
@@ -3794,28 +3742,28 @@ async function OrgChartGetAllOUs(req, h) {
 	}
 }
 
-async function OrgChartCopyOrMoveStaff(req, h) {
+async function OrgChartCopyOrMoveStaff(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+		const tenant = CRED.tenant._id;
+		await Parser.checkOrgChartAdminAuthorization(CRED);
 
-		const { action, uid, from, to, cn } = req.payload;
+		const { action, eid, from, to, cn } = PLD;
 
 		if (action === "delete") {
-			let entriesNum = await OrgChart.countDocuments({ tenant: tenant, uid: uid });
+			let entriesNum = await OrgChart.countDocuments({ tenant: tenant, eid: eid });
 			if (entriesNum > 1) {
-				await OrgChart.deleteOne({ tenant: tenant, ou: from, uid: uid });
+				await OrgChart.deleteOne({ tenant: tenant, ou: from, eid: eid });
 			} else {
 				throw new EmpError("ORGCHART_ENTRY_KEEP_LAST_ONE", "This is the last entry");
 			}
 		} else {
-			let newEntry = new OrgChart({ tenant: tenant, ou: to, cn: cn, uid: uid, position: [] });
+			let newEntry = new OrgChart({ tenant: tenant, ou: to, cn: cn, eid: eid, position: [] });
 			await newEntry.save();
 
 			if (action === "move") {
-				await OrgChart.deleteOne({ tenant: tenant, ou: from, uid: uid });
+				await OrgChart.deleteOne({ tenant: tenant, ou: from, eid: eid });
 			}
 		}
 
@@ -3826,7 +3774,13 @@ async function OrgChartCopyOrMoveStaff(req, h) {
 	}
 }
 
-async function importOrgLines(tenant, myDomain, admin, default_user_password, lines) {
+async function importOrgLines(
+	tenant: string,
+	myDomain: string,
+	admin: any,
+	default_user_password: string,
+	lines: string[],
+) {
 	let orgChartArr = [];
 	let tobeDeletedArr = [];
 	let currentOU = "";
@@ -3854,7 +3808,7 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 				tenant: tenant,
 				ou: currentOU,
 				cn: currentCN,
-				uid: "OU---",
+				eid: "OU---",
 				position: [],
 			});
 		} else {
@@ -3891,7 +3845,7 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 					ou: currentOU,
 					cn: currentCN,
 					//如果不是OU， 则fields[2]为邮箱名
-					uid: isOU ? "OU---" : fields[2],
+					eid: isOU ? "OU---" : fields[2],
 					//如果isOU，则position为空[]即可
 					//如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
 					position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
@@ -3914,7 +3868,7 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 			let entry = await OrgChart.findOne({
 				tenant: orgChartArr[i].tenant,
 				ou: orgChartArr[i].ou,
-				uid: orgChartArr[i].uid,
+				eid: orgChartArr[i].eid,
 			});
 			if (entry === null) {
 				await OrgChart.insertMany([orgChartArr[i]]);
@@ -3923,7 +3877,7 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 					{
 						tenant: orgChartArr[i].tenant,
 						ou: orgChartArr[i].ou,
-						uid: orgChartArr[i].uid,
+						eid: orgChartArr[i].eid,
 					},
 					{
 						$set: {
@@ -3936,7 +3890,7 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 		} catch (err) {
 			console.error(err);
 			errors.push(
-				`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].uid}`,
+				`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].eid}`,
 			);
 		}
 	}
@@ -3944,13 +3898,13 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 	let uniqued_emails = [];
 	for (let i = 0; i < orgChartArr.length; i++) {
 		if (
-			orgChartArr[i].uid.startsWith("OU-") ||
-			uniqued_emails.indexOf(orgChartArr[i].uid) > -1 ||
-			myDomain !== Tools.getEmailDomain(orgChartArr[i].uid)
+			orgChartArr[i].eid.startsWith("OU-") ||
+			uniqued_emails.indexOf(orgChartArr[i].eid) > -1 ||
+			myDomain !== Tools.getEmailDomain(orgChartArr[i].eid)
 		)
 			continue;
-		uniqued_emails.push(orgChartArr[i].uid);
-		uniqued_orgchart_staffs.push({ uid: orgChartArr[i].uid, cn: orgChartArr[i].cn });
+		uniqued_emails.push(orgChartArr[i].eid);
+		uniqued_orgchart_staffs.push({ eid: orgChartArr[i].eid, cn: orgChartArr[i].cn });
 	}
 	await AutoRegisterOrgChartUser(
 		tenant,
@@ -3969,19 +3923,21 @@ async function importOrgLines(tenant, myDomain, admin, default_user_password, li
 			}
 		} else {
 			//Delete user
-			await OrgChart.deleteMany({ tenant: tenant, uid: tobeDeletedArr[i] });
+			await OrgChart.deleteMany({ tenant: tenant, eid: tobeDeletedArr[i] });
 		}
 	}
 	return { ret: "ok", logs: errors };
 }
 
-async function OrgChartGetLeader(req, h) {
+async function OrgChartGetLeader(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myemail = req.auth.credentials.email;
-		let uid = req.payload.uid;
-		let leader = req.payload.leader;
-		let ret = await OrgChartHelper.getUpperOrPeerByPosition(tenant, uid, leader);
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let eid = PLD.eid;
+		let leader = PLD.leader;
+		let ret = await OrgChartHelper.getUpperOrPeerByPosition(tenant, eid, leader);
 		return h.response(ret);
 	} catch (err) {
 		console.error(err);
@@ -3998,11 +3954,13 @@ async function OrgChartGetLeader(req, h) {
  *  & 表示可以多个查询合并使用
  */
 
-async function OrgChartGetStaff(req, h) {
+async function OrgChartGetStaff(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myUid = req.auth.credentials.email;
-		let qstr = req.payload.qstr;
+		const tenant = CRED.tenant._id;
+		let myUid = CRED.email;
+		let qstr = PLD.qstr;
 		let ret = await OrgChartHelper.getOrgStaff(tenant, myUid, qstr);
 		return h.response(ret);
 	} catch (err) {
@@ -4011,16 +3969,18 @@ async function OrgChartGetStaff(req, h) {
 	}
 }
 
-async function OrgChartListOu(req, h) {
+async function OrgChartListOu(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myemail = req.auth.credentials.email;
-		let top = req.payload.top;
-		let withTop = req.payload.withTop === "yes";
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let top = PLD.top;
+		let withTop = PLD.withTop === "yes";
 		let regexp = null;
 		let filter: any = {};
 		filter["tenant"] = tenant;
-		filter["uid"] = "OU---";
+		filter["eid"] = "OU---";
 		if (top !== "root") {
 			if (withTop) regexp = new RegExp("^" + top + ".*");
 			else regexp = new RegExp("^" + top + "(.{5})+");
@@ -4038,10 +3998,12 @@ async function OrgChartListOu(req, h) {
 	}
 }
 
-async function OrgChartList(req, h) {
+async function OrgChartList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myemail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
 		let ret = await OrgChart.find({ tenant: tenant });
 		return h.response(ret);
 	} catch (err) {
@@ -4050,39 +4012,41 @@ async function OrgChartList(req, h) {
 	}
 }
 
-async function OrgChartExpand(req, h) {
+async function OrgChartExpand(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myemail = req.auth.credentials.email;
-		let ou = req.payload.ou;
-		let include = req.payload.include;
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let ou = PLD.ou;
+		let include = PLD.include;
 		let ret = [];
 		let selfOu = null;
 		await OrgChart.updateMany({ tenant: tenant, ou: /root/ }, { $set: { ou: "root" } });
 		if (ou === "root")
-			selfOu = await OrgChart.findOne({ tenant: tenant, ou: /root/, uid: "OU---" });
-		else selfOu = await OrgChart.findOne({ tenant: tenant, ou: ou, uid: "OU---" });
+			selfOu = await OrgChart.findOne({ tenant: tenant, ou: /root/, eid: "OU---" });
+		else selfOu = await OrgChart.findOne({ tenant: tenant, ou: ou, eid: "OU---" });
 		if (include) {
 			ret.push(selfOu);
 		}
 
 		//先放人
 		let childrenStaffFilter = { tenant: tenant };
-		childrenStaffFilter["uid"] = { $ne: "OU---" };
+		childrenStaffFilter["eid"] = { $ne: "OU---" };
 		childrenStaffFilter["ou"] = ou;
 		let tmp = await OrgChart.find(childrenStaffFilter).lean();
 		for (let i = 0; i < tmp.length; i++) {
-			let user = await User.findOne({ tenant: tenant, email: tmp[i].uid });
-			if (user && user.active === false) {
-				tmp[i].uid = user.succeed;
-				tmp[i].cn = await Cache.getUserName(tenant, user.succeed, "OrgChartExpand");
+			let employee = await Employee.findOne({ tenant: tenant, eid: tmp[i].eid });
+			if (employee && employee.active === false) {
+				tmp[i].eid = employee.succeed;
+				tmp[i].cn = await Cache.getUserName(tenant, tmp[i].eid, "OrgChartExpand");
 			}
 		}
 		ret = ret.concat(tmp);
 
 		//再放下级组织
 		let childrenOuFilter = { tenant: tenant };
-		childrenOuFilter["uid"] = "OU---";
+		childrenOuFilter["eid"] = "OU---";
 		childrenOuFilter["ou"] = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
 
 		tmp = await OrgChart.find(childrenOuFilter).lean();
@@ -4095,15 +4059,17 @@ async function OrgChartExpand(req, h) {
 	}
 }
 
-async function OrgChartAddPosition(req, h) {
+async function OrgChartAddPosition(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myemail = req.auth.credentials.email;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let me = await User.findOne({ _id: CRED._id }).populate("tenant").lean();
+		await Parser.checkOrgChartAdminAuthorization(CRED);
 
-		let ocid = req.payload.ocid;
-		let pos = req.payload.pos;
+		let ocid = PLD.ocid;
+		let pos = PLD.pos;
 		let posArr = Parser.splitStringToArray(pos);
 
 		let ret = await OrgChart.findOneAndUpdate(
@@ -4122,15 +4088,17 @@ async function OrgChartAddPosition(req, h) {
 	}
 }
 
-async function OrgChartDelPosition(req, h) {
+async function OrgChartDelPosition(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myemail = req.auth.credentials.email;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let me = await User.findOne({ _id: CRED._id }).populate("tenant").lean();
+		await Parser.checkOrgChartAdminAuthorization(CRED);
 
-		let ocid = req.payload.ocid;
-		let pos = req.payload.pos;
+		let ocid = PLD.ocid;
+		let pos = PLD.pos;
 		let posArr = Parser.splitStringToArray(pos);
 
 		let ret = await OrgChart.findOneAndUpdate(
@@ -4152,20 +4120,24 @@ async function OrgChartDelPosition(req, h) {
  * Whether or not the current user is authorzied to manage orgchart
  */
 
-async function OrgChartAuthorizedAdmin(req, h) {
+async function OrgChartAuthorizedAdmin(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let me = await User.findOne({ _id: req.auth.credentials._id }).populate("tenant").lean();
-		await Parser.checkOrgChartAdminAuthorization(tenant, me);
-		return h.response(true);
+		const tenant = CRED.tenant._id;
+		let me = await User.findOne({ _id: CRED._id }).populate("tenant").lean();
+		await Parser.checkOrgChartAdminAuthorization(CRED);
+		return h.response("true");
 	} catch (err) {
-		return h.response(false);
+		return h.response("false");
 	}
 }
 
-async function GetCallbackPoints(req, h) {
+async function GetCallbackPoints(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let filter: any = { tenant: tenant };
 		filter = lodash.merge(filter, req.payload);
 		return await CbPoint.find(filter, {
@@ -4182,9 +4154,11 @@ async function GetCallbackPoints(req, h) {
 	}
 }
 
-async function GetLatestCallbackPoint(req, h) {
+async function GetLatestCallbackPoint(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let filter: any = { tenant: tenant };
 		filter = lodash.merge(filter, req.payload);
 		let ret = await CbPoint.find(filter, {
@@ -4206,20 +4180,22 @@ async function GetLatestCallbackPoint(req, h) {
 	}
 }
 
-async function OldDoCallback(req, h) {
+async function OldDoCallback(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let filter: any = { tenant: tenant };
 
-		if (req.payload.cbp.tplid) filter.tplid = req.payload.cbp.tplid;
-		if (req.payload.cbp.wfid) filter.wfid = req.payload.cbp.wfid;
-		if (req.payload.cbp.nodeid) filter.nodeid = req.payload.cbp.nodeid;
-		if (req.payload.cbp.workid) filter.workid = req.payload.cbp.workid;
+		if (PLD.cbp.tplid) filter.tplid = PLD.cbp.tplid;
+		if (PLD.cbp.wfid) filter.wfid = PLD.cbp.wfid;
+		if (PLD.cbp.nodeid) filter.nodeid = PLD.cbp.nodeid;
+		if (PLD.cbp.workid) filter.workid = PLD.cbp.workid;
 		let cbp = await CbPoint.findOne(filter, { tenant: 1, tplid: 1, wfid: 1, nodeid: 1, workid: 1 });
 		let options: any = {};
-		options.route = req.payload.route ? req.payload.route : "DEFAULT";
-		if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
-		if (lodash.isEmpty(req.payload.atts) === false) options.atts = req.payload.atts;
+		options.route = PLD.route ? PLD.route : "DEFAULT";
+		if (lodash.isEmpty(PLD.kvars) === false) options.kvars = PLD.kvars;
+		if (lodash.isEmpty(PLD.atts) === false) options.atts = PLD.atts;
 		let ret = await Engine.doCallback(tenant, cbp, options);
 		return h.response(ret);
 	} catch (err) {
@@ -4228,16 +4204,18 @@ async function OldDoCallback(req, h) {
 	}
 }
 
-async function DoCallback(req, h) {
+async function DoCallback(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let filter: any = { tenant: tenant };
 
-		if (req.payload.cbpid) filter._id = req.payload.cbpid;
+		if (PLD.cbpid) filter._id = PLD.cbpid;
 		let cbp = await CbPoint.findOne(filter, { tenant: 1, tplid: 1, wfid: 1, nodeid: 1, workid: 1 });
 		let options: any = {};
-		options.decision = req.payload.decision ? req.payload.decision : "DEFAULT";
-		if (lodash.isEmpty(req.payload.kvars) === false) options.kvars = req.payload.kvars;
+		options.decision = PLD.decision ? PLD.decision : "DEFAULT";
+		if (lodash.isEmpty(PLD.kvars) === false) options.kvars = PLD.kvars;
 		let ret = await Engine.doCallback(tenant, cbp, options);
 		return h.response(ret);
 	} catch (err) {
@@ -4246,34 +4224,36 @@ async function DoCallback(req, h) {
 	}
 }
 
-async function MySystemPerm(req, h) {
+async function MySystemPerm(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
 		let instance = null;
-		if (req.payload.instance_id) {
-			switch (req.payload.what) {
+		if (PLD.instance_id) {
+			switch (PLD.what) {
 				case "template":
-					instance = await Template.findOne({ _id: req.payload.instance_id });
+					instance = await Template.findOne({ _id: PLD.instance_id });
 					break;
 				case "work":
-					instance = await Todo.findOne({ _id: req.payload.instance_id });
+					instance = await Todo.findOne({ _id: PLD.instance_id });
 					break;
 				case "workflow":
 					//TODO: need huge optimization
-					instance = await Workflow.findOne({ _id: req.payload.instance_id });
+					instance = await Workflow.findOne({ _id: PLD.instance_id });
 					break;
 				case "team":
-					instance = await Team.findOne({ _id: req.payload.instance_id });
+					instance = await Team.findOne({ _id: PLD.instance_id });
 					break;
 				default:
-					throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
+					throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${PLD.what} not supported`);
 			}
 		}
 		//TODO： 性能天坑
-		let perm = await SystemPermController.hasPerm(
-			req.auth.credentials.email,
-			req.payload.what,
-			req.payload.instance_id ? instance : null,
-			req.payload.op,
+		let perm = await SPC.hasPerm(
+			CRED.employee,
+			PLD.what,
+			PLD.instance_id ? instance : null,
+			PLD.op,
 		);
 
 		return h.response(perm);
@@ -4287,44 +4267,41 @@ async function MySystemPerm(req, h) {
  * Get member's permission
  */
 
-async function MemberSystemPerm(req, h) {
+async function MemberSystemPerm(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const myGroup = CRED.employee.group;
 	try {
 		let instance = null;
-		let member_email = req.payload.member_email;
-		const tenant = req.auth.credentials.tenant._id;
-		let member = await User.findOne({ email: member_email, tenant: tenant });
+		let member_eid = PLD.eid;
+		const tenant = CRED.tenant._id;
+		let member = (await Employee.findOne({ eid: member_eid, tenant: tenant })) as EmployeeType;
 		if (!member) {
-			throw new EmpError("MEMBER_NOT_FOUND", `member ${member.email} not found in current org`);
+			throw new EmpError("MEMBER_NOT_FOUND", `member ${member_eid} not found in current org`);
 		}
-		let me = await User.findOne({ _id: req.auth.credentials._id });
-		if (me.group !== "ADMIN") {
+		if (myGroup !== "ADMIN") {
 			throw new EmpError("NO_PERM", "You don't have permission to check this member's permission");
 		}
-		if (req.payload.instance_id) {
-			switch (req.payload.what) {
+		if (PLD.instance_id) {
+			switch (PLD.what) {
 				case "template":
-					instance = await Template.findOne({ _id: req.payload.instance_id });
+					instance = await Template.findOne({ _id: PLD.instance_id });
 					break;
 				case "work":
-					instance = await Todo.findOne({ _id: req.payload.instance_id });
+					instance = await Todo.findOne({ _id: PLD.instance_id });
 					break;
 				case "workflow":
 					//TODO: need huge optimization
-					instance = await Workflow.findOne({ _id: req.payload.instance_id });
+					instance = await Workflow.findOne({ _id: PLD.instance_id });
 					break;
 				case "team":
-					instance = await Team.findOne({ _id: req.payload.instance_id });
+					instance = await Team.findOne({ _id: PLD.instance_id });
 					break;
 				default:
-					throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${req.payload.what} not supported`);
+					throw new EmpError("PERM_OBJTYPE_ERROR", `Object type ${PLD.what} not supported`);
 			}
 		}
-		let perm = await SystemPermController.hasPerm(
-			member_email,
-			req.payload.what,
-			req.payload.instance_id ? instance : null,
-			req.payload.op,
-		);
+		let perm = await SPC.hasPerm(member, PLD.what, PLD.instance_id ? instance : null, PLD.op);
 
 		return h.response(perm);
 	} catch (err) {
@@ -4333,12 +4310,14 @@ async function MemberSystemPerm(req, h) {
 	}
 }
 
-async function CommentWorkflowLoad(req, h) {
+async function CommentWorkflowLoad(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
-		let todoid = req.payload.todoid;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let wfid = PLD.wfid;
+		let todoid = PLD.todoid;
 
 		let ifNoneMatch = req.headers["if-none-match"];
 		let latestETag = Cache.getETag(`ETAG:WF:FORUM:${tenant}:${wfid}`);
@@ -4365,9 +4344,11 @@ async function CommentWorkflowLoad(req, h) {
 	}
 }
 
-async function CommentDelete(req, h) {
+async function CommentDelete(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		let deleteFollowing = async (tenant, objid) => {
+		let deleteFollowing = async (tenant: string, objid: Mongoose.Types.ObjectId) => {
 			let filter: any = { tenant: tenant, objid: objid };
 			let cmts = await Comment.find(filter, { _id: 1 });
 			for (let i = 0; i < cmts.length; i++) {
@@ -4375,8 +4356,8 @@ async function CommentDelete(req, h) {
 			}
 			await Comment.deleteOne(filter);
 		};
-		const tenant = req.auth.credentials.tenant._id;
-		let commentid = req.payload.commentid;
+		const tenant = CRED.tenant._id;
+		let commentid = PLD.commentid;
 		let filter: any = { tenant: tenant, _id: commentid };
 		//Find the comment to be deleted.
 		let cmt = await Comment.findOne(filter);
@@ -4398,14 +4379,16 @@ async function CommentDelete(req, h) {
 	}
 }
 
-async function CommentDeleteBeforeDays(req, h) {
+async function CommentDeleteBeforeDays(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let beforeDays = req.payload.beforeDays;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let beforeDays = PLD.beforeDays;
 		let filter: any = {
 			tenant: tenant,
-			toWhom: myEmail,
+			toWhom: myEid,
 			createdAt: {
 				$lte: new Date(new Date().getTime() - beforeDays * 24 * 60 * 60 * 1000).toISOString(),
 			},
@@ -4426,10 +4409,8 @@ async function CommentDeleteBeforeDays(req, h) {
 	}
 }
 
-async function CommentDelNewTimeout(req, h) {
+async function CommentDelNewTimeout(req: Request, h: ResponseToolkit) {
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
 		return h.response({ timeout: Const.DEL_NEW_COMMENT_TIMEOUT });
 	} catch (err) {
 		console.error(err);
@@ -4437,23 +4418,20 @@ async function CommentDelNewTimeout(req, h) {
 	}
 }
 
-async function CommentAddForBiz(req, h) {
+async function CommentAddForBiz(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		if (req.payload.objtype === "TODO") {
-			let todo = await Todo.findOne({ tenant: tenant, todoid: req.payload.objid });
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		if (PLD.objtype === "TODO") {
+			let todo = await Todo.findOne({ tenant: tenant, todoid: PLD.objid });
 			if (todo) {
-				let thisComment = await Engine.postCommentForTodo(
-					tenant,
-					myEmail,
-					todo,
-					req.payload.content,
-				);
+				let thisComment = await Engine.postCommentForTodo(tenant, myEid, todo, PLD.content);
 				let comments = await Engine.getComments(
 					tenant,
 					"TODO",
-					req.payload.objid,
+					PLD.objid,
 					Const.COMMENT_LOAD_NUMBER,
 				);
 
@@ -4470,21 +4448,23 @@ async function CommentAddForBiz(req, h) {
 	}
 }
 
-async function CommentAddForComment(req, h) {
+async function CommentAddForComment(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let thisComment = await Engine.postCommentForComment(
 			tenant,
-			myEmail,
-			req.payload.cmtid, //被该条评论所评论的评论ID
-			req.payload.content,
-			req.payload.threadid,
+			myEid,
+			PLD.cmtid, //被该条评论所评论的评论ID
+			PLD.content,
+			PLD.threadid,
 		);
 		let comments = await Engine.getComments(
 			tenant,
 			"COMMENT",
-			req.payload.cmtid,
+			PLD.cmtid,
 			Const.COMMENT_LOAD_NUMBER,
 		);
 
@@ -4501,13 +4481,14 @@ async function CommentAddForComment(req, h) {
 //
 //Comment缺省加载3个，前端请求加载更多，
 
-async function CommentLoadMorePeers(req, h) {
+async function CommentLoadMorePeers(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let currentlength = req.payload.currentlength;
+		const tenant = CRED.tenant._id;
+		let currentlength = PLD.currentlength;
 		//找到当前comment
-		let thisCmt = await Comment.findOne({ tenant: tenant, _id: req.payload.cmtid });
+		let thisCmt = await Comment.findOne({ tenant: tenant, _id: PLD.cmtid });
 		if (thisCmt) {
 			//寻找当前Comment的父对象更多的comment
 			let comments = await Engine.getComments(
@@ -4527,17 +4508,19 @@ async function CommentLoadMorePeers(req, h) {
 	}
 }
 
-async function CommentThumb(req, h) {
+async function CommentThumb(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let upOrDown = req.payload.thumb;
-		let cmtid = req.payload.cmtid;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let upOrDown = PLD.thumb;
+		let cmtid = PLD.cmtid;
 		//找到当前comment
 		let thisComment = await Comment.findOne({ tenant: tenant, _id: cmtid }, { context: 1 });
 		if (thisComment) {
-			await Thumb.deleteMany({ tennant: tenant, cmtid: cmtid, who: myEmail });
-			let tmp = new Thumb({ tenant: tenant, cmtid: cmtid, who: myEmail, upordown: upOrDown });
+			await Thumb.deleteMany({ tennant: tenant, cmtid: cmtid, who: myEid });
+			let tmp = new Thumb({ tenant: tenant, cmtid: cmtid, who: myEid, upordown: upOrDown });
 			tmp = await tmp.save();
 			let upnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "UP" });
 			let downnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "DOWN" });
@@ -4554,14 +4537,16 @@ async function CommentThumb(req, h) {
 	}
 }
 
-async function CommentSearch(req, h) {
+async function CommentSearch(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let pageSer = req.payload.pageSer;
-		let pageSize = req.payload.pageSize;
-		let category = req.payload.category;
-		let q = req.payload.q;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let pageSer = PLD.pageSer;
+		let pageSize = PLD.pageSize;
+		let category = PLD.category;
+		let q = PLD.q;
 
 		let ifNoneMatch = req.headers["if-none-match"];
 		let latestETag = Cache.getETag(`ETAG:FORUM:${tenant}`);
@@ -4581,8 +4566,8 @@ async function CommentSearch(req, h) {
 		let wfIamIn = [];
 		let wfIamQed = [];
 
-		let myUid = Tools.getEmailPrefix(myEmail);
-		let iamAdmin = (await Cache.getMyGroup(myEmail)) === "ADMIN";
+		let myUid = Tools.getEmailPrefix(myEid);
+		let iamAdmin = CRED.employee.group === "ADMIN";
 
 		let cmts = [];
 		let total = 0;
@@ -4602,7 +4587,7 @@ async function CommentSearch(req, h) {
 		}
 		if (category.includes("ALL_VISIED")) {
 			if (!iamAdmin) {
-				let myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEmail);
+				let myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEid);
 				wfIamVisied = await Workflow.find(
 					{ tenant: tenant, tplid: { $nin: myBannedTemplatesIds } },
 					{ _id: 0, wfid: 1 },
@@ -4612,7 +4597,7 @@ async function CommentSearch(req, h) {
 		}
 		if (category.includes("I_STARTED")) {
 			wfIStarted = await Workflow.find(
-				{ tenant: tenant, starter: myEmail },
+				{ tenant: tenant, starter: myEid },
 				{ _id: 0, wfid: 1 },
 			).lean();
 
@@ -4620,7 +4605,7 @@ async function CommentSearch(req, h) {
 		}
 		if (category.includes("I_AM_IN")) {
 			let todoGroup = await Todo.aggregate([
-				{ $match: { doer: myEmail } },
+				{ $match: { doer: myEid } },
 				{ $group: { _id: "$wfid", count: { $sum: 1 } } },
 			]);
 			wfIamIn = todoGroup.map((x) => x._id);
@@ -4786,13 +4771,15 @@ async function CommentSearch(req, h) {
 
 /*Toggle allow discuss for template */
 
-async function CommentToggle(req, h) {
+async function CommentToggle(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let objtype = req.payload.objtype;
-		let objid = req.payload.objid;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
+		let objtype = PLD.objtype;
+		let objid = PLD.objid;
 		let ret = null;
 		let filter: any = {};
 		switch (objtype) {
@@ -4802,7 +4789,7 @@ async function CommentToggle(req, h) {
 					tplid: objid,
 				};
 				if (myGroup !== "ADMIN") {
-					filter.owner = myEmail;
+					filter.owner = myEid;
 				}
 				let tpl = await Template.findOneAndUpdate(
 					filter,
@@ -4817,7 +4804,7 @@ async function CommentToggle(req, h) {
 					wfid: objid,
 				};
 				if (myGroup !== "ADMIN") {
-					filter.starter = myEmail;
+					filter.starter = myEid;
 				}
 				let aWf = await RCL.updateWorkflow(
 					filter,
@@ -4832,7 +4819,7 @@ async function CommentToggle(req, h) {
 					todoid: objid,
 				};
 				if (myGroup !== "ADMIN") {
-					filter.doer = myEmail;
+					filter.doer = myEid;
 				}
 				let aTodo = await Todo.findOneAndUpdate(
 					filter,
@@ -4858,15 +4845,17 @@ async function CommentToggle(req, h) {
 	}
 }
 
-async function TagDel(req, h) {
+async function TagDel(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let objtype = req.payload.objtype;
-		let objid = req.payload.objid;
-		let text = req.payload.text.trim();
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let objtype = PLD.objtype;
+		let objid = PLD.objid;
+		let text = PLD.text.trim();
 
-		let tagToDel = { owner: myEmail, text: text };
+		let tagToDel = { owner: myEid, text: text };
 
 		let existingTags = [];
 		if (objtype === "template") {
@@ -4876,7 +4865,7 @@ async function TagDel(req, h) {
 				{
 					$pull: {
 						tags: {
-							owner: myEmail,
+							owner: myEid,
 							text: text,
 						},
 					},
@@ -4885,7 +4874,7 @@ async function TagDel(req, h) {
 			);
 			existingTags = tmp.tags;
 			existingTags = existingTags.filter((x) => {
-				return x.owner === myEmail;
+				return x.owner === myEid;
 			});
 		}
 
@@ -4896,14 +4885,16 @@ async function TagDel(req, h) {
 	}
 }
 
-async function TagAdd(req, h) {
+async function TagAdd(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let objtype = req.payload.objtype;
-		let objid = req.payload.objid;
-		let text = req.payload.text;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
+		let objtype = PLD.objtype;
+		let objid = PLD.objid;
+		let text = PLD.text;
 
 		let obj = null;
 		let existingTags = [];
@@ -4912,7 +4903,7 @@ async function TagAdd(req, h) {
 		//先把text拆开
 		let inputtedTagTexts = Parser.splitStringToArray(text);
 		//去除空tag
-		inputtedTagTexts = inputtedTagTexts.filter((x) => {
+		inputtedTagTexts = inputtedTagTexts.filter((x: string) => {
 			return x.trim().length > 0;
 		});
 
@@ -4939,14 +4930,14 @@ async function TagAdd(req, h) {
 		//
 		//过滤出当前用户的数据
 		existingTags = existingTags.filter((x) => {
-			return x.owner === myEmail;
+			return x.owner === myEid;
 		});
 		existingText = existingTags.map((x) => x.text);
 		//从用户新录入的tag文本中去除已经存在的
 		inputtedTagTexts = lodash.difference(inputtedTagTexts, existingText);
 		//转换为tag对象
-		let tagsToAdd = inputtedTagTexts.map((x) => {
-			return { owner: myEmail, text: x, group: myGroup };
+		let tagsToAdd = inputtedTagTexts.map((x: string) => {
+			return { owner: myEid, text: x, group: myGroup };
 		});
 
 		if (tagsToAdd.length > 0) {
@@ -4964,7 +4955,7 @@ async function TagAdd(req, h) {
 			existingTags = obj.tags;
 			//过滤当前用户的tag
 			existingTags = existingTags.filter((x) => {
-				return x.owner === myEmail;
+				return x.owner === myEid;
 			});
 		}
 
@@ -4976,26 +4967,28 @@ async function TagAdd(req, h) {
 	}
 }
 
-async function TagList(req, h) {
+async function TagList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let objtype = req.payload.objtype;
-		let objid = req.payload.objid;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let objtype = PLD.objtype;
+		let objid = PLD.objid;
 
 		let ret = [];
 		if (objtype === "template") {
 			let filter: any = { tenant: tenant };
 			if (Tools.hasValue(objid)) {
-				filter = { tenant: tenant, tplid: objid, "tags:owner": myEmail };
+				filter = { tenant: tenant, tplid: objid, "tags:owner": myEid };
 			} else {
-				filter = { tenant: tenant, "tags.owner": myEmail };
+				filter = { tenant: tenant, "tags.owner": myEid };
 			}
 			let objs = await Template.find(filter);
 			for (let i = 0; i < objs.length; i++) {
 				let tmp = objs[i].tags
 					.filter((x) => {
-						return x.owner === myEmail;
+						return x.owner === myEid;
 					})
 					.map((x) => {
 						return x.text;
@@ -5016,10 +5009,12 @@ async function TagList(req, h) {
 
 //Org level tags are set in setting page
 
-async function TagListOrg(req, h) {
+async function TagListOrg(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 
 		let ret = (await Cache.getOrgTags(tenant)).split(";");
 
@@ -5031,32 +5026,36 @@ async function TagListOrg(req, h) {
 	}
 }
 
-async function GetTodosByWorkid(req, h) {
+async function GetTodosByWorkid(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
-		return h.response(await Engine.getTodosByWorkid(tenant, req.payload.workid, req.payload.full));
+		return h.response(await Engine.getTodosByWorkid(tenant, PLD.workid, PLD.full));
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TodoSetDoer(req, h) {
+async function TodoSetDoer(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("NOT_ADMIN", "Only Administrators can change doer");
 		}
-		let todoid = req.payload.todoid;
-		let doer = req.payload.doer;
-		let newDoer = req.payload.newdoer;
-		let forAll = req.payload.forall;
+		let todoid = PLD.todoid;
+		let doer = PLD.doer;
+		let newDoer = PLD.newdoer;
+		let forAll = PLD.forall;
 		if (newDoer[0] === "@") newDoer = newDoer.substring(1);
 		if (newDoer.indexOf("@") > 0) newDoer = newDoer.substring(0, newDoer.indexOf("@"));
-		let newDoerEmail = Tools.makeEmailSameDomain(newDoer, myEmail);
+		let newDoerEmail = Tools.makeEmailSameDomain(newDoer, myEid);
 		let newDoerObj = await User.findOne({ tenant: tenant, email: newDoerEmail });
 		if (!newDoerObj) {
 			throw new EmpError("NO_USER", `User ${newDoerEmail} not found`);
@@ -5079,33 +5078,35 @@ async function TodoSetDoer(req, h) {
 	}
 }
 
-async function ListSet(req, h) {
+async function ListSet(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let payloadItems = req.payload.items;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let payloadItems = PLD.items;
 		payloadItems = payloadItems.replace("；", ",");
 		payloadItems = payloadItems.replace("，", ";");
 		payloadItems = Parser.splitStringToArray(payloadItems).join(";");
-		let filter: any = { tenant: tenant, name: req.payload.name };
+		let filter: any = { tenant: tenant, name: PLD.name };
 		let list = await List.findOne(filter);
-		if (list && list.author !== myEmail) {
+		if (list && list.author !== myEid) {
 			throw new EmpError("NO_PERM", "List exists but it's not your owned list");
 		} else if (!list) {
 			list = new List({
 				tenant: tenant,
-				author: myEmail,
-				name: req.payload.name,
+				author: myEid,
+				name: PLD.name,
 				entries: [
 					{
-						key: req.payload.key,
+						key: PLD.key,
 						items: payloadItems,
 					},
 				],
 			});
 			list = await list.save();
 		} else {
-			let theKey = req.payload.key;
+			let theKey = PLD.key;
 			let theEntry = {};
 			let allKeys = list.entries.map((x) => x.key);
 			//如果Default不存在
@@ -5115,7 +5116,7 @@ async function ListSet(req, h) {
 					$each: [{ key: theKey, items: payloadItems }],
 					$position: 0, //把Default插入到第一个位置
 				};
-				filter = { tenant: tenant, name: req.payload.name, author: myEmail };
+				filter = { tenant: tenant, name: PLD.name, author: myEid };
 				list = await List.findOneAndUpdate(filter, {
 					$push: {
 						entries: theEntry,
@@ -5124,7 +5125,7 @@ async function ListSet(req, h) {
 			} else if (allKeys.includes(theKey) === false) {
 				//如果key不存在
 				theEntry = { key: theKey, items: payloadItems };
-				filter = { tenant: tenant, name: req.payload.name, author: myEmail };
+				filter = { tenant: tenant, name: PLD.name, author: myEid };
 				list = await List.findOneAndUpdate(filter, {
 					//则推出这个Key
 					$push: {
@@ -5133,7 +5134,7 @@ async function ListSet(req, h) {
 				});
 			} else {
 				//否则,这个Key存在
-				filter = { tenant: tenant, name: req.payload.name, author: myEmail, "entries.key": theKey };
+				filter = { tenant: tenant, name: PLD.name, author: myEid, "entries.key": theKey };
 				//则修改它的items值
 				list = await List.findOneAndUpdate(filter, {
 					$set: {
@@ -5149,12 +5150,14 @@ async function ListSet(req, h) {
 	}
 }
 
-async function ListChangeName(req, h) {
+async function ListChangeName(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let newName = req.payload.newName;
-		let filter: any = { tenant: tenant, name: req.payload.name, author: myEmail };
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let newName = PLD.newName;
+		let filter: any = { tenant: tenant, name: PLD.name, author: myEid };
 		await List.findOneAndUpdate(filter, { $set: { name: newName } });
 		return h.response("Done");
 	} catch (err) {
@@ -5163,9 +5166,11 @@ async function ListChangeName(req, h) {
 	}
 }
 
-async function ListList(req, h) {
+async function ListList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 
 		return h.response(await List.find({ tenant: tenant }).lean());
 	} catch (err) {
@@ -5174,16 +5179,18 @@ async function ListList(req, h) {
 	}
 }
 
-async function ListDelListOrKey(req, h) {
+async function ListDelListOrKey(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let filter: any = {};
-		if (req.payload.key) {
-			filter = { tenant: tenant, author: myEmail, name: req.payload.name };
-			await List.findOneAndUpdate(filter, { $pull: { entries: { key: req.payload.key } } });
+		if (PLD.key) {
+			filter = { tenant: tenant, author: myEid, name: PLD.name };
+			await List.findOneAndUpdate(filter, { $pull: { entries: { key: PLD.key } } });
 		} else {
-			filter = { tenant: tenant, author: myEmail, name: req.payload.name };
+			filter = { tenant: tenant, author: myEid, name: PLD.name };
 			await List.deleteOne(filter);
 		}
 
@@ -5194,18 +5201,20 @@ async function ListDelListOrKey(req, h) {
 	}
 }
 
-async function ListGetItems(req, h) {
+async function ListGetItems(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let key = "Default";
-		if (Tools.isEmpty(req.payload.key)) {
+		if (Tools.isEmpty(PLD.key)) {
 			key = "Default";
 		} else {
-			key = req.payload.key;
+			key = PLD.key;
 		}
 		let filter: any = {
 			tenant: tenant,
-			name: req.payload.name,
+			name: PLD.name,
 			entries: { $elemMatch: { key: key } },
 		};
 
@@ -5222,27 +5231,20 @@ async function ListGetItems(req, h) {
 	}
 }
 
-/**
- * const CodeTry = async() Try run code in template designer
- *
- * @param {...} req- req.payload.code
- * @param {...} h -
- *
- * @return {...}
- */
-
-async function CodeTry(req, h) {
+async function CodeTry(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let retMsg = { message: "" };
-		let code = req.payload.code;
+		let code = PLD.code;
 		retMsg.message = await Engine.runCode(
 			tenant,
-			Tools.getEmailDomain(myEmail),
+			Tools.getEmailDomain(myEid),
 			"codetry",
 			"codetry",
-			myEmail,
+			myEid,
 			{},
 			{},
 			code,
@@ -5256,8 +5258,10 @@ async function CodeTry(req, h) {
 	}
 }
 
-async function DemoAPI(req, h) {
-	const tenant = req.auth.credentials.tenant._id;
+async function DemoAPI(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const tenant = CRED.tenant._id;
 	return {
 		tenant: tenant,
 		intv: 100,
@@ -5265,13 +5269,15 @@ async function DemoAPI(req, h) {
 	};
 }
 
-async function DemoPostContext(req, h) {
+async function DemoPostContext(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	let receiver = process.env.DEMO_ENDPOINT_EMAIL_RECEIVER;
 	receiver ||= "lucas@xihuanwu.com";
 	console.log("Mailman to ", receiver);
 
-	Mailman.SimpleSend(receiver, "", "", "Demo Post Context", JSON.stringify(req.payload.mtcdata));
-	return "Received";
+	Mailman.SimpleSend(receiver, "", "", "Demo Post Context", JSON.stringify(PLD.mtcdata));
+	return h.response("Received");
 }
 
 //////////////////////////////////////////////////
@@ -5279,11 +5285,13 @@ async function DemoPostContext(req, h) {
 // 文件上传大小在endpoints.js中进行设置
 //////////////////////////////////////////////////
 
-async function FilePondProcess(req, h) {
+async function FilePondProcess(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let filepond = req.payload.filepond;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let filepond = PLD.filepond;
 		let ids = "";
 		for (let i = 0; i < filepond.length; i++) {
 			if (filepond[i].path && filepond[i].headers) {
@@ -5292,7 +5300,7 @@ async function FilePondProcess(req, h) {
 				let serverId = IdGenerator();
 				serverId = serverId.replace(/-/g, "");
 				//serverId = Buffer.from(serverId, "hex").toString("base64");
-				let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+				let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
 				if (fs.existsSync(pondServerFile.folder) === false)
 					fs.mkdirSync(pondServerFile.folder, { recursive: true });
 				fs.renameSync(filepond[i].path, pondServerFile.fullPath);
@@ -5301,7 +5309,7 @@ async function FilePondProcess(req, h) {
 					serverId: serverId,
 					realName: realName,
 					contentType: contentType,
-					author: myEmail,
+					author: myEid,
 				});
 				newAttach = await newAttach.save();
 				console.log("Upload", filepond[i].filename, "to", pondServerFile.fullPath);
@@ -5315,12 +5323,14 @@ async function FilePondProcess(req, h) {
 	}
 }
 
-async function FilePondRemove(req, h) {
+async function FilePondRemove(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let serverId = req.payload.serverId;
-		let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let serverId = PLD.serverId;
+		let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
 		try {
 			fs.unlinkSync(pondServerFile.fullPath);
 			await PondFile.deleteOne({ tenant: tenant, serverId: serverId });
@@ -5334,12 +5344,14 @@ async function FilePondRemove(req, h) {
 	}
 }
 
-async function FilePondRevert(req, h) {
+async function FilePondRevert(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let serverId = req.payload;
-		let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let serverId = PLD.serverId;
+		let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
 		try {
 			fs.unlinkSync(pondServerFile.fullPath);
 			await PondFile.deleteOne({ tenant: tenant, serverId: serverId });
@@ -5353,10 +5365,12 @@ async function FilePondRevert(req, h) {
 	}
 }
 
-async function WorkflowAttachmentViewer(req, h) {
+async function WorkflowAttachmentViewer(req: Request, h: ResponseToolkit) {
+	//const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
 		let wfid = req.params.wfid;
 		let serverId = req.params.serverId;
 		let wf = await RCL.getWorkflow({ tenant, wfid }, "engine/handler.WrokflowAttachmentViewer");
@@ -5390,25 +5404,29 @@ async function WorkflowAttachmentViewer(req, h) {
 	}
 }
 
-async function FormulaEval(req, h) {
+async function FormulaEval(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let expr = req.payload.expr;
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let expr = PLD.expr;
 		let ret = await Engine.formulaEval(tenant, expr);
-		return h.response(ret);
+		return h.response("" + ret);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function WecomBotForTodoGet(req, h) {
+async function WecomBotForTodoGet(req: Request, h: ResponseToolkit) {
+	//const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let wecomBot = await Webhook.find(
-			{ tenant: tenant, owner: myEmail, webhook: "wecombot_todo" },
+			{ tenant: tenant, owner: myEid, webhook: "wecombot_todo" },
 			{ _id: 0, tplid: 1, key: 1 },
 		);
 		return h.response(wecomBot);
@@ -5418,28 +5436,30 @@ async function WecomBotForTodoGet(req, h) {
 	}
 }
 
-async function WecomBotForTodoSet(req, h) {
+async function WecomBotForTodoSet(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let setting = req.payload.setting;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let wecomBot = await Webhook.findOneAndUpdate(
-			{ tenant: tenant, owner: myEmail, webhook: "wecombot_todo", tplid: req.payload.tplid },
-			{ $set: { key: req.payload.key } },
+			{ tenant: tenant, owner: myEid, webhook: "wecombot_todo", tplid: PLD.tplid },
+			{ $set: { key: PLD.key } },
 			{ upsert: true, new: true },
-		);
-		return h.response(wecomBot ? wecomBot.setting : "");
+		).lean();
+		return h.response(wecomBot ? wecomBot.webhook : "");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function TemplateSetCover(req, h) {
-	const tenant = req.auth.credentials.tenant._id;
-	let author = req.auth.credentials.email;
-	let blobInfo = req.payload.blob;
-	let tplid = req.payload.tplid;
+async function TemplateSetCover(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const tenant = CRED.tenant._id;
+	let blobInfo = PLD.blob;
+	let tplid = PLD.tplid;
 	try {
 		let ext = ".png";
 		switch (blobInfo["content-type"]) {
@@ -5467,11 +5487,10 @@ async function TemplateSetCover(req, h) {
 	}
 }
 
-async function TemplateGetCover(req, h) {
+async function TemplateGetCover(req: Request, h: ResponseToolkit) {
 	try {
 		const tenant = req.params.tenant;
 		let tplid = req.params.tplid;
-		let tmp = null;
 
 		let coverInfo = await Cache.getTplCoverInfo(tenant, tplid);
 		if (fs.existsSync(coverInfo.path)) {
@@ -5493,12 +5512,14 @@ async function TemplateGetCover(req, h) {
 	}
 }
 
-async function TemplateGetWecomBot(req, h) {
+async function TemplateGetWecomBot(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let tpl = await Template.findOne(
-			{ tenant: tenant, tplid: req.payload.tplid, author: myEmail },
+			{ tenant: tenant, tplid: PLD.tplid, author: myEid },
 			{ _id: 0, wecombotkey: 1 },
 		);
 		return h.response(tpl ? tpl.wecombotkey : "");
@@ -5508,13 +5529,15 @@ async function TemplateGetWecomBot(req, h) {
 	}
 }
 
-async function TemplateSetWecomBot(req, h) {
+async function TemplateSetWecomBot(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let tpl = await Template.findOneAndUpdate(
-			{ tenant: tenant, tplid: req.payload.tplid, author: myEmail },
-			{ $set: { wecombotkey: req.payload.key } },
+			{ tenant: tenant, tplid: PLD.tplid, author: myEid },
+			{ $set: { wecombotkey: PLD.key } },
 			{ upsert: false, new: true },
 		);
 		return h.response(tpl ? tpl.wecombotkey : "");
@@ -5524,15 +5547,20 @@ async function TemplateSetWecomBot(req, h) {
 	}
 }
 
-async function CellsRead(req, h) {
+async function CellsRead(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let fileId = req.payload.fileId;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let fileId = PLD.fileId;
 
-		let cell = await Cell.findOne({ tenant: tenant, serverId: fileId }, { _id: 0 }).lean();
+		let cell = (await Cell.findOne(
+			{ tenant: tenant, serverId: fileId },
+			{ _id: 0 },
+		).lean()) as CellType;
 		if (cell) {
-			if (cell.author !== myEmail) {
+			if (cell.author !== myEid) {
 				throw new EmpError("ONLY_AUTHOR", "Only original author can read this CSV data");
 			} else {
 				let missedUIDs = [];
@@ -5550,7 +5578,7 @@ async function CellsRead(req, h) {
 						if (
 							!(await User.findOne({
 								tenant: tenant,
-								email: Tools.makeEmailSameDomain(cols[0], myEmail),
+								email: Tools.makeEmailSameDomain(cols[0], myEid),
 							}))
 						) {
 							missedUIDs.push(cols[0]);
@@ -5571,52 +5599,52 @@ async function CellsRead(req, h) {
 	}
 }
 
-async function NodeRerun(req, h) {
+async function NodeRerun(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let wfid = req.payload.wfid;
-		let nodeid = req.payload.nodeid;
+		const tenant = CRED.tenant._id;
+		let wfid = PLD.wfid;
+		let nodeid = PLD.nodeid;
 		await Engine.rerunNode(tenant, wfid, nodeid);
-		return "Done";
+		return h.response("Done");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function ListUsersNotStaff(req, h) {
+async function ListUsersNotStaff(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		//let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
-		let domain = Tools.getEmailDomain(myEmail);
-		let users = await User.find(
-			{ tenant: tenant, email: { $regex: domain } },
-			{ email: 1, username: 1 },
-		).lean();
-		let orgusers = await OrgChart.find({ tenant: tenant }, { _id: 0, uid: 1 }).lean();
-		orgusers = orgusers.map((x) => x.uid);
-		users = users.filter((x) => orgusers.includes(x.email) === false);
-		return h.response(users);
+		let employees = await Employee.find({ tenant: tenant }).lean();
+		let orgChartEntries = await OrgChart.find({ tenant: tenant }, { _id: 0, eid: 1 }).lean();
+		const tmp: string[] = orgChartEntries.map((x: any) => x.eid);
+		employees = employees.filter((x) => tmp.includes(x.eid) === false);
+		return h.response(employees);
 	} catch (err) {
 		console.log(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function ReplaceUserSucceed(req, h) {
+async function ReplaceUserSucceed(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
 
-		let fromEmail = Tools.makeEmailSameDomain(req.payload.from, myEmail);
-		let toEmail = Tools.makeEmailSameDomain(req.payload.to, myEmail);
+		let fromEmail = Tools.makeEmailSameDomain(PLD.from, myEid);
+		let toEmail = Tools.makeEmailSameDomain(PLD.to, myEid);
 		let toUser = await User.findOne({
 			tenant: tenant,
 			email: toEmail,
@@ -5645,34 +5673,37 @@ async function ReplaceUserSucceed(req, h) {
 	}
 }
 
-async function ReplaceUserPrepare(req, h) {
+async function ReplaceUserPrepare(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
 		await TempSubset.deleteMany({
-			admin: myEmail,
-			tranx: { $ne: req.payload.tranx },
+			admin: myEid,
+			tranx: { $ne: PLD.tranx },
 		});
 		await TempSubset.deleteMany({
 			createdAt: {
 				$lte: new Date(new Date().getTime() - 10 * 60 * 1000).toISOString(),
 			},
 		});
-		req.payload.from = Tools.getEmailPrefix(req.payload.from);
-		req.payload.to = Tools.getEmailPrefix(req.payload.to);
+		PLD.from = Tools.getEmailPrefix(PLD.from);
+		PLD.to = Tools.getEmailPrefix(PLD.to);
 		let toUser = await User.findOne({
 			tenant: tenant,
-			email: Tools.makeEmailSameDomain(req.payload.to, myEmail),
+			email: Tools.makeEmailSameDomain(PLD.to, myEid),
 		});
 		assert.notEqual(toUser, null, new EmpError("USER_NOT_FOUND", "TO user must exists"));
+		//TODO: replaceUser
 		Engine.replaceUser({
 			tenant,
-			admin: myEmail,
-			domain: Tools.getEmailDomain(myEmail),
+			admin: myEid,
+			domain: Tools.getEmailDomain(myEid),
 			action: "prepare",
-			...req.payload,
+			...PLD,
 		}).then();
 		return h.response("Please wait to refresh");
 	} catch (err) {
@@ -5681,25 +5712,25 @@ async function ReplaceUserPrepare(req, h) {
 	}
 }
 
-async function ReplaceUserPrepareResult(req, h) {
+async function ReplaceUserPrepareResult(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		let myGroup = CRED.employee.group;
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
 		let result = await TempSubset.find(
 			{
-				tranx: req.payload.tranx,
-				objtype: req.payload.objtype,
+				tranx: PLD.tranx,
+				objtype: PLD.objtype,
 			},
 			{ objtype: 1, objid: 1, objtitle: 1, _id: 0 },
 		);
 
 		await TempSubset.deleteMany({
-			tranx: req.payload.tranx,
-			objtype: req.payload.objtype,
+			tranx: PLD.tranx,
+			objtype: PLD.objtype,
 			objid: { $ne: "DONE" },
 		});
 
@@ -5710,19 +5741,22 @@ async function ReplaceUserPrepareResult(req, h) {
 	}
 }
 
-async function ReplaceUserExecute(req, h) {
+async function ReplaceUserExecute(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
+		//TODO: replaceUser or replaceEmployee?
 		Engine.replaceUser({
 			tenant,
-			domain: Tools.getEmailDomain(myEmail),
+			domain: Tools.getEmailDomain(myEid),
 			action: "execute",
-			...req.payload,
+			...PLD,
 		}).then();
 		return h.response("Please wait to refresh");
 	} catch (err) {
@@ -5731,29 +5765,30 @@ async function ReplaceUserExecute(req, h) {
 	}
 }
 
-async function SavedSearchSave(req, h) {
+async function SavedSearchSave(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		let { objtype, name, ss } = req.payload;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let { objtype, name, ss } = PLD;
 		let newSs = await SavedSearch.findOneAndUpdate(
-			{ tenant: tenant, author: myEmail, name: name },
-			{ $set: { author: myEmail, name: name, ss: ss, objtype: objtype } },
+			{ tenant: tenant, author: myEid, name: name },
+			{ $set: { author: myEid, name: name, ss: ss, objtype: objtype } },
 			{ upsert: true, new: true },
 		);
 		let total = await SavedSearch.countDocuments({
 			tenant: tenant,
-			author: myEmail,
+			author: myEid,
 			objtype: objtype,
 		});
 		if (total > 20) {
-			SavedSearch.findOneAndDelete({ tenant: tenant, author: myEmail, objtype: objtype }).sort(
+			SavedSearch.findOneAndDelete({ tenant: tenant, author: myEid, objtype: objtype }).sort(
 				"-createdAt",
 			);
 		}
 
-		await Cache.resetETag(`ETAG:SAVEDSEARCH:${myEmail}`);
+		await Cache.resetETag(`ETAG:SAVEDSEARCH:${myEid}`);
 
 		return h.response(newSs.name);
 	} catch (err) {
@@ -5762,13 +5797,14 @@ async function SavedSearchSave(req, h) {
 	}
 }
 
-async function SavedSearchList(req, h) {
+async function SavedSearchList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		let ifNoneMatch = req.headers["if-none-match"];
-		let latestETag = Cache.getETag(`ETAG:SAVEDSEARCH:${myEmail}`);
+		let latestETag = Cache.getETag(`ETAG:SAVEDSEARCH:${myEid}`);
 		if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 			return h
 				.response([])
@@ -5778,17 +5814,17 @@ async function SavedSearchList(req, h) {
 				.header("X-Content-Type-Options", "nosniff")
 				.header("ETag", latestETag);
 		}
-		let ret = await SavedSearch.find(
+		const tmp = await SavedSearch.find(
 			{
 				tenant: tenant,
-				author: myEmail,
-				objtype: req.payload.objtype,
+				author: myEid,
+				objtype: PLD.objtype,
 			},
 			{ name: 1, ss: 1, createdAt: 1, _id: 0 },
 		)
 			.sort("-createdAt")
 			.lean();
-		ret = ret.map((x) => x.name);
+		const ret = tmp.map((x) => x.name);
 		return h
 			.response(ret)
 			.header("Content-Type", "application/json; charset=utf-8;")
@@ -5801,14 +5837,15 @@ async function SavedSearchList(req, h) {
 	}
 }
 
-async function SavedSearchGetOne(req, h) {
+async function SavedSearchGetOne(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 		return h.response(
 			await SavedSearch.findOne(
-				{ tenant: tenant, author: myEmail, name: req.payload.name, objtype: req.payload.objtype },
+				{ tenant: tenant, author: myEid, name: PLD.name, objtype: PLD.objtype },
 				{ ss: 1, _id: 0 },
 			).lean(),
 		);
@@ -5818,9 +5855,10 @@ async function SavedSearchGetOne(req, h) {
 	}
 }
 
-async function Fix(req, h) {
+async function Fix(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
+		const tenant = CRED.tenant._id;
 		let wfs = await Workflow.find({});
 		for (let i = 0; i < wfs.length; i++) {
 			for (let a = 0; a < wfs[i].attachments.length; a++) {
@@ -5850,17 +5888,20 @@ async function Fix(req, h) {
 	}
 }
 
-async function TestWishhouseAuth(req, h) {
+async function TestWishhouseAuth(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
 	try {
-		return h.response(req.auth.credentials.username);
+		return h.response(CRED.username);
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
 }
 
-async function Version(req, h) {
+async function Version(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
 	try {
+		console.log("Call handlers.Version:", CRED.user.account);
 		return h
 			.response(
 				`
@@ -5874,15 +5915,17 @@ async function Version(req, h) {
 	}
 }
 
-async function FlexibleStart(req, h) {
+async function FlexibleStart(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 
 		let innerTpl: Emp.TemplateObj = {
-			tplid: `Flexible tpl of ${myEmail}`,
+			tplid: `Flexible tpl of ${myEid}`,
 			pboat: "ANY_RUNNING",
-			doc: `<div class="template"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left:300px; top:300px;" role="DEFAULT" wecom="false" transferable="no" sr="no" sb="no" rvk="no" adhoc="yes" cmt="yes"><p>${req.payload.name}</p><div class="kvars">e30=</div><div class="instruct">6K+35Zyo6L+Z6YeM54G15rS75Y+R6LW35LiA5Yiw5aSa5Liq54us56uL5bel5L2c5Lu75Yqh44CCCuWcqOehruWumuaVtOS4quS6i+mhue+8iOmhueebru+8ieWujOaIkOS7peWQju+8jOaCqOWPr+S7peWFs+mXreW9k+WJjeeBtea0u+S6i+mhue+8iOivt+azqOaEj++8jOWFs+mXreW9k+WJjeW3peS9nOS7u+WKoeWQju+8jOaJgOacieW3suWPkeWHuuS9huacquWujOaIkOeahOeLrOeri+W3peS9nOS7u+WKoeS5n+WwhuiHquWKqOWkseaViO+8iQ==</div><code>Ly8gcmVhZCBIeXBlcmZsb3cgRGV2ZWxvcGVyJ3MgR3VpZGUgZm9yIGRldGFpbHMKcmV0PSdERUZBVUxUJzs=</code></div><div class="node END" id="end" style="left: 600px; top: 240px; z-index: 0;"><p>END</p> </div><div class="link" from="start" to="hellohyperflow"  >link</div><div class="link" from="hellohyperflow" to="end" case="关闭本灵活事项" >link</div></div>`,
+			doc: `<div class="template"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left:300px; top:300px;" role="DEFAULT" wecom="false" transferable="no" sr="no" sb="no" rvk="no" adhoc="yes" cmt="yes"><p>${PLD.name}</p><div class="kvars">e30=</div><div class="instruct">6K+35Zyo6L+Z6YeM54G15rS75Y+R6LW35LiA5Yiw5aSa5Liq54us56uL5bel5L2c5Lu75Yqh44CCCuWcqOehruWumuaVtOS4quS6i+mhue+8iOmhueebru+8ieWujOaIkOS7peWQju+8jOaCqOWPr+S7peWFs+mXreW9k+WJjeeBtea0u+S6i+mhue+8iOivt+azqOaEj++8jOWFs+mXreW9k+WJjeW3peS9nOS7u+WKoeWQju+8jOaJgOacieW3suWPkeWHuuS9huacquWujOaIkOeahOeLrOeri+W3peS9nOS7u+WKoeS5n+WwhuiHquWKqOWkseaViO+8iQ==</div><code>Ly8gcmVhZCBIeXBlcmZsb3cgRGV2ZWxvcGVyJ3MgR3VpZGUgZm9yIGRldGFpbHMKcmV0PSdERUZBVUxUJzs=</code></div><div class="node END" id="end" style="left: 600px; top: 240px; z-index: 0;"><p>END</p> </div><div class="link" from="start" to="hellohyperflow"  >link</div><div class="link" from="hellohyperflow" to="end" case="关闭本灵活事项" >link</div></div>`,
 			endpoint: "",
 			endpointmode: "none",
 			allowdiscuss: true,
@@ -5892,11 +5935,11 @@ async function FlexibleStart(req, h) {
 			tenant, //tenant
 			innerTpl.tplid, //template id
 			innerTpl, //TemplateObj object
-			myEmail, //starter
+			myEid, //starter
 			"", //text pbo
 			"", //teamid
 			null, //wf id
-			req.payload.name, //wf title
+			PLD.name, //wf title
 			"", //parent_wfid
 			"", //parent_work_id
 			{}, //parent_kvars
@@ -5911,35 +5954,36 @@ async function FlexibleStart(req, h) {
 	}
 }
 
-const CheckKsAdminPermission = async (myEmail: string, myGroup: string) => {
-	if (myGroup !== "ADMIN" || Tools.getEmailDomain(myEmail) !== (await Cache.getKsAdminDomain()))
+const CheckKsAdminPermission = async (cred: any) => {
+	if (cred.employee.group !== "ADMIN" || cred.tenant.domain !== (await Cache.getKsAdminDomain()))
 		throw new EmpError(
 			"KS_DOMAIN_ADMIN_IS_REQUIRED",
 			"Only ks admin domain's administrators are allowed for this operation",
 		);
 };
 
-async function KsTplSearch(req, h) {
+async function KsTplSearch(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
 	try {
 		let ret = null;
 		if (ret === null) {
 			let filter = {};
-			if (req.payload.q) {
+			if (PLD.q) {
 				filter["$or"] = [
 					{
-						name: { $regex: `.*${req.payload.q}.*` },
+						name: { $regex: `.*${PLD.q}.*` },
 					},
 					{
-						desc: { $regex: `.*${req.payload.q}.*` },
+						desc: { $regex: `.*${PLD.q}.*` },
 					},
 				];
 			}
-			//req.payload.tags = ["碳中和", "生产"];
-			if (req.payload.author?.trim()) {
-				filter["author"] = new RegExp(".*" + req.payload.author + ".*");
+			//PLD.tags = ["碳中和", "生产"];
+			if (PLD.author?.trim()) {
+				filter["author"] = new RegExp(".*" + PLD.author + ".*");
 			}
-			if (req.payload.tags.length > 0) {
-				filter["tags"] = { $all: req.payload.tags };
+			if (PLD.tags.length > 0) {
+				filter["tags"] = { $all: PLD.tags };
 			}
 			ret = await KsTpl.find(filter, { _id: 0, doc: 0, __v: 0 }).sort("-_id").limit(1000).lean();
 		}
@@ -5954,12 +5998,10 @@ async function KsTplSearch(req, h) {
 	}
 }
 
-async function KsTplScan(req, h) {
+async function KsTplScan(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
+		await CheckKsAdminPermission(CRED);
 		await Cache.removeKey("KSTPLS");
 		await redisClient.del("KSTPLS");
 		await Engine.scanKShares();
@@ -5971,26 +6013,23 @@ async function KsTplScan(req, h) {
 	}
 }
 
-async function KsTplClearCache(req, h) {
-	await CheckKsAdminPermission(
-		req.auth.credentials.email,
-		await Cache.getMyGroup(req.auth.credentials.email),
-	);
+async function KsTplClearCache(req: Request, h: ResponseToolkit) {
+	const CRED = req.auth.credentials as any;
+	await CheckKsAdminPermission(CRED);
 	await Cache.removeKey("KSTPLS");
 	await Cache.resetETag("ETAG:KSTPLS");
 	return h.response(Cache.getETag("ETAG:KSTPLS"));
 }
 
-async function KsTplAddTag(req, h) {
+async function KsTplAddTag(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
-		const { ksid, tag } = req.payload;
+		await CheckKsAdminPermission(CRED);
+		const { ksid, tag } = PLD;
 		let tagTextArr = Parser.splitStringToArray(tag);
 		//去除空tag
-		tagTextArr = tagTextArr.filter((x) => {
+		tagTextArr = tagTextArr.filter((x: string) => {
 			return x.trim().length > 0;
 		});
 		let theTpl = await KsTpl.findOne({ ksid: ksid });
@@ -6012,36 +6051,31 @@ async function KsTplAddTag(req, h) {
 	}
 }
 
-async function KsTplPrepareDesign(req, h) {
+async function KsTplPrepareDesign(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
+		await CheckKsAdminPermission(CRED);
 
 		await Template.deleteMany({
 			tenant: tenant,
-			author: myEmail,
+			author: myEid,
 			tplid: { $regex: /^TMP_KSHARE_/ },
 		});
-		const { ksid } = req.payload;
-		const theTpl = await KsTpl.findOne({
-			ksid: ksid,
-		});
+		const { ksid } = PLD;
 		const ksharetplid = "TMP_KSHARE_" + ksid.replace(/\//g, "_");
-		const tmpTpl = await Template.findOneAndUpdate(
+		await Template.findOneAndUpdate(
 			{
 				tenant: tenant,
 				tplid: ksharetplid,
 			},
 			{
 				$set: {
-					author: myEmail,
-					authorName: await Cache.getUserName(tenant, myEmail, "TemplateImport"),
+					author: myEid,
+					authorName: CRED.employee.nickname,
 					ins: true,
 					doc: (await KsTpl.findOne({ ksid: ksid }, { doc: 1 }))["doc"],
 					ksid: ksid,
@@ -6056,13 +6090,12 @@ async function KsTplPrepareDesign(req, h) {
 	}
 }
 
-async function KsTplDelTag(req, h) {
+async function KsTplDelTag(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
-		const { ksid, tag } = req.payload;
+		await CheckKsAdminPermission(CRED);
+		const { ksid, tag } = PLD;
 		const theTpl = await KsTpl.findOneAndUpdate(
 			{
 				ksid: ksid,
@@ -6080,13 +6113,12 @@ async function KsTplDelTag(req, h) {
 	}
 }
 
-async function KsTplRemoveOne(req, h) {
+async function KsTplRemoveOne(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
-		const { ksid, withFile } = req.payload;
+		await CheckKsAdminPermission(CRED);
+		const { ksid, withFile } = PLD;
 		await KsTpl.deleteOne({ ksid: ksid });
 		if (withFile) {
 			fs.rmSync(path.join(process.env.EMP_KSHARE_FOLDER, ksid));
@@ -6098,21 +6130,18 @@ async function KsTplRemoveOne(req, h) {
 	}
 }
 
-async function KsTplUploadOne(req, h) {
+async function KsTplUploadOne(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
-		const { name, file, desc, tags } = req.payload;
+		let myEid = CRED.employee.eid;
+		await CheckKsAdminPermission(CRED);
+		const { name, file, desc, tags } = PLD;
 
 		let doc = fs.readFileSync(file.path, "utf8");
 
 		const aKsTpl = new KsTpl({
-			author: myEmail,
+			author: myEid,
 			ksid: IdGenerator(),
 			name: name,
 			desc: desc,
@@ -6126,13 +6155,12 @@ async function KsTplUploadOne(req, h) {
 	}
 }
 
-async function KsTplUpdateOne(req, h) {
+async function KsTplUpdateOne(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
-		const { ksid, name, desc, tags } = req.payload;
+		await CheckKsAdminPermission(CRED);
+		const { ksid, name, desc } = PLD;
 		return h.response(
 			await KsTpl.findOneAndUpdate(
 				{ ksid: ksid },
@@ -6148,18 +6176,19 @@ async function KsTplUpdateOne(req, h) {
 	}
 }
 
-async function KsTplPickOne(req, h) {
+async function KsTplPickOne(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
 
-		const { ksid, pickto } = req.payload;
+		const { ksid, pickto } = PLD;
 		if (await Template.findOne({ tenant: tenant, tplid: pickto }, { doc: 0 })) {
 			throw new EmpError("ALREADY_EXIST", "Template exists, cannot overwrite it");
 		}
 		let tplid = pickto;
-		let author = myEmail;
+		let author = myEid;
 		const newTemplate = new Template({
 			tenant: tenant,
 			tplid: tplid,
@@ -6170,7 +6199,7 @@ async function KsTplPickOne(req, h) {
 			ksid: ksid,
 		});
 		await newTemplate.save();
-		await Cache.resetETag(`ETAG:TEMPLATES:${tenant}`);
+		await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
 
 		return h.response({ ret: "success", tplid: tplid });
 	} catch (err) {
@@ -6179,7 +6208,7 @@ async function KsTplPickOne(req, h) {
 	}
 }
 
-async function SiteInfo(req, h) {
+async function SiteInfo(req: Request, h: ResponseToolkit) {
 	try {
 		const ret = await Cache.getSiteInfo();
 		return h.response(ret);
@@ -6189,7 +6218,7 @@ async function SiteInfo(req, h) {
 	}
 }
 
-async function KsConfigGet(req, h) {
+async function KsConfigGet(req: Request, h: ResponseToolkit) {
 	try {
 		return h.response(JSON.parse(await Cache.getKsConfig()));
 	} catch (err) {
@@ -6198,13 +6227,12 @@ async function KsConfigGet(req, h) {
 	}
 }
 
-async function KsConfigSet(req, h) {
+async function KsConfigSet(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
-		const ksconfig = req.payload.ksconfig;
+		await CheckKsAdminPermission(CRED);
+		const ksconfig = PLD.ksconfig;
 		const ksconfigString = JSON.stringify(ksconfig);
 		console.log(ksconfigString);
 		const newSite = await Site.findOneAndUpdate(
@@ -6220,12 +6248,11 @@ async function KsConfigSet(req, h) {
 	}
 }
 
-async function KsAble(req, h) {
+async function KsAble(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
+		await CheckKsAdminPermission(CRED);
 		return h.response({ ksable: true });
 	} catch (err) {
 		console.error(err);
@@ -6233,20 +6260,19 @@ async function KsAble(req, h) {
 	}
 }
 
-async function KShareTemplate(req, h) {
+async function KShareTemplate(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let myGroup = CRED.employee.group;
 
-		const { tplid, name, desc, tags } = req.payload;
+		const { tplid, name, desc, tags } = PLD;
 
-		await CheckKsAdminPermission(
-			req.auth.credentials.email,
-			await Cache.getMyGroup(req.auth.credentials.email),
-		);
+		await CheckKsAdminPermission(CRED);
 		const newKstpl = new KsTpl({
-			author: myEmail,
+			author: myEid,
 			name: name,
 			desc: desc,
 			tags: tags,
@@ -6261,13 +6287,13 @@ async function KShareTemplate(req, h) {
 	}
 }
 
-async function Mining_WorkflowDetails(req, h) {
+async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		const myEmail = req.auth.credentials.email;
-		const myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
 
-		const wfids = req.payload.wfids;
+		const wfids = PLD.wfids;
 		const ret = [];
 
 		for (let i = 0; i < wfids.length; i++) {
@@ -6338,18 +6364,19 @@ async function Mining_WorkflowDetails(req, h) {
 	}
 }
 
-async function Mining_Data(req, h) {
+async function Mining_Data(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = req.auth.credentials.tenant._id;
-		const myEmail = req.auth.credentials.email;
-		const myGroup = await Cache.getMyGroup(myEmail);
+		const tenant = CRED.tenant._id;
+		const myEid = CRED.email;
 
 		let wfids = [];
-		const { tplid, wfid } = req.payload;
+		const { tplid, wfid } = PLD;
 		if (wfid.length < 1) {
 			wfids = (
 				await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean()
-			).map((x) => x.wfid);
+			).map((x: any) => x.wfid);
 		} else {
 			wfids = [wfid];
 		}
@@ -6359,7 +6386,7 @@ async function Mining_Data(req, h) {
 		for (let i = 0; i < wfids.length; i++) {
 			let ALL_VISIED_KVARS = await Parser.userGetVars(
 				tenant,
-				myEmail,
+				myEid,
 				wfids[i],
 				Const.FOR_WHOLE_PROCESS,
 				[],
@@ -6443,7 +6470,7 @@ export default {
 	TemplateMakeCopyOf,
 	TemplateCopyto,
 	TemplateDelete,
-	TemplateDeleteByName,
+	TemplateDeleteByTplid,
 	TemplateDeleteMulti,
 	TemplateList,
 	TemplateIdList,
@@ -6490,7 +6517,6 @@ export default {
 	WorkflowGetLatest,
 	WorkflowOP,
 	WorkflowSetTitle,
-	WorkflowUpgrade,
 	WorkflowAddFile,
 	WorkflowRemoveAttachment,
 	WorkflowSetPboAt,
