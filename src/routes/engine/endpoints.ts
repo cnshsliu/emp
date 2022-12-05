@@ -1920,9 +1920,7 @@ const internals = {
 					payload: {
 						teamid: Joi.string().required(),
 						role: Joi.string().trim().required(),
-						members: Joi.array().items({
-							eid: Joi.string().required(),
-						}),
+						eids: Joi.array().items(Joi.string()),
 					},
 					validator: Joi,
 				},
