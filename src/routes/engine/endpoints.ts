@@ -2145,7 +2145,7 @@ const internals = {
 			path: "/orgchart/copyormovestaff",
 			handler: Handlers.OrgChartCopyOrMoveStaff,
 			config: {
-				description: "Copy or move staff",
+				description: "Copy or move staff from one OU to another OU",
 				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
