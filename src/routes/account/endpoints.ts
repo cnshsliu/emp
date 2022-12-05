@@ -820,7 +820,7 @@ const internals = {
 			handler: Handlers.SendInvitation,
 			config: {
 				tags: ["api"],
-				description: "Send invitaton to emails",
+				description: "Send invitaton to eids (array of eids)",
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
