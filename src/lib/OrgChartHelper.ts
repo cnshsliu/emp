@@ -1,6 +1,6 @@
 import Tools from "../tools/tools";
 import EmpError from "./EmpError";
-import { Types } from "mongoose";
+import { Types, ClientSession } from "mongoose";
 import OrgChart from "../database/models/OrgChart";
 import { Employee } from "../database/models/Employee";
 const OrgChartHelper = {
@@ -14,8 +14,8 @@ const OrgChartHelper = {
 	 */
 	getCN: async function (tenant: string | Types.ObjectId, eid: string) {
 		let filter: any = { tenant: tenant, eid: eid };
-		let person = await Employee.findOne(filter, { nickname: 1 });
-		return person ? person.nickname : "Not found";
+		let ocEntry = await Employee.findOne(filter, { nickname: 1 });
+		return ocEntry ? ocEntry.nickname : "Not found";
 	},
 	getOuCN: async function (tenant: string | Types.ObjectId, ou: string) {
 		let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
@@ -54,11 +54,11 @@ const OrgChartHelper = {
 
 	getStaffOU: async function (tenant: string | Types.ObjectId, eid: string) {
 		let filter: any = { tenant: tenant, eid: eid };
-		let theStaff = await OrgChart.findOne(filter);
+		let theStaff = await OrgChart.findOne(filter, { __v: 0 });
 		let theOu = null;
 		if (theStaff) {
 			filter = { tenant: tenant, ou: theStaff.ou, eid: "OU---" };
-			theOu = await OrgChart.findOne(filter);
+			theOu = await OrgChart.findOne(filter, { __v: 0 });
 		}
 		return theOu;
 	},
@@ -73,17 +73,16 @@ const OrgChartHelper = {
 		if (eid.indexOf("@") >= 0)
 			throw new EmpError("UPGRADE_REQUIRED", "The second param should be eid, not email");
 		let filter: any = { tenant: tenant, eid: eid };
-		let theStaff = await OrgChart.findOne(filter);
-		return theStaff;
+		return await OrgChart.findOne(filter, { __v: 0 });
 	},
 
 	/**
-	 * Get the position of a person
+	 * Get the position of a ocEntry
 	 */
 	getPosition: async function (tenant: string | Types.ObjectId, eid: string) {
 		let filter: any = { tenant: tenant, eid: eid };
-		let person = await OrgChart.findOne(filter, { position: 1 });
-		return person ? person.position : "Not found";
+		let ocEntry = await OrgChart.findOne(filter, { position: 1 });
+		return ocEntry ? ocEntry.position : "Not found";
 	},
 
 	/**
@@ -92,12 +91,12 @@ const OrgChartHelper = {
 	getAllPeers: async function (tenant: string | Types.ObjectId, eid: string) {
 		let filter: any = { tenant: tenant, eid: eid };
 		//找到用户
-		let person = await OrgChart.findOne(filter, { ou: 1 });
+		let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
 		let ret = [];
-		if (person) {
+		if (ocEntry) {
 			//找到用户的所有Peers
-			filter = { tenant: tenant, ou: person.ou, eid: { $not: /^OU-/ } };
-			ret = await OrgChart.find(filter);
+			filter = { tenant: tenant, ou: ocEntry.ou, eid: { $not: /^OU-/ } };
+			ret = await OrgChart.find(filter, { __v: 0 });
 		}
 		return ret;
 	},
@@ -113,12 +112,12 @@ const OrgChartHelper = {
 	) {
 		let filter: any = { tenant: tenant, eid: eid };
 		//找到用户
-		let person = await OrgChart.findOne(filter, { ou: 1 });
+		let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
 		let ret = [];
-		if (person) {
+		if (ocEntry) {
 			//找到用户的所有Peers
-			filter = { tenant: tenant, ou: person.ou, position: position };
-			ret = await OrgChart.find(filter);
+			filter = { tenant: tenant, ou: ocEntry.ou, position: position };
+			ret = await OrgChart.find(filter, { __v: 0 });
 		}
 		return ret;
 	},
@@ -131,7 +130,7 @@ const OrgChartHelper = {
 		tenant: string | Types.ObjectId,
 		eid: string,
 		positions: string,
-		mode: number = 0,
+		mode: number = OrgChartHelper.FIND_IN_OU,
 		ou: string = "",
 	) {
 		let filter: any = { tenant: tenant, eid: eid };
@@ -144,12 +143,12 @@ const OrgChartHelper = {
 			.filter((x) => x.length > 0);
 
 		if (ou === "" && mode !== OrgChartHelper.FIND_ALL) {
-			let person = await OrgChart.findOne(filter, { ou: 1 });
-			if (!person) {
-				console.log(`User ${eid} not found`);
+			let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
+			if (!ocEntry) {
+				console.log(`Orgchart Entry ${eid} not found`);
 				return [];
 			}
-			ou = person.ou;
+			ou = ocEntry.ou;
 		}
 		//找到用户的所有Peers
 		let ouCondition = undefined;
@@ -182,7 +181,7 @@ const OrgChartHelper = {
 					eid: { $ne: "OU---" },
 					position: { $in: posArr },
 				};
-				ret = await OrgChart.find(tmpFilter);
+				ret = await OrgChart.find(tmpFilter, { __v: 0 });
 				if (ret && Array.isArray(ret) && ret.length > 0) {
 					break;
 				}
@@ -214,7 +213,7 @@ const OrgChartHelper = {
 			delete filter.ou;
 		}
 
-		ret = await OrgChart.find(filter);
+		ret = await OrgChart.find(filter, { __v: 0 });
 		return ret;
 	},
 

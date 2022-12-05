@@ -33,8 +33,8 @@ const schema = new Schema({
 	coverTag: { type: String, default: "" },
 	allowdiscuss: { type: Boolean, default: true },
 	ksid: { type: String, default: "" },
-	createdAt: { type: Date },
-	updatedAt: { type: Date },
+	createdAt: { type: Date, default: Date.now },
+	updatedAt: { type: Date, default: Date.now },
 });
 schema.index({ tenant: 1, tplid: 1 }, { unique: true });
 

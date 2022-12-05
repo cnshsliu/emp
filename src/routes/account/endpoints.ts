@@ -3,7 +3,7 @@ import Handlers from "./handlers";
 import Joi from "joi";
 const validation = {
 	account: /^[a-zA-Z][a-zA-Z0-9_]{3,20}$/,
-	username: /^[a-zA-Z0-9\u4e00-\u9fa5]{3,40}$/,
+	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]{3,40}$/,
 	password: /^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{6,20}$/,
 };
 
@@ -40,6 +40,21 @@ const internals = {
 				validate: {
 					payload: {
 						account: Joi.string().email().lowercase().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/account/check/availability",
+			handler: Handlers.CheckAccountAvailability,
+			config: {
+				description: "Check account availability",
+				tags: ["api"],
+				validate: {
+					payload: {
+						account: Joi.string().lowercase().min(3).required(),
 					},
 					validator: Joi,
 				},
@@ -323,25 +338,6 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/config",
-			handler: Handlers.ProfileConfig,
-			config: {
-				auth: "token",
-				tags: ["api"],
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					payload: {
-						key: Joi.string().required(),
-						value: Joi.any().required(),
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
 			path: "/account/set/username",
 			handler: Handlers.SetMyUserName,
 			config: {
@@ -379,17 +375,19 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/remove",
-			handler: Handlers.RemoveAccount,
+			path: "/admin/remove/account",
+			handler: Handlers.RemoveUser,
 			config: {
 				auth: "token",
-				tags: ["api"],
+				tags: ["api", "admin", "account"],
+				description: "站点管理员删除一个账号，管理员必须处于已登录状态，切提供站点管理密码",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
 						account: Joi.string().required(),
+						password: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -424,7 +422,8 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						password: Joi.string().required(),
+						tenant_id: Joi.string().required().description("字符串形式的tenant_id"),
+						password: Joi.string().required().description("这个需要提供站点管理密码"),
 						orgmode: Joi.bool().default(true),
 					},
 					validator: Joi,
@@ -631,7 +630,7 @@ const internals = {
 			path: "/tnt/set/orgchartadminpds",
 			handler: Handlers.OrgSetOrgChartAdminPds,
 			config: {
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				description: "Save PDS for OrgChart admin",
 				auth: "token",
 				validate: {
@@ -649,13 +648,12 @@ const internals = {
 			path: "/tnt/add/orgchartadmin",
 			handler: Handlers.OrgChartAdminAdd,
 			config: {
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				description: "Add orgchart administrator",
 				auth: "token",
 				validate: {
-					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
-						userid: Joi.string().required(),
+						eid: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -666,7 +664,7 @@ const internals = {
 			path: "/tnt/del/orgchartadmin",
 			handler: Handlers.OrgChartAdminDel,
 			config: {
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				description: "Delete orgchart amdinistrator",
 				auth: "token",
 				validate: {
@@ -735,8 +733,8 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/tnt/member/remove",
-			handler: Handlers.RemoveMembers,
+			path: "/tnt/employee/remove",
+			handler: Handlers.RemoveEmployees,
 			config: {
 				tags: ["api"],
 				description: "Remove members from org",
@@ -750,8 +748,8 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/tnt/member/setgroup",
-			handler: Handlers.SetMemberGroup,
+			path: "/tnt/employee/setgroup",
+			handler: Handlers.SetEmployeeGroup,
 			config: {
 				tags: ["api"],
 				description: "Set group for members",
@@ -760,7 +758,7 @@ const internals = {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
 						eids: Joi.array().items(Joi.string()).required(),
-						member_group: Joi.string().required(),
+						group: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -768,8 +766,8 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/tnt/member/setpassword",
-			handler: Handlers.SetMemberPassword,
+			path: "/tnt/employee/setpassword",
+			handler: Handlers.SetEmployeePassword,
 			config: {
 				tags: ["api"],
 				description: "Set group for members",
@@ -786,14 +784,18 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/tnt/members",
-			handler: Handlers.GetOrgMembers,
+			path: "/tnt/employees",
+			handler: Handlers.GetOrgEmployees,
 			config: {
 				tags: ["api"],
 				description: "Get orgnization members",
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: {
+						eids: Joi.array().items(Joi.string()).optional(),
+						active: Joi.boolean().optional().default(true),
+					},
 					validator: Joi,
 				},
 			},

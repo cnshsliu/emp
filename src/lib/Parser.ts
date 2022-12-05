@@ -3,10 +3,10 @@ import lodash from "lodash";
 import Moment from "moment";
 import Const from "./Const";
 import Tools from "../tools/tools";
-import { Types } from "mongoose";
+import { Types, ClientSession } from "mongoose";
 import EmpError from "./EmpError";
 import { Employee } from "../database/models/Employee";
-import Team from "../database/models/Team";
+import { Team, TeamType } from "../database/models/Team";
 import KVar from "../database/models/KVar";
 import OrgChart from "../database/models/OrgChart";
 import OrgChartAdmin from "../database/models/OrgChartAdmin";
@@ -152,7 +152,7 @@ const Parser = {
 			filter["eff"] = efficient.toLowerCase();
 		}
 		//这个 createdAt先后顺序sort非常关键，保障新的覆盖老的
-		let kvars = await KVar.find(filter).sort("createdAt");
+		let kvars = await KVar.find(filter, { __v: 0 }).sort("createdAt");
 
 		for (let i = 0; i < kvars.length; i++) {
 			let includeIt = true;
@@ -345,7 +345,7 @@ const Parser = {
 				if (posArr.includes("all")) {
 					delete filter["position"];
 				}
-				ret = await OrgChart.find(filter);
+				ret = await OrgChart.find(filter, { __v: 0 });
 			}
 			return ret;
 		};
@@ -449,7 +449,7 @@ const Parser = {
 		try {
 			//找出团队 team
 			let filter = { tenant: tenant, teamid: teamid };
-			let team = await Team.findOne(filter);
+			let team = await Team.findOne(filter, { __v: 0 });
 			//找出team定义中，角色aRole对应的人
 			if (team) {
 				let roleParticipant = team.tmap[aRole];
@@ -484,7 +484,7 @@ const Parser = {
 	},
 
 	copyVars: async function (
-		tenant: string,
+		tenant: string | Types.ObjectId,
 		fromWfid: string,
 		fromNodeid: string,
 		fromObjid: string,
@@ -494,7 +494,7 @@ const Parser = {
 		newRound = -1,
 	) {
 		let filter = { tenant: tenant, wfid: fromWfid, objid: fromObjid };
-		let kvar = await KVar.findOne(filter);
+		let kvar = await KVar.findOne(filter, { __v: 0 });
 		if (!kvar) {
 			console.warn("COPY_VARS_FAILED", "can't find old vars");
 			return null;
@@ -533,34 +533,38 @@ const Parser = {
 			[],
 			Const.VAR_IS_EFFICIENT,
 		);
-		let names = Object.keys(newvars);
-		for (let k = 0; k < names.length; k++) {
-			let name = names[k];
-			let valueDef = newvars[name];
-			if (typeof valueDef.value === "string") {
-				while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
-				while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+		if (newvars === undefined || newvars === null) {
+			return oldVars;
+		} else {
+			let names = Object.keys(newvars);
+			for (let k = 0; k < names.length; k++) {
+				let name = names[k];
+				let valueDef = newvars[name];
+				if (typeof valueDef.value === "string") {
+					while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
+					while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+				}
 			}
+
+			let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
+			let mergedVars_base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
+			let filter = { tenant: tenant, wfid: wfid, objid: objid, doer: doer };
+			doer = lodash.isEmpty(doer) ? "EMP" : doer;
+			await KVar.deleteMany(filter);
+			let kvar = new KVar({
+				tenant: tenant,
+				round: round,
+				wfid: wfid,
+				nodeid: nodeid,
+				objid: objid,
+				doer: doer,
+				content: mergedVars_base64_vars_string,
+				eff: efficient.toLowerCase(),
+			});
+			kvar = await kvar.save();
+
+			return mergedVars;
 		}
-
-		let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
-		let mergedVars_base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
-		let filter = { tenant: tenant, wfid: wfid, objid: objid, doer: doer };
-		doer = lodash.isEmpty(doer) ? "EMP" : doer;
-		await KVar.deleteMany(filter);
-		let kvar = new KVar({
-			tenant: tenant,
-			round: round,
-			wfid: wfid,
-			nodeid: nodeid,
-			objid: objid,
-			doer: doer,
-			content: mergedVars_base64_vars_string,
-			eff: efficient.toLowerCase(),
-		});
-		kvar = await kvar.save();
-
-		return mergedVars;
 	},
 
 	/**

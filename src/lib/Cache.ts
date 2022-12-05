@@ -9,7 +9,7 @@ import { Template } from "../database/models/Template";
 import KsTpl from "../database/models/KsTpl";
 import { Tenant } from "../database/models/Tenant";
 import OrgChart from "../database/models/OrgChart";
-import Site from "../database/models/Site";
+import { Site, SiteType } from "../database/models/Site";
 import { redisClient } from "../database/redis";
 import LRU from "lru-cache";
 
@@ -157,9 +157,9 @@ const internals = {
 				{ tenant: tenant, tplid: tplid },
 				{ _id: 0, coverTag: 1 },
 			).lean();
-			let theCoverImagePath = Tools.getTemplateCoverPath(tenant, tplid);
+			let theCoverImagePath = Tools.getTemplateCoverPath(tenant.toString(), tplid);
 			let coverinfo = {
-				path: Tools.getTemplateCoverPath(tenant, tplid),
+				path: Tools.getTemplateCoverPath(tenant.toString(), tplid),
 				media: "image/png",
 				etag: theTpl.coverTag,
 			};
@@ -374,7 +374,7 @@ const internals = {
 			lruCache.delete("SMTP:" + tenant);
 			lruCache.delete("ORGTAGS:" + tenant);
 		}
-		return tenant;
+		return tenant.toString();
 	},
 
 	getVisi: async function (tplid: string): Promise<string> {

@@ -51,7 +51,7 @@ const internals = {
 		}
 		let perm = await Cache.getMyPerm(permKey);
 		//找不到，则调用control来判断
-		if (!perm) {
+		if (perm === null || perm === undefined) {
 			perm = this.control(this.getMyGroupPerm(employee.group), employee.eid, what, instance, op);
 			//解析后，放入缓存
 			await Cache.setMyPerm(permKey, perm);

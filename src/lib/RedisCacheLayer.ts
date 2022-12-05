@@ -4,7 +4,7 @@ import EmpError from "./EmpError";
 import { Template } from "../database/models/Template";
 import { Workflow } from "../database/models/Workflow";
 import { redisClient, redisConnect } from "../database/redis";
-import { Types } from "mongoose";
+import { Types, ClientSession } from "mongoose";
 import assert from "assert";
 import LRU from "lru-cache";
 
@@ -60,7 +60,7 @@ const getWorkflow = async (wfFilter: WfFilter, fromFunc: string) => {
 		}
 	}
 
-	const wfInDB = await Workflow.findOne(wfFilter).lean();
+	const wfInDB = await Workflow.findOne(wfFilter, { __v: 0 }).lean();
 	if (!wfInDB) {
 		throw new EmpError("WF_NOT_FOUND", wfCacheKey);
 	}

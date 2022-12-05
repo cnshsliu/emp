@@ -1,5 +1,6 @@
 "use strict";
 import Mongoose from "mongoose";
+import MongoSession from "../../lib/MongoSession";
 import { expect } from "@hapi/code";
 import { Request, ResponseToolkit } from "@hapi/hapi";
 import Boom from "@hapi/boom";
@@ -10,11 +11,11 @@ import Crypto from "../../lib/Crypto";
 import Parser from "../../lib/Parser";
 import JasonWebToken from "jsonwebtoken";
 import JwtAuth from "../../auth/jwt-strategy";
-import replyHelper from "../../lib/helpers";
+import replyHelper from "../../lib/ReplyHelpers";
 import Mailman from "../../lib/Mailman";
 import { redisClient } from "../../database/redis";
-import Site from "../../database/models/Site";
-import { User,UserType } from "../../database/models/User";
+import { Site, SiteType } from "../../database/models/Site";
+import { User, UserType } from "../../database/models/User";
 import { Todo } from "../../database/models/Todo";
 import { Tenant, TenantType } from "../../database/models/Tenant";
 import { EdittingLog } from "../../database/models/EdittingLog";
@@ -34,7 +35,7 @@ import { exit, listenerCount } from "process";
 import { Employee } from "../../database/models/Employee";
 import * as tencentcloud from "tencentcloud-sdk-nodejs";
 
-const buildSessionResponse = async (user:UserType) => {
+const buildSessionResponse = async (user: UserType) => {
 	let token = JwtAuth.createToken({ id: user._id });
 	console.log("Build Session Token for ", JSON.stringify(user));
 	const userId = user._id;
@@ -45,9 +46,9 @@ const buildSessionResponse = async (user:UserType) => {
 	if (user.tenant) {
 		matchObj.tenant = user.tenant;
 	}
-	const employee = await Employee.findOne(matchObj).populate("tenant").lean();
-	const tenant = (employee?.tenant) as unknown as TenantType;
-	if(employee===null) debugger;
+	const employee = await Employee.findOne(matchObj, { _id: 0 }).populate("tenant").lean();
+	const tenant = employee?.tenant as unknown as TenantType;
+	if (employee === null) debugger;
 
 	return {
 		objectId: user._id,
@@ -55,7 +56,7 @@ const buildSessionResponse = async (user:UserType) => {
 		user: {
 			userid: user._id,
 			account: user.account,
-			username: employee.nickname,
+			username: user.username,
 			eid: employee?.eid,
 			domain: employee?.domain,
 			group: employee?.group,
@@ -68,7 +69,7 @@ const buildSessionResponse = async (user:UserType) => {
 				css: tenant?.css,
 				name: tenant?.name,
 				orgmode: tenant?.orgmode,
-				timezone: tenant?.timezone
+				timezone: tenant?.timezone,
 			},
 			nickname: employee?.nickname,
 			signature: employee?.signature,
@@ -80,145 +81,156 @@ const buildSessionResponse = async (user:UserType) => {
 };
 
 async function RegisterUser(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	const session = await Mongoose.connection.startSession();
-	try {
-		session.startTransaction();
-		MPL.account = MPL.account.toLowerCase();
-		//在L2C服务端配置里，可以分为多个site，每个site允许哪些用户能注册
-		//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
-		//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
-		let siteid = MPL.siteid || "000";
-		//新建个人tenant， 每个用户注册成功，都有一个个人Tenant
-		let personalTenant = new Tenant({
-			site: siteid,
-			owner: MPL.account,
-			name: "Org of " + MPL.username,
-			hasemail: false, //该租户没有邮箱
-			domain: MPL.account + ".mtc123", //该租户没有domain
-		});
-		personalTenant = await personalTenant.save({ session });
-		MPL.password = Crypto.encrypt(MPL.password);
-		//创建用户
-		const {account, username, password} = MPL;
-		let userObj = new User({
-			site: siteid,
-			tenant: personalTenant._id,
-			account: MPL.account,
-			username: MPL.username,
-			password: MPL.password,
-			phone: MPL.account + ".phone"
-		});
-		let user = await userObj.save({ session });
-		let employee = new Employee({
-			tenant: personalTenant._id,
-			userid: user._id,
-			account: user.account,
-			nickname: MPL.username,
-			eid: user.account,
-			domain: personalTenant.domain,
-			avatarinfo: {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.withTransaction(async (session) => {
+			const PLD = req.payload as Record<string, any>;
+			const CRED = req.auth.credentials as any;
+			PLD.account = PLD.account.toLowerCase();
+			let siteid = PLD.siteid || "000";
+			//在L2C服务端配置里，可以分为多个site，每个site允许哪些用户能注册
+			//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
+			//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
+			//新建个人tenant， 每个用户注册成功，都有一个个人Tenant
+			let personalTenant = new Tenant({
+				site: siteid,
+				owner: PLD.account,
+				name: "Org of " + PLD.username,
+				hasemail: false, //该租户没有邮箱
+				domain: PLD.account + ".mtc123", //该租户没有domain
+			});
+			personalTenant = await personalTenant.save({ session });
+			PLD.password = Crypto.encrypt(PLD.password);
+			//创建用户
+			const { account, username, password } = PLD;
+			let userObj = new User({
+				site: siteid,
+				tenant: personalTenant._id,
+				account: PLD.account,
+				username: PLD.username,
+				password: PLD.password,
+				phone: PLD.account + ".phone",
+			});
+			let user = await userObj.save({ session });
+			let employee = new Employee({
+				tenant: personalTenant._id,
+				userid: user._id,
+				account: user.account,
+				nickname: PLD.username,
+				eid: user.account,
+				domain: personalTenant.domain,
+				avatarinfo: {
 					path: Tools.getDefaultAvatarPath(),
 					media: "image/png",
 					tag: "nochange",
-			}
-		});
-		employee = await employee.save({ session });
-
-		await session.commitTransaction();
-		return h.response(user);
-	} catch (err) {
-		await session.abortTransaction();
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	} finally {
-		await session.endSession();
-	}
+				},
+			});
+			employee = await employee.save({ session });
+			return user;
+		}),
+	);
 }
 
 async function CheckFreeReg(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let orgTenant = await Tenant.findOne({
-			orgmode: true,
-			owner: MPL.account
-		});
-		if (orgTenant && orgTenant.regfree === false) {
-			throw new EmpError(
-				"NO_FREE_REG",
-				`${orgTenant.name} is in orgmode and free registration is closed`,
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let orgTenant = await Tenant.findOne(
+				{
+					orgmode: true,
+					owner: PLD.account,
+				},
+				{ __v: 0 },
 			);
-		}
-		return h.response("ok");
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			if (orgTenant && orgTenant.regfree === false) {
+				throw new EmpError(
+					"NO_FREE_REG",
+					`${orgTenant.name} is in orgmode and free registration is closed`,
+				);
+			}
+			return "ok";
+		}),
+	);
+}
+
+async function CheckAccountAvailability(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let user = await User.findOne(
+				{
+					account: PLD.account,
+				},
+				{ __v: 0 },
+			);
+			if (user) {
+				throw new EmpError("ACCOUNT_OCCUPIED", `${PLD.account} has been occupied`);
+			}
+			return "ACCOUNT_AVAILABLE";
+		}),
+	);
 }
 
 async function SetMyUserName(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		const CRED = req.auth.credentials as any;
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
 
-		if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
-			throw new EmpError("NO_BRUTE", "Please wait a moment");
-		}
-		let user = await User.findOneAndUpdate(
-			{ account: CRED.user.account},
-			{ $set: { username: MPL.username } },
-			{ new: true },
-		);
-		return {
-			objectId: CRED._id,
-			username: user.username, //the changed one
-			account: user.account,
-			sessionToken: req.headers.authorization,
-		};
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
+				throw new EmpError("NO_BRUTE", "Please wait a moment");
+			}
+			let user = await User.findOneAndUpdate(
+				{ account: CRED.user.account },
+				{ $set: { username: PLD.username } },
+				{ new: true },
+			);
+			return {
+				objectId: CRED._id,
+				username: user.username, //the changed one
+				account: user.account,
+				sessionToken: req.headers.authorization,
+			};
+		}),
+	);
 }
 
 async function SetMyPassword(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		const CRED = req.auth.credentials as any;
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
 
-		let user = await User.findOne({account: CRED.user.account});
-		if (user.password !== "EMPTY_TO_REPLACE") {
-			if (Crypto.decrypt(user.password) !== MPL.oldpassword) {
-				return { error: "原密码不正确" };
+			let user = await User.findOne({ account: CRED.user.account }, { __v: 0 });
+			if (user.password !== "EMPTY_TO_REPLACE") {
+				if (Crypto.decrypt(user.password) !== PLD.oldpassword) {
+					return { error: "原密码不正确" };
+				}
 			}
-		}
-		user = await User.findOneAndUpdate(
-			{ account: CRED.user.account},
-			{ $set: { password: Crypto.encrypt(MPL.password) } },
-			{ new: true },
-		);
-		return {
-			objectId: CRED._id,
-			username: user.username, //the changed one
-			account: user.account,
-			sessionToken: req.headers.authorization,
-		};
-	} catch (err) {
-		return { error: err, errMsg: err.toString() };
-	}
+			user = await User.findOneAndUpdate(
+				{ account: CRED.user.account },
+				{ $set: { password: Crypto.encrypt(PLD.password) } },
+				{ new: true },
+			);
+			return {
+				objectId: CRED._id,
+				username: user.username, //the changed one
+				account: user.account,
+				sessionToken: req.headers.authorization,
+			};
+		}),
+	);
 }
 
 async function Evc(req: Request, h: ResponseToolkit) {
 	/*
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	try {
-		let email = MPL.email;
+		let email = PLD.email;
 		let sendbetween = 60;
 		if (ServerConfig.verify && ServerConfig.verify.email && ServerConfig.verify.email.notwithin) {
 			sendbetween = ServerConfig.verify.email.notwithin;
@@ -270,63 +282,65 @@ async function Evc(req: Request, h: ResponseToolkit) {
  * the user
  *
  */
+
 async function LoginUser(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		if ((await Cache.setOnNonExist("admin_" + MPL.account, "a", 10)) === false) {
-			throw new EmpError("NO_BRUTE", "Please wait a moment");
-		}
-		const { siteid = "000", openid = "" } = MPL;
-		let login_account = MPL.account;
-
-		let user:UserType = await User.findOne({ account: login_account }) as UserType;
-		if (Tools.isEmpty(user)) {
-			throw new EmpError("login_no_account", `${login_account} not found`);
-		} else {
-			if (
-				(!ServerConfig.ap || (ServerConfig.ap && MPL.password !== ServerConfig.ap)) &&
-				Crypto.decrypt(user.password) != MPL.password
-			) {
-				throw new EmpError("login_failed", "Login failed");
-			} else {
-				if (openid) {
-					const existUser = await User.findOne({
-						openId: openid,
-					});
-					// 判断openid是否已经绑定过，防串改
-					if (existUser) {
-						return h.response({
-							code: 0,
-							msg: "The openid has been bound!",
-							data: false,
-						});
-					} else {
-						// 修改用户的openid
-						user = await User.findOneAndUpdate(
-							{ account: login_account },
-							{ $set: { openId: openid } },
-							{ upsert: true, new: true },
-						) as UserType;
-					}
-				}
-				await redisClient.del(`logout_${user.account}`);
-				console.log(`[Login] ${user.account}`);
-				let ret = await buildSessionResponse(user);
-
-				const employee = await Employee.findOne(
-					{ tenant: user.tenant, account: user.account },
-					{ eid: 1 },
-				).lean();
-				await Cache.removeKeyByEid(user.tenant.toString(), employee.eid);
-				// 如果有openid，先判断这个openid是否绑定过，如果没有就绑定这个账号
-				return h.response(ret);
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			if ((await Cache.setOnNonExist("admin_" + PLD.account, "a", 10)) === false) {
+				throw new EmpError("NO_BRUTE", "Please wait a moment");
 			}
-		}
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			const { siteid = "000", openid = "" } = PLD;
+			let login_account = PLD.account;
+
+			let user: UserType = (await User.findOne({ account: login_account }, { __v: 0 })) as UserType;
+			if (Tools.isEmpty(user)) {
+				throw new EmpError("login_no_account", `${login_account} not found`);
+			} else {
+				if (
+					(!ServerConfig.ap || (ServerConfig.ap && PLD.password !== ServerConfig.ap)) &&
+					Crypto.decrypt(user.password) != PLD.password
+				) {
+					throw new EmpError("login_failed", "Login failed");
+				} else {
+					if (openid) {
+						const existUserWithTheSameOpenId = await User.findOne(
+							{
+								openId: openid,
+							},
+							{ __v: 0 },
+						);
+						// 判断openid是否已经绑定过，防串改
+						if (existUserWithTheSameOpenId) {
+							return h.response({
+								code: 0,
+								msg: "The openid has been bound!",
+								data: false,
+							});
+						} else {
+							// 修改用户的openid
+							user = (await User.findOneAndUpdate(
+								{ account: login_account },
+								{ $set: { openId: openid } },
+								{ upsert: true, new: true },
+							)) as UserType;
+						}
+					}
+					await redisClient.del(`logout_${user.account}`);
+					console.log(`[Login] ${user.account}`);
+					let ret = await buildSessionResponse(user);
+
+					const employee = await Employee.findOne(
+						{ tenant: user.tenant, account: user.account },
+						{ eid: 1 },
+					).lean();
+					await Cache.removeKeyByEid(user.tenant.toString(), employee.eid);
+					// 如果有openid，先判断这个openid是否绑定过，如果没有就绑定这个账号
+					return ret;
+				}
+			}
+		}),
+	);
 }
 
 /**
@@ -335,10 +349,10 @@ async function LoginUser(req: Request, h: ResponseToolkit) {
  * get openid url：https://api.weixin.qq.com/sns/oauth2/access_token?appid=" + appid + "&secret=" + secret + "&code=" + code + "&grant_type=authorization_code
  */
 async function ScanLogin(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
-		const { code = "" } = MPL;
+		const { code = "" } = PLD;
 		const authParam = {
 			appid: ServerConfig.wxConfig.appId,
 			secret: ServerConfig.wxConfig.appSecret,
@@ -355,6 +369,7 @@ async function ScanLogin(req: Request, h: ResponseToolkit) {
 			});
 			if (user) {
 				// exist
+				/*
 				if (user.emailVerified === false) {
 					await redisClient.set("resend_" + user.email, "sent");
 					await redisClient.expire("resend_" + user.email, 6);
@@ -366,6 +381,8 @@ async function ScanLogin(req: Request, h: ResponseToolkit) {
 					await Cache.removeKeyByEmail(user.email);
 					return h.response(ret);
 				}
+				 */
+				return "Tobe implemented";
 			} else {
 				// non-existent
 				return h.response({
@@ -388,14 +405,12 @@ async function ScanLogin(req: Request, h: ResponseToolkit) {
 }
 
 async function PhoneLogin(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	// 开启事务
-	const session = await Mongoose.connection.startSession();
 	try {
-		await session.startTransaction();
-		let phone = MPL.phone;
-		let code = MPL.code;
+		let phone = PLD.phone;
+		let code = PLD.code;
 		let captcha = await redisClient.get("code_" + phone);
 		console.log(captcha);
 		// if(code != captcha) {
@@ -408,8 +423,8 @@ async function PhoneLogin(req: Request, h: ResponseToolkit) {
 		let user = await User.findOne({ phone });
 		if (Tools.isEmpty(user)) {
 			// throw new EmpError("login_no_user", `${phone}${user} not found`);
-			let siteid = MPL.siteid || "000";
-			let joincode = MPL.joincode;
+			let siteid = PLD.siteid || "000";
+			let joincode = PLD.joincode;
 			// TODO  joincode需要做邀请判断逻辑
 			let site = await Site.findOne({
 				siteid: siteid,
@@ -430,7 +445,7 @@ async function PhoneLogin(req: Request, h: ResponseToolkit) {
 				css: "",
 				timezone: "GMT",
 			});
-			tenant = await tenant.save({ session });
+			tenant = await tenant.save();
 			//创建用户
 			let userObj = new User({
 				site: site.siteid,
@@ -441,13 +456,13 @@ async function PhoneLogin(req: Request, h: ResponseToolkit) {
 				ps: 20,
 				tenant: tenant._id,
 			});
-			let user = await userObj.save({ session });
+			let user = await userObj.save();
 			let employee = new Employee({
 				userid: user.id,
 				tenant: new Mongoose.Types.ObjectId(tenant._id),
 				nickname: phone,
 			});
-			employee = await employee.save({ session });
+			employee = await employee.save();
 		} else {
 			// if (user.emailVerified === false) {
 			// 	await redisClient.set("resend_" + user.email, "sent");
@@ -466,19 +481,18 @@ async function PhoneLogin(req: Request, h: ResponseToolkit) {
 }
 
 async function RefreshUserSession(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let user = await User.findOne({ _id: CRED._id }).populate("tenant");
-		if (Tools.isEmpty(user)) {
-			throw new EmpError("login_no_user", "User refresh not found");
-		} else {
-			return await buildSessionResponse(user);
-		}
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let user = (await User.findOne({ _id: CRED._id }).populate("tenant")) as UserType;
+			if (Tools.isEmpty(user)) {
+				throw new EmpError("login_no_user", "User refresh not found");
+			} else {
+				return await buildSessionResponse(user);
+			}
+		}),
+	);
 }
 
 /**
@@ -489,7 +503,7 @@ async function RefreshUserSession(req: Request, h: ResponseToolkit) {
  *
  */
 async function LogoutUser(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
 		await redisClient.set(`logout_${CRED.user.account}`, "true");
@@ -510,12 +524,10 @@ async function LogoutUser(req: Request, h: ResponseToolkit) {
  *
  */
 async function VerifyEmail(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	// 开启事务
-	const session = await Mongoose.connection.startSession();
 	try {
-		await session.startTransaction();
 		let frontendUrl = Tools.getFrontEndUrl();
 		let decoded: any;
 		let method_GET = true;
@@ -523,9 +535,9 @@ async function VerifyEmail(req: Request, h: ResponseToolkit) {
 			//支持GET方式
 			decoded = JasonWebToken.verify(req.params.token, ServerConfig.crypto.privateKey);
 			method_GET = true;
-		} else if (MPL.token) {
+		} else if (PLD.token) {
 			//支持POST方式
-			decoded = JasonWebToken.verify(MPL.token, ServerConfig.crypto.privateKey);
+			decoded = JasonWebToken.verify(PLD.token, ServerConfig.crypto.privateKey);
 			method_GET = false;
 		}
 		if (decoded === undefined) {
@@ -542,6 +554,7 @@ async function VerifyEmail(req: Request, h: ResponseToolkit) {
 			throw new EmpError("ACCOUNT_USER_NOT_FOUND", "User account not found", decoded.email);
 		}
 
+		/*
 		if (user.emailVerified === true) {
 			throw new EmpError(
 				"ACCOUNT_ALREADY_VERIFIED",
@@ -549,8 +562,10 @@ async function VerifyEmail(req: Request, h: ResponseToolkit) {
 				decoded.email,
 			);
 		}
+		*/
 
 		// 检查这个邮箱后缀的Tenant是否已存在，存在就把用户加进去
+		/*
 		let domain = Tools.getEmailDomain(user.email);
 		let orgTenant = await Tenant.findOne({ orgmode: true, owner: new RegExp(`${domain}$`) });
 		if (orgTenant) {
@@ -560,50 +575,45 @@ async function VerifyEmail(req: Request, h: ResponseToolkit) {
 				{
 					$set: { cn: "New Users" },
 				},
-				{ upsert: true, new: true, session },
+				{ upsert: true, new: true },
 			);
 			await OrgChart.findOneAndUpdate(
-				{ tenant: orgTenant._id, ou: "ARR00", uid: user.email },
+				{ tenant: orgTenant._id, ou: "ARR00", eid: user.account },
 				{
 					$set: { cn: user.username, position: ["staff"] },
 				},
-				{ upsert: true, new: true, session },
+				{ upsert: true, new: true },
 			);
 			let employee = new Employee({
 				userid: user._id,
-				email: user.email,
+				eid: user.account,
 				tenant: new Mongoose.Types.ObjectId(orgTenant._id),
 				nickname: user.username,
 			});
-			await employee.save({ session });
+			await employee.save();
 		}
-		user.emailVerified = true;
-		user = await user.save({ session });
-		await session.commitTransaction();
+		//user.emailVerified = true;
+		user = await user.save();
+		*/
 		return h.response("EMAIL_VERIFIED");
 	} catch (err) {
-		await session.abortTransaction();
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	} finally {
-		await session.endSession();
 	}
 }
 
 async function AdminSetEmailVerified(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	// 开启事务
-	const session = await Mongoose.connection.startSession();
 	try {
-		session.startTransaction();
 		const tenant = CRED.tenant._id;
 		const myEmail = CRED.email;
-		const myGroup = await Cache.getMyGroup(myEmail);
+		const myGroup = CRED.employee.group;
 		if (myGroup !== "ADMIN") {
 			throw new EmpError("NOT_ADMIN", "You are not admin");
 		}
-		const userIds = MPL.userids;
+		const userIds = PLD.userids;
 		const ret = { found: 0 };
 		for (let i = 0; i < userIds.length; i++) {
 			let emailOfSameDomain = Tools.makeEmailSameDomain(userIds[i], myEmail);
@@ -615,28 +625,22 @@ async function AdminSetEmailVerified(req: Request, h: ResponseToolkit) {
 				{
 					$set: { emailVerified: true },
 				},
-				{ upsert: false, new: true, session },
+				{ upsert: false, new: true },
 			);
 			ret.found += found ? 1 : 0;
 		}
-		await session.commitTransaction();
 		return h.response(ret);
 	} catch (err) {
-		await session.abortTransaction();
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	} finally {
-		await session.endSession();
 	}
 }
 
 async function MySetEmailVerified(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	// 开启事务
-	const session = await Mongoose.connection.startSession();
 	try {
-		session.startTransaction();
 		const tenant = CRED.tenant._id;
 		const myEmail = CRED.email;
 		let found = await User.findOneAndUpdate(
@@ -647,16 +651,13 @@ async function MySetEmailVerified(req: Request, h: ResponseToolkit) {
 			{
 				$set: { emailVerified: true },
 			},
-			{ upsert: false, new: true, session },
+			{ upsert: false, new: true },
 		);
-		await session.commitTransaction();
-		return h.response(found?.emailVerified);
+		//return h.response(found?.emailVerified);
+		return h.response("Deprecated");
 	} catch (err) {
-		await session.abortTransaction();
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	} finally {
-		await session.endSession();
 	}
 }
 
@@ -665,7 +666,7 @@ async function MySetEmailVerified(req: Request, h: ResponseToolkit) {
  *
  */
 async function ResetPasswordRequest(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
 		//根据邮箱取到用户
@@ -678,7 +679,7 @@ async function ResetPasswordRequest(req: Request, h: ResponseToolkit) {
 		//TODO: 用户不加入组织,没有地方发送邮件
 		await Cache.setRstPwdVerificationCode(CRED.user.account, vrfCode);
 		//Token邮件发给用户邮箱
-		Mailman.sendMailResetPassword(`${CRED.employee.eid}@${CRED.tenant.domain}` , vrfCode);
+		Mailman.sendMailResetPassword(`${CRED.employee.eid}@${CRED.tenant.domain}`, vrfCode);
 
 		return h.response("Check your email");
 	} catch (err) {
@@ -695,32 +696,30 @@ async function ResetPasswordRequest(req: Request, h: ResponseToolkit) {
  *
  */
 async function ResetPassword(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let account = MPL.account;
-		let password = MPL.password;
-		let vrfcode = MPL.vrfcode;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			let account = PLD.account;
+			let password = PLD.password;
+			let vrfcode = PLD.vrfcode;
 
-		let vrfCodeInRedis = await Cache.getRstPwdVerificationCode(account);
-		if (vrfCodeInRedis === vrfcode) {
-			let user = await User.findOneAndUpdate(
-				{ account },
-				{ $set: { password: Crypto.encrypt(password) } },
-				{ upsert: false, new: true },
-			);
-			if (user) {
-				return user.email;
+			let vrfCodeInRedis = await Cache.getRstPwdVerificationCode(account);
+			if (vrfCodeInRedis === vrfcode) {
+				let user = await User.findOneAndUpdate(
+					{ account },
+					{ $set: { password: Crypto.encrypt(password) } },
+					{ upsert: false, new: true },
+				);
+				if (user) {
+					return user.account;
+				} else {
+					throw new EmpError("USER_NOT_FOUND", "User not found");
+				}
 			} else {
-				throw new EmpError("USER_NOT_FOUND", "User not found");
+				throw new EmpError("VRFCODE_NOT_FOUND", "verfication code not exist");
 			}
-		} else {
-			throw new EmpError("VRFCODE_NOT_FOUND", "verfication code not exist");
-		}
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+		}),
+	);
 }
 
 /**
@@ -731,92 +730,109 @@ async function ResetPassword(req: Request, h: ResponseToolkit) {
  * note: the user is available from the credentials!
  */
 async function GetMyProfile(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let user = await User.findOne({ _id: CRED._id });
-		let matchObj: any = {
-			userid: user._id,
-		};
-		if (user.tenant) {
-			matchObj.tenant = user.tenant;
-		}
-		let employee: any = await Employee.findOne(matchObj).populate("tenant").lean();
-		if (!employee) {
-			throw new EmpError("NON_LOGIN_TENANT", "You are not tenant");
-		}
-		//let user = await User.findOne({_id: CRED._id}).lean();
-		let ret = { user: user, employee: employee, tenant: employee.tenant };
-		return h.response(ret);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let user = await User.findOne({ _id: CRED._id }, { __v: 0 });
+			let matchObj: any = {
+				userid: user._id,
+			};
+			if (user.tenant) {
+				matchObj.tenant = user.tenant;
+			}
+			let employee: any = await Employee.findOne(matchObj, { __v: 0 }).populate("tenant").lean();
+			if (!employee) {
+				throw new EmpError("NON_LOGIN_TENANT", "You are not tenant");
+			}
+			//let user = await User.findOne({_id: CRED._id}).lean();
+			let ret = { user: user, employee: employee, tenant: employee.tenant };
+			return ret;
+		}),
+	);
 }
 
-async function RemoveAccount(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	const session = await Mongoose.connection.startSession();
-	const PAYLOAD = req.payload as any;
-	try {
-		session.startTransaction();
-		//TODO: 删除总用户账户时，依据什么数据
-		//TODO: 如何删除单个Employee
-		let tenant = CRED.tenant._id;
-		let account = CRED.user.account;
-		let myGroup = CRED.employee.group;
-		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
-		let accountTobeDeleted = PAYLOAD.account;
+async function RemoveUser(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.withTransaction(async (session) => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			//TODO: 删除总用户账户时，依据什么数据
+			//TODO: 如何删除单个Employee
+			const theSite = (await Site.findOne({}, { password: 1, admins: 1 }, { session })) as SiteType;
+			if (
+				theSite.admins.includes(CRED.user.account) === false ||
+				Crypto.decrypt(theSite.password) !== PLD.password
+			)
+				throw new EmpError("NOT_SITE_ADMIN", "Not site admin or wrong password");
+			let accountTobeDeleted = PLD.account;
 
-		let tenantTobeDeleted = await Tenant.find({owner: accountTobeDeleted}, {name:1}).lean();
-		const tenantIdsTobeDeleted = tenantTobeDeleted.map((x:any)=>x._id);
-		let tmp1 = await Employee.find({account: accountTobeDeleted}, {tenant:1, eid:1}).lean();
-		let tmp2 = await Employee.find({tenant: {$in: tenantIdsTobeDeleted}}, {tenant: 1, eid: 1}).lean();
+			let tenantTobeDeleted = await Tenant.find(
+				{ owner: accountTobeDeleted },
+				{ name: 1 },
+				{ session },
+			).lean();
+			const tenantIdsTobeDeleted = tenantTobeDeleted.map((x: any) => x._id);
+			let tmp1 = await Employee.find(
+				{ account: accountTobeDeleted },
+				{ tenant: 1, eid: 1 },
+				{ session },
+			).lean();
+			let tmp2 = await Employee.find(
+				{ tenant: { $in: tenantIdsTobeDeleted } },
+				{ tenant: 1, eid: 1 },
+				{ session },
+			).lean();
 
-		let tmp3 = tmp1.concat(tmp2);
-		for (let i = 0; i < tmp3.length; i++){
-				await Todo.deleteMany({ tenant: tmp3[i].tenant, doer: tmp3[i].eid }, {session});
-				await Delegation.deleteMany({ tenant: tmp3[i].tenant, delegator: tmp3[i].eid }, {session});
-				await Delegation.deleteMany({ tenant: tmp3[i].tenant, delegatee: tmp3[i].eid}, {session});
+			let tmp3 = tmp1.concat(tmp2);
+			for (let i = 0; i < tmp3.length; i++) {
+				await Todo.deleteMany({ tenant: tmp3[i].tenant, doer: tmp3[i].eid }, { session });
+				await Delegation.deleteMany(
+					{ tenant: tmp3[i].tenant, delegator: tmp3[i].eid },
+					{ session },
+				);
+				await Delegation.deleteMany(
+					{ tenant: tmp3[i].tenant, delegatee: tmp3[i].eid },
+					{ session },
+				);
 
-				await Employee.deleteOne({tenant: tmp3[i].tenant, doer: tmp3[i].eid}, {session});
-		}
-		await Tenant.deleteMany({owner: accountTobeDeleted}, {session});
-		await User.deleteOne({account: accountTobeDeleted}, {session});
-		await EdittingLog.deleteMany({editor: accountTobeDeleted}, {session});
-		await EdittingLog.deleteMany({ tenant: {$in: tenantIdsTobeDeleted}}, {session});
+				await Employee.deleteOne({ tenant: tmp3[i].tenant, doer: tmp3[i].eid }, { session });
+			}
+			await Tenant.deleteMany({ owner: accountTobeDeleted }, { session });
+			await User.deleteOne({ account: accountTobeDeleted }, { session });
+			await EdittingLog.deleteMany({ editor: accountTobeDeleted }, { session });
+			await EdittingLog.deleteMany({ tenant: { $in: tenantIdsTobeDeleted } }, { session });
+			await JoinApplication.deleteMany(
+				{
+					tenant_id: { $in: tenantIdsTobeDeleted.map((x) => x.toString()) },
+				},
+				{ session },
+			);
 
-		
-		await session.commitTransaction();
-			return h.response(`Delete ${PAYLOAD.account} successfully`);
-	} catch (err) {
-		console.error(err);
-		await session.abortTransaction();
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	} finally {
-		await session.endSession();
-	}
-}
+			for (let i = 0; i < tenantIdsTobeDeleted.length; i++) {
+				let tenantId = tenantIdsTobeDeleted[i].toString();
+				/* fs.rmSync(path.join(process.env.EMP_RUNTIME_FOLDER, tenantId), {
+					recursive: true,
+					force: true,
+				}); */
+				fs.rmSync(path.join(process.env.EMP_STATIC_FOLDER, tenantId), {
+					recursive: true,
+					force: true,
+				});
+				fs.rmSync(path.join(process.env.EMP_ATTACHMENT_FOLDER, tenantId), {
+					recursive: true,
+					force: true,
+				});
+			}
 
-async function ProfileConfig(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let user = await User.findById(CRED._id);
-		user.config[MPL.key] = MPL.value;
-		user = await user.save();
-		return h.response(user.config);
-	} catch (err) {
-		console.error(err);
-		return Boom.internal(err.message);
-	}
+			return { deleted: PLD.account };
+		}),
+	);
 }
 
 async function MyOrg(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
 		let tenant_id = CRED.tenant._id.toString();
@@ -830,9 +846,7 @@ async function MyOrg(req: Request, h: ResponseToolkit) {
 		const employee = CRED.employee;
 		const tenant = CRED.tenant;
 		//我所在的tenant是个组织，而且我是管理员
-		tnt.adminorg =
-			tenant.orgmode &&
-			(tenant.owner === me.account || employee.group === "ADMIN");
+		tnt.adminorg = tenant.orgmode && (tenant.owner === me.account || employee.group === "ADMIN");
 		tnt.orgmode = tenant.orgmode;
 		tnt.owner = tenant.owner;
 		if (tenant.orgmode === true) {
@@ -887,124 +901,119 @@ async function MyOrg(req: Request, h: ResponseToolkit) {
 }
 
 async function MyOrgSetOrgmode(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id;
-		let me = await User.findOne({ _id: CRED._id });
-		if (Crypto.decrypt(me.password) != MPL.password) {
-			throw new EmpError("WRONG_PASSWORD", "You are using a wrong password");
-		}
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: tenant_id },
-			{ $set: { orgmode: MPL.orgmode } },
-			{ upsert: false, new: true },
-		);
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const theSite = (await Site.findOne({}, { password: 1, admins: 1 })) as SiteType;
+			if (
+				theSite.admins.includes(CRED.user.account) === false ||
+				Crypto.decrypt(theSite.password) !== PLD.password
+			)
+				throw new EmpError("NOT_SITE_ADMIN", "Not site admin or wrong password");
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: PLD.tenant_id },
+				{ $set: { orgmode: PLD.orgmode } },
+				{ upsert: false, new: true },
+			);
 
-		//我所在的tenant是个组织，而且我是管理员
-		return h.response(tenant.orgmode);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			return tenant.orgmode ? "true" : "false";
+		}),
+	);
 }
 
 async function MyOrgSetRegFree(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id.toString();
-		const { regfree } = MPL;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+			const { regfree } = PLD;
 
-		if (CRED.employee.group !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
+			if (CRED.employee.group !== "ADMIN") {
+				throw new EmpError("NOT_ADMIN", "You are not admin");
+			}
 
-		let tenant = await Tenant.findOneAndUpdate(
-			{
-				_id: tenant_id,
-			},
-			{ $set: { regfree: regfree } },
-			{ upsert: false, new: true },
-		);
+			let tenant = await Tenant.findOneAndUpdate(
+				{
+					_id: tenant_id,
+				},
+				{ $set: { regfree: regfree } },
+				{ upsert: false, new: true },
+			);
 
-		return h.response({ regfree: tenant.regfree });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			return { regfree: tenant.regfree };
+		}),
+	);
 }
 
 async function MyOrgSetAllowEmptyPbo(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id.toString();
-		const { allow } = MPL;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+			const { allow } = PLD;
 
-		if (CRED.employee.group !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
+			if (CRED.employee.group !== "ADMIN") {
+				throw new EmpError("NOT_ADMIN", "You are not admin");
+			}
 
-		let tenant = await Tenant.findOneAndUpdate(
-			{
-				_id: tenant_id,
-			},
-			{ $set: { allowemptypbo: allow ? true : false } },
-			{ upsert: false, new: true },
-		);
+			let tenant = await Tenant.findOneAndUpdate(
+				{
+					_id: tenant_id,
+				},
+				{ $set: { allowemptypbo: allow ? true : false } },
+				{ upsert: false, new: true },
+			);
 
-		return h.response({ allowemptypbo: tenant.allowemptypbo });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			return { allowemptypbo: tenant.allowemptypbo };
+		}),
+	);
 }
 
 async function MyOrgGetSmtp(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id;
-		let tenant = await Tenant.findOne({ _id: tenant_id }).lean();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id;
+			let tenant = await Tenant.findOne({ _id: tenant_id }).lean();
 
-		if (tenant && tenant.smtp && tenant.smtp._id) delete tenant.smtp._id;
+			//if (tenant && tenant.smtp && tenant.smtp._id) delete tenant.smtp._id;
 
-		//我所在的tenant是个组织，而且我是管理员
-		return h.response(tenant.smtp);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			//我所在的tenant是个组织，而且我是管理员
+			return tenant.smtp;
+		}),
+	);
 }
 
 async function MyOrgSetSmtp(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
 
-		if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
-			throw new EmpError("NO_BRUTE", "Please wait a moment");
-		}
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: tenant_id },
-			{ $set: { smtp: MPL.smtp } },
-			{ upsert: false, new: true },
-		);
-		Cache.removeOrgRelatedCache(tenant_id, "SMTP");
+			if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
+				throw new EmpError("NO_BRUTE", "Please wait a moment");
+			}
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: tenant_id },
+				{ $set: { smtp: PLD.smtp } },
+				{ upsert: false, new: true },
+			);
+			Cache.removeOrgRelatedCache(tenant_id, "SMTP");
 
-		//我所在的tenant是个组织，而且我是管理员
-		return h.response(tenant.smtp);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			//我所在的tenant是个组织，而且我是管理员
+			return tenant.smtp;
+		}),
+	);
 }
 
 async function GenerateNewJoinCode(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
 		expect(CRED.employee.group).to.equal("ADMIN");
@@ -1023,13 +1032,13 @@ async function GenerateNewJoinCode(req: Request, h: ResponseToolkit) {
 }
 
 async function OrgSetJoinCode(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
 		expect(CRED.employee.group).to.equal("ADMIN");
 		let tenant_id = CRED.tenant._id.toString();
 		let jcKey = "jcode-" + tenant_id;
-		let newJoinCode = MPL.joincode;
+		let newJoinCode = PLD.joincode;
 		await redisClient.set(jcKey, newJoinCode);
 		await redisClient.expire(jcKey, 24 * 60 * 60);
 		await redisClient.set(newJoinCode, tenant_id);
@@ -1043,138 +1052,131 @@ async function OrgSetJoinCode(req: Request, h: ResponseToolkit) {
 }
 
 async function OrgSetName(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: CRED.tenant._id },
-			{ $set: { name: MPL.orgname } },
-			{ new: true },
-		);
-		return h.response({ orgname: tenant.name });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: CRED.tenant._id },
+				{ $set: { name: PLD.orgname } },
+				{ new: true },
+			);
+			return { orgname: tenant.name };
+		}),
+	);
 }
 
 async function OrgSetTheme(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: CRED.tenant._id },
-			{ $set: { css: MPL.css } },
-			{ new: true },
-		);
-		return h.response({ css: tenant.css });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: CRED.tenant._id },
+				{ $set: { css: PLD.css } },
+				{ new: true },
+			);
+			return { css: tenant.css };
+		}),
+	);
 }
 
 async function OrgSetTimezone(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
 
-		Cache.removeOrgRelatedCache(CRED.tenant._id, "OTZ");
+			Cache.removeOrgRelatedCache(CRED.tenant._id, "OTZ");
 
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: CRED.tenant._id },
-			{ $set: { timezone: MPL.timezone } },
-			{ new: true },
-		);
-		return h.response({ timezone: tenant.timezone });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: CRED.tenant._id },
+				{ $set: { timezone: PLD.timezone } },
+				{ new: true },
+			);
+			return { timezone: tenant.timezone };
+		}),
+	);
 }
 
 async function OrgSetTags(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		let tmp = MPL.tags;
-		let cleanedTags = Tools.cleanupDelimiteredString(tmp);
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: CRED.tenant._id },
-			{ $set: { tags: cleanedTags } },
-			{ new: true },
-		);
-		console.log("Remove Org Related Cahce: ORGTAGS");
-		await Cache.removeOrgRelatedCache(tenant_id, "ORGTAGS");
-		return h.response({ tags: tenant.tags });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			let tmp = PLD.tags;
+			let cleanedTags = Tools.cleanupDelimiteredString(tmp);
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: CRED.tenant._id },
+				{ $set: { tags: cleanedTags } },
+				{ new: true },
+			);
+			console.log("Remove Org Related Cahce: ORGTAGS");
+			await Cache.removeOrgRelatedCache(tenant_id, "ORGTAGS");
+			return { tags: tenant.tags };
+		}),
+	);
 }
 
 async function OrgSetOrgChartAdminPds(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		let tmp = MPL.orgchartadminpds;
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: CRED.tenant._id },
-			{ $set: { orgchartadminpds: tmp } },
-			{ new: true },
-		);
-		return h.response({ orgchartadminpds: tenant.orgchartadminpds });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			let tmp = PLD.orgchartadminpds;
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: CRED.tenant._id },
+				{ $set: { orgchartadminpds: tmp } },
+				{ new: true },
+			);
+			return { orgchartadminpds: tenant.orgchartadminpds };
+		}),
+	);
 }
 
 async function OrgChartAdminAdd(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
 
-		const ret = await OrgChartAdmin.findOneAndUpdate(
-			{ tenant: tenant_id },
-			{ $addToSet: { admins: MPL.eid } },
-			{ upsert: true, new: true },
-		);
-		return h.response(await addCNtoUserIds(tenant_id, ret.admins));
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+			const ret = await OrgChartAdmin.findOneAndUpdate(
+				{ tenant: tenant_id },
+				{ $addToSet: { admins: PLD.eid } },
+				{ upsert: true, new: true },
+			);
+			return await addCNtoUserIds(tenant_id, ret.admins);
+		}),
+	);
 }
 
 async function OrgChartAdminDel(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		const ret = await OrgChartAdmin.findOneAndUpdate(
-			{ tenant: tenant_id },
-			{ $pull: { admins: MPL.eid } },
-			{ new: true },
-		);
-		return h.response(await addCNtoUserIds(tenant_id, ret.admins));
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			const ret = await OrgChartAdmin.findOneAndUpdate(
+				{ tenant: tenant_id },
+				{ $pull: { admins: PLD.eid } },
+				{ new: true },
+			);
+			return await addCNtoUserIds(tenant_id, ret.admins);
+		}),
+	);
 }
 
 const addCNtoUserIds = async (tenant: string, eids: string[]) => {
@@ -1190,9 +1192,9 @@ const addCNtoUserIds = async (tenant: string, eids: string[]) => {
 };
 
 async function OrgChartAdminList(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
 	try {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as any;
 		expect(CRED.employee.group).to.equal("ADMIN");
 		let tenant_id = CRED.tenant._id.toString();
 		const ret = await OrgChartAdmin.findOne({ tenant: tenant_id }, { _id: 0, admins: 1 });
@@ -1204,166 +1206,221 @@ async function OrgChartAdminList(req: Request, h: ResponseToolkit) {
 }
 
 async function OrgSetMenu(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
 
-		let tenant = await Tenant.findOneAndUpdate(
-			{ _id: tenant_id },
-			{ $set: { menu: MPL.menu } },
-			{ new: true },
-		);
-		return h.response({ menu: tenant.menu });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+			let tenant = await Tenant.findOneAndUpdate(
+				{ _id: tenant_id },
+				{ $set: { menu: PLD.menu } },
+				{ new: true },
+			);
+			return { menu: tenant.menu };
+		}),
+	);
 }
 
 async function JoinOrg(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		const authUserId = CRED._id;
-		const joincode = MPL.joincode;
-		let myInfo = await User.findOne({ _id: authUserId });
-		let tenant_id = await redisClient.get(joincode);
-		if (!tenant_id) {
-			throw new EmpError("joincode_not_found_or_expired", "邀请码不存在或已过期");
-		}
-		let theApplication = await JoinApplication.findOne({
-			tenant_id: tenant_id,
-			account: myInfo.account,
-		});
-		if (theApplication) {
-			throw new EmpError("existing_application", "已经申请过了，请勿重复申请");
-		}
-		theApplication = new JoinApplication({
-			tenant_id: tenant_id,
-			account: myInfo.account,
-			user_name: myInfo.username,
-		});
-		theApplication = await theApplication.save();
-		return h.response({ ret: "ok", message: "已申请，请等待组织管理员审批" });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const authUserId = CRED._id;
+			const joincode = PLD.joincode;
+			let myInfo = await User.findOne({ _id: authUserId }, { __v: 0 });
+			let tenant_id = await redisClient.get(joincode);
+			if (!tenant_id) {
+				throw new EmpError("joincode_not_found_or_expired", "邀请码不存在或已过期");
+			}
+			let theApplication = await JoinApplication.findOne(
+				{
+					tenant_id: tenant_id,
+					account: myInfo.account,
+				},
+				{ __v: 0 },
+			);
+			if (theApplication) {
+				throw new EmpError("existing_application", `${myInfo.account}已经申请过了，请勿重复申请`);
+			}
+			theApplication = new JoinApplication({
+				tenant_id: tenant_id,
+				account: myInfo.account,
+				user_name: myInfo.username,
+			});
+			theApplication = await theApplication.save();
+			return { code: "ok", message: `${myInfo.account} 申请成功，请等待组织管理员审批` };
+		}),
+	);
 }
 
 async function ClearJoinApplication(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		const authUserId = CRED._id;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const authUserId = CRED._id;
 
-		expect(CRED.employee.group).to.equal("ADMIN");
-		await JoinApplication.deleteMany({
-			tenant_id: CRED.tenant._id,
-		});
-		return h.response({ ret: "ok" });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+			expect(CRED.employee.group).to.equal("ADMIN");
+			await JoinApplication.deleteMany({
+				tenant_id: CRED.tenant._id.toString(),
+			});
+			return { ret: "ok" };
+		}),
+	);
 }
 
 async function JoinApprove(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	expect(CRED.employee.group).to.equal("ADMIN");
-	let tenant_id = CRED.tenant._id.toString();
-	let my_tenant_id = CRED.tenant._id;
-	const session = await Mongoose.connection.startSession();
-	try {
-		session.startTransaction();
-		let accounts = MPL.accounts;
-		// TODO 这里的组织是当前登录的组织，如果用户切换到别的组织，他就不能进行组织管理了
-		//管理员的tenant id
-		for (let i = 0; i < accounts.length; i++) {
-			await Cache.removeKeyByEid(tenant_id, accounts[i]);
-			if (accounts[i] !== CRED.user.account) {
-				//将用户的tenant id 设置为管理员的tenant id
-				let user = await User.findOneAndUpdate(
-					{ account: accounts[i] },
-					{ $set: { tenant: CRED.tenant._id } },
-					{ session, new: true, upsert: false },
-				);
-				user &&
-					(await Employee.findOneAndUpdate(
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			let my_tenant_id = CRED.tenant._id;
+			let accounts = PLD.accounts;
+			// TODO 这里的组织是当前登录的组织，如果用户切换到别的组织，他就不能进行组织管理了
+			//管理员的tenant id
+			for (let i = 0; i < accounts.length; i++) {
+				await Cache.removeKeyByEid(tenant_id, accounts[i]);
+				if (accounts[i] !== CRED.user.account) {
+					//将用户的tenant id 设置为管理员的tenant id
+					let user = await User.findOneAndUpdate(
+						{ account: accounts[i] },
+						{ $set: { tenant: CRED.tenant._id } },
+						{ new: true, upsert: false },
+					);
+					user &&
+						(await Employee.findOneAndUpdate(
+							{
+								tenant: my_tenant_id,
+								account: accounts[i],
+							},
+							{
+								$set: {
+									userid: user._id,
+									group: "DOER",
+									eid: accounts[i],
+									domain: CRED.tenant.domain,
+									nickname: user.username,
+								},
+							},
+							{ new: true, upsert: true },
+						));
+				} else {
+					let employee = await Employee.findOneAndUpdate(
 						{
 							tenant: my_tenant_id,
 							account: accounts[i],
 						},
 						{
 							$set: {
-								userid: user._id,
-								group: "DOER",
+								userid: CRED.user._id,
+								group: "ADMIN",
 								eid: accounts[i],
 								domain: CRED.tenant.domain,
-								nickname: user.username,
+								nickname: CRED.user.username,
 							},
 						},
-						{ session, new: true, upsert: true },
-					));
-			} else {
-				let employee = await Employee.findOneAndUpdate(
-					{
-						tenant: my_tenant_id,
-						account: accounts[i],
-					},
-					{
-						$set: {
-							userid: CRED.user._id,
-							group: "ADMIN",
-							eid: accounts[i],
-							domain: CRED.tenant.domain,
-							nickname: CRED.user.username,
-						},
-					},
-					{ session, new: true, upsert: true },
-				);
-				await employee.save({ session });
+						{ new: true, upsert: true },
+					);
+					await employee.save();
+				}
 			}
-		}
-		await JoinApplication.deleteMany({ account: { $in: accounts } }, { session });
-		await session.commitTransaction();
-		return h.response({
-			ret: "array",
-			joinapps: await JoinApplication.find(
-				{ tenant_id: my_tenant_id },
-				{ _id: 0, tenant_id: 1, user_name: 1, account: 1 },
-			),
-		});
-	} catch (err) {
-		console.error(err);
-		await session.abortTransaction();
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	} finally {
-		await session.endSession();
-	}
+			await JoinApplication.deleteMany({ account: { $in: accounts } });
+			return {
+				ret: "array",
+				joinapps: await JoinApplication.find(
+					{ tenant_id: my_tenant_id },
+					{ _id: 0, tenant_id: 1, user_name: 1, account: 1 },
+				),
+			};
+		}),
+	);
 }
 
-async function SetMemberGroup(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
-	const session = await Mongoose.connection.startSession();
-	try {
-		session.startTransaction();
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		if (
-			Tools.isEmpty(MPL.eids) ||
-			["ADMIN", "OBSERVER", "DOER"].includes(MPL.member_group) === false
-		) {
-			throw new EmpError("set-member-group-failed", "Email or group must be valid");
-		} else {
-			let eids = MPL.eids;
+async function SetEmployeeGroup(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			if (Tools.isEmpty(PLD.eids) || ["ADMIN", "OBSERVER", "DOER"].includes(PLD.group) === false) {
+				throw new EmpError("set-member-group-failed", "Email or group must be valid");
+			} else {
+				let eids = PLD.eids;
+				await Parser.checkOrgChartAdminAuthorization(CRED);
+				for (let i = 0; i < eids.length; i++) {
+					await Cache.removeKeyByEid(tenant_id, eids[i]);
+					await Employee.findOneAndUpdate(
+						{
+							tenant: tenant_id,
+							eid: eids[i],
+						},
+						{
+							$set: {
+								group: PLD.group,
+							},
+						},
+						{
+							new: true,
+							upsert: true,
+						},
+					);
+				}
+			}
+			return { ret: "done" };
+		}),
+	);
+}
+
+async function SetEmployeePassword(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			await Parser.checkOrgChartAdminAuthorization(CRED);
+			let cryptedPassword = Crypto.encrypt(PLD.set_password_to);
+			for (let i = 0; i < PLD.eids.length; i++) {
+				await Cache.removeKeyByEid(CRED.tenant._id, PLD.eids[i]);
+				let anEmployee = await Employee.findOne(
+					{ tenant: CRED.tenant._id, eid: PLD.eids[i] },
+					{ account: 1 },
+				);
+				await User.findOneAndUpdate(
+					{ account: anEmployee.account },
+					{ $set: { password: cryptedPassword } },
+				);
+			}
+			return { ret: "done" };
+		}),
+	);
+}
+
+async function RemoveEmployees(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+
+			let eids = PLD.eids;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 			for (let i = 0; i < eids.length; i++) {
-				await Cache.removeKeyByEid(tenant_id, eids[i]);
+				let anEmployee = await Employee.findOne(
+					{
+						tenant: tenant_id,
+						eid: eids[i],
+					},
+					{ account: 1 },
+				);
+				let personalTenant = await Tenant.findOne({ owner: anEmployee.account }, { __v: 0 });
 				await Employee.findOneAndUpdate(
 					{
 						tenant: tenant_id,
@@ -1371,141 +1428,54 @@ async function SetMemberGroup(req: Request, h: ResponseToolkit) {
 					},
 					{
 						$set: {
-							group: MPL.member_group,
+							tenant: personalTenant._id,
 						},
-					},
-					{
-						new: true,
-						upsert: true,
-						session,
 					},
 				);
 			}
-		}
-		await session.commitTransaction();
-		return h.response({ ret: "done" });
-	} catch (err) {
-		console.error(err);
-		await session.abortTransaction();
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	} finally {
-		await session.endSession();
-	}
-}
-
-async function SetMemberPassword(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
-	try {
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		await Parser.checkOrgChartAdminAuthorization(CRED);
-		let cryptedPassword = Crypto.encrypt(MPL.set_password_to);
-		for (let i = 0; i < MPL.eids.length; i++) {
-			await Cache.removeKeyByEid(CRED.tenant._id, MPL.eids[i]);
-			let anEmployee = await Employee.findOne(
-				{ tenant: CRED.tenant._id, eid: MPL.eids[i] },
-				{ account: 1 },
-			);
-			await User.findOneAndUpdate(
-				{ account: anEmployee.account },
-				{ $set: { password: cryptedPassword } },
-			);
-		}
-		return h.response({ ret: "done" });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
-}
-
-async function RemoveMembers(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
-	const session = await Mongoose.connection.startSession();
-	try {
-		session.startTransaction();
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-
-		let eids = MPL.eids;
-		await Parser.checkOrgChartAdminAuthorization(CRED);
-		for (let i = 0; i < eids.length; i++) {
-			let anEmployee = await Employee.findOne(
-				{
-					tenant: tenant_id,
-					eid: eids[i],
-				},
-				{ account: 1 },
-			);
-			let personalTenant = await Tenant.findOne({ owner: anEmployee.account });
-			await Employee.findOneAndUpdate(
-				{
-					tenant: tenant_id,
-					eid: eids[i],
-				},
-				{
-					$set: {
-						tenant: personalTenant._id,
-					},
-				},
-				{ session },
-			);
-		}
-		await OrgChart.deleteMany({ tenant: CRED.tenant._id, eid: { $in: eids } });
-		await session.commitTransaction();
-		return h.response({ ret: "done" });
-	} catch (err) {
-		console.error(err);
-		await session.abortTransaction();
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	} finally {
-		await session.endSession();
-	}
+			await OrgChart.deleteMany({ tenant: CRED.tenant._id, eid: { $in: eids } });
+			return { ret: "done" };
+		}),
+	);
 }
 
 async function QuitOrg(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id.toString();
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
 
-		let personalTenant = await Tenant.findOne({ owner: CRED.user.account });
-		let myPorfile = await User.findOneAndUpdate(
-			{ _id: CRED._id },
-			{
-				$set: { tenant: personalTenant._id },
-			},
-			{ new: false },
-		);
-		return h.response({ ret: "ok", joinorg: true });
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+			let personalTenant = await Tenant.findOne({ owner: CRED.user.account }, { __v: 0 });
+			let myPorfile = await User.findOneAndUpdate(
+				{ _id: CRED._id },
+				{
+					$set: { tenant: personalTenant._id },
+				},
+				{ new: false },
+			);
+			return { ret: "ok", joinorg: true };
+		}),
+	);
 }
 
-async function GetOrgMembers(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id.toString();
+async function GetOrgEmployees(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
 
-		const adminorg = await Parser.checkOrgChartAdminAuthorization(CRED);
-		let members = await Employee.find(
-			{ tenant: tenant_id, active: true },
-			{ _id: 0, eid: 1, nickname: 1, group: 1 },
-		);
-		let ret = { ret: "ok", adminorg: adminorg, members };
-		return h.response(ret);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
+			const adminorg = await Parser.checkOrgChartAdminAuthorization(CRED);
+			let filter = { tenant: tenant_id, active: PLD.active };
+			if (PLD.eids) filter["eid"] = { $in: PLD.eids };
+			return await Employee.find(filter, { _id: 0, eid: 1, nickname: 1, group: 1 });
+		}),
+	);
 }
 
 async function Avatar(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	let tenant = req.params.tenant;
 	let user_eid = req.params.eid;
@@ -1514,62 +1484,57 @@ async function Avatar(req: Request, h: ResponseToolkit) {
 	}
 
 	let avatarinfo = await Cache.getUserAvatarInfo(tenant, user_eid);
-	return (
-		h
-			.response(fs.createReadStream(avatarinfo.path))
-			.header("Content-Type", avatarinfo.media)
-			.header("X-Content-Type-Options", "nosniff")
-			.header("Cache-Control", "max-age=600, private")
-			//.header("Cache-Control", "no-cache, private")
-			.header("ETag", avatarinfo.etag)
-	);
+	return h
+		.response(fs.createReadStream(avatarinfo.path))
+		.header("Content-Type", avatarinfo.media)
+		.header("X-Content-Type-Options", "nosniff")
+		.header("Cache-Control", "max-age=600, private")
+		.header("ETag", avatarinfo.etag);
 }
 
 async function UploadAvatar(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		const payload = MPL;
-		payload.tenant = CRED.tenant._id;
-		payload.user_id = CRED._id;
-		payload.eid = CRED.employee.eid;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const payload = PLD;
+			payload.tenant = CRED.tenant._id;
+			payload.user_id = CRED._id;
+			payload.eid = CRED.employee.eid;
 
-		await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
-		let media = payload.avatar.headers["content-type"];
-		let avatarFilePath = path.join(Tools.getTenantFolders(payload.tenant).avatar, payload.eid);
-		fs.renameSync(payload.avatar.path, avatarFilePath);
-		let avatarinfo = {
-			path: avatarFilePath,
-			media: media,
-			etag: new Date().getTime().toString(),
-		};
-		await Employee.findOneAndUpdate(
-			{ tenant: payload.tenant, eid: payload.eid },
-			{ $set: { avatarinfo: avatarinfo } },
-			{ new: true },
-		);
-		await Cache.removeKeyByEid(payload.tenant, payload.eid, "AVATAR");
-		return { result: "Upload Avatar OK" };
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
+			let media = payload.avatar.headers["content-type"];
+			let avatarFilePath = path.join(Tools.getTenantFolders(payload.tenant).avatar, payload.eid);
+			fs.renameSync(payload.avatar.path, avatarFilePath);
+			let avatarinfo = {
+				path: avatarFilePath,
+				media: media,
+				etag: new Date().getTime().toString(),
+			};
+			await Employee.findOneAndUpdate(
+				{ tenant: payload.tenant, eid: payload.eid },
+				{ $set: { avatarinfo: avatarinfo } },
+				{ new: true },
+			);
+			await Cache.removeKeyByEid(payload.tenant, payload.eid, "AVATAR");
+			return { result: "Upload Avatar OK" };
+		}),
+	);
 }
 
 async function AvatarViewer(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
 	try {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as any;
 		let tenant_id = CRED.tenant._id.toString();
 
-		let employee = await Employee.findOne({tenant: tenant_id, eid: req.params.eid);
+		let employee = await Employee.findOne({ tenant: tenant_id, eid: req.params.eid });
 
-		let tmp = employee.avatar.split("|");
-		let serverId = tmp[0];
-		let contentType = tmp[1];
+		let contentType = employee.avatarinfo.media;
 
-		let filepondfile = Tools.getPondServerFile(tenant_id, employee.eid, serverId);
-		var readStream = fs.createReadStream(filepondfile.fullPath);
+		//let filepondfile = Tools.getPondServerFile(tenant_id, employee.eid, serverId);
+		//var readStream = fs.createReadStream(filepondfile.fullPath);
+		var readStream = fs.createReadStream(employee.avatarinfo.path);
 		return h
 			.response(readStream)
 			.header("cache-control", "no-cache")
@@ -1578,7 +1543,7 @@ async function AvatarViewer(req: Request, h: ResponseToolkit) {
 			.header("Content-Type", contentType)
 			.header(
 				"Content-Disposition",
-				`attachment;filename="${encodeURIComponent(filepondfile.fileName)}"`,
+				`attachment;filename="${encodeURIComponent(path.basename(employee.avatarinfo.path))}"`,
 			);
 	} catch (err) {
 		console.error(err);
@@ -1587,13 +1552,13 @@ async function AvatarViewer(req: Request, h: ResponseToolkit) {
 }
 
 async function SendInvitation(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
 		expect(CRED.employee.group).to.equal("ADMIN");
 		let tenant_id = CRED.tenant._id.toString();
 
-		let eids = MPL.eids;
+		let eids = PLD.eids;
 		let frontendUrl = Tools.getFrontEndUrl();
 		if (CRED.tenant.hasemail) {
 			for (let i = 0; i < eids.length; i++) {
@@ -1605,7 +1570,7 @@ async function SendInvitation(req: Request, h: ResponseToolkit) {
 				await Engine.sendNexts([
 					{
 						CMD: "CMD_sendSystemMail",
-						recipients: process.env.TEST_RECIPIENTS || email,
+						recipients: [process.env.TEST_RECIPIENTS || email],
 						subject: "[EMP] Please register Metatocome",
 						html: Tools.codeToBase64(mailbody),
 					},
@@ -1622,56 +1587,54 @@ async function SendInvitation(req: Request, h: ResponseToolkit) {
 }
 
 async function SetSignatureFile(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id.toString();
-		let pondfiles = MPL.pondfiles;
-		let employee = await Employee.findOneAndUpdate(
-			{ tenant: tenant_id, eid: CRED.employee.eid },
-			{ $set: { signature: pondfiles[0].serverId + "|" + pondfiles[0].contentType } },
-			{ upsert: false, new: true },
-		);
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+			let pondfiles = PLD.pondfiles;
+			let employee = await Employee.findOneAndUpdate(
+				{ tenant: tenant_id, eid: CRED.employee.eid },
+				{ $set: { signature: pondfiles[0].serverId + "|" + pondfiles[0].contentType } },
+				{ upsert: false, new: true },
+			);
 
-		return h.response(employee.signature);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			return employee.signature;
+		}),
+	);
 }
 
 async function removeSignatureFile(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
-	try {
-		let tenant_id = CRED.tenant._id.toString();
-		let eid = MPL.eid;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+			let eid = PLD.eid;
 
-		if (eid && eid !== CRED.employee.eid) {
-			expect(CRED.employee.group).to.equal("ADMIN");
-		}
+			if (eid && eid !== CRED.employee.eid) {
+				expect(CRED.employee.group).to.equal("ADMIN");
+			}
 
-		let employee = await Employee.findOneAndUpdate(
-			{ tenant: tenant_id, eid:eid },
-			{ $set: { signature: "" } },
-			{ upsert: false, new: true },
-		);
+			let employee = await Employee.findOneAndUpdate(
+				{ tenant: tenant_id, eid: eid },
+				{ $set: { signature: "" } },
+				{ upsert: false, new: true },
+			);
 
-		return h.response(employee.signature);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
+			return employee.signature;
+		}),
+	);
 }
 
 async function SignatureViewer(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-		const CRED = req.auth.credentials as any;
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
 	try {
 		let tenant_id = CRED.tenant._id.toString();
 
-		let eid = MPL.eid;
-		let employee = await Employee.findOneAndUpdate({tenant: tenant_id, eid:eid});
+		let eid = PLD.eid;
+		let employee = await Employee.findOne({ tenant: tenant_id, eid: eid });
 
 		let tmp = employee.signature.split("|");
 		if (tmp.length < 2) {
@@ -1695,49 +1658,76 @@ async function SignatureViewer(req: Request, h: ResponseToolkit) {
 	}
 }
 
-async function TenantList(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+async function upgradeTenant(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
-	const { account } = MPL;
-	const tenantList = await Employee.find({
+	let id = PLD.tenantid;
+	let ret = {
+		code: 0,
+		data: true,
+		msg: "",
+	};
+	try {
+		let tenent = await Tenant.findOneAndUpdate(
+			{ _id: id },
+			{ $set: { orgmode: true } },
+			{ new: true },
+		);
+		if (tenent) {
+			ret.msg = "升级成功";
+		} else {
+			ret = {
+				code: 500,
+				data: false,
+				msg: "升级失败",
+			};
+		}
+	} catch (err) {
+		ret = {
+			code: 500,
+			data: false,
+			msg: err.message,
+		};
+	}
+	return h.response(ret);
+}
+
+async function TenantList(req: Request, h: ResponseToolkit) {
+	const PLD = req.payload as any;
+	const CRED = req.auth.credentials as any;
+	const { account } = PLD;
+	const employeeList = await Employee.find({
 		account,
 	})
 		.populate("tenant")
 		.lean();
 	return h.response({
 		code: 0,
-		data: tenantList,
+		data: employeeList.map((x) => {
+			return { id: x.tenant._id, name: (x.tenant as unknown as TenantType).name };
+		}),
 		msg: "操作成功",
 	});
 }
 
 async function SwitchTenant(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
-	const { tenantid, account } = MPL;
-	const tenantList = await Employee.find({ account, active: true }).lean();
-
-	let flag = -1;
-	for (let i = 0; i < tenantList.length; i++) {
-		if (tenantList[i].tenant.toString() === tenantid) {
-			flag = i;
-			break;
-		}
-	}
-	// 判断组织是否存在
-	if (flag == -1) {
-		return h.response({
-			code: 500,
-			data: false,
-			msg: "无法切换到该组织",
-		});
+	const { tenantid, account } = PLD;
+	const employeeInNewTenant = await Employee.findOne({
+		account,
+		active: true,
+		tenant: tenantid,
+	}).lean();
+	if (!employeeInNewTenant) {
+		throw new EmpError("TENANT_NOT_AVAILABLE", "无法切换到该组织");
 	}
 	try {
-		const user = await User.findOneAndUpdate(
+		const user = (await User.findOneAndUpdate(
 			{ account },
 			{ $set: { tenant: new Mongoose.Types.ObjectId(tenantid) } },
 			{ new: true },
-		);
+		)) as UserType;
 		let ret = await buildSessionResponse(user);
 		return h.response(ret);
 	} catch (err) {
@@ -1747,7 +1737,7 @@ async function SwitchTenant(req: Request, h: ResponseToolkit) {
 }
 
 async function TenantDetail(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	const tenant = await Tenant.findById(req.params.tenant_id).lean();
 	return h.response({
@@ -1758,7 +1748,7 @@ async function TenantDetail(req: Request, h: ResponseToolkit) {
 }
 // 处理表结构变化的数据流转工作
 async function handleDateFlow(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	let failNum = 0;
 	let successNum = 0;
@@ -1770,15 +1760,17 @@ async function handleDateFlow(req: Request, h: ResponseToolkit) {
 			msg: "密钥不匹配",
 		});
 	}
+	/*
 	try {
 		//清空旧数据
 		// const delLt = await Employee.deleteMany()
 
 		// 读取旧数据
-		let userList = await User.find();
+		let userList = await User.find({});
 		// 插入到新表
 		for (let i = 0; i < userList.length; i++) {
-			const user = userList[i]._doc;
+			//const user = userList[i]._doc;
+			const user = userList[i];
 			if (
 				user?._id &&
 				user?.tenant &&
@@ -1838,48 +1830,15 @@ async function handleDateFlow(req: Request, h: ResponseToolkit) {
 			data: err,
 		});
 	}
-}
-
-async function upgradeTenant(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	let id = MPL.tenantid;
-	let ret = {
-		code: 0,
-		data: true,
-		msg: "",
-	};
-	try {
-		let tenent = await Tenant.findOneAndUpdate(
-			{ _id: id },
-			{ $set: { orgmode: true } },
-			{ new: true },
-		);
-		if (tenent) {
-			ret.msg = "升级成功";
-		} else {
-			ret = {
-				code: 500,
-				data: false,
-				msg: "升级失败",
-			};
-		}
-	} catch (err) {
-		ret = {
-			code: 500,
-			data: false,
-			msg: err.message,
-		};
-	}
-	return h.response(ret);
+	*/
 }
 
 async function SendSms(req: Request, h: ResponseToolkit) {
-	const MPL = req.payload as any;
+	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	// const tencentcloud = require("tencentcloud-sdk-nodejs")
-	let area = MPL.area;
-	let phone = MPL.phone;
+	let area = PLD.area;
+	let phone = PLD.phone;
 	let regExp = new RegExp("^1[3578]\\d{9}$");
 	if (!regExp.test(phone)) {
 		return h.response({
@@ -1995,6 +1954,7 @@ async function SendSms(req: Request, h: ResponseToolkit) {
 export default {
 	RegisterUser,
 	CheckFreeReg,
+	CheckAccountAvailability,
 	SetMyUserName,
 	SetMyPassword,
 	Evc,
@@ -2009,8 +1969,7 @@ export default {
 	ResetPasswordRequest,
 	ResetPassword,
 	GetMyProfile,
-	RemoveAccount,
-	ProfileConfig,
+	RemoveUser,
 	MyOrg,
 	MyOrgSetOrgmode,
 	MyOrgGetSmtp,
@@ -2028,11 +1987,11 @@ export default {
 	JoinOrg,
 	ClearJoinApplication,
 	JoinApprove,
-	SetMemberGroup,
-	SetMemberPassword,
-	RemoveMembers,
+	SetEmployeeGroup,
+	SetEmployeePassword,
+	RemoveEmployees,
 	QuitOrg,
-	GetOrgMembers,
+	GetOrgEmployees,
 	Avatar,
 	UploadAvatar,
 	AvatarViewer,

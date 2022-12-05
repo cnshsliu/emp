@@ -273,7 +273,7 @@ const Tools = {
 	): PondFileInfoOnServerType {
 		let attachment_folder = Tools.getTenantFolders(tenant).attachment;
 		return {
-			tenant: tenant,
+			tenant: tenant.toString(),
 			eid: eid,
 			fileName: serverId,
 			folder: path.join(attachment_folder, eid),
@@ -311,7 +311,7 @@ const Tools = {
 	getTemplateCoverPath: function (tenant: string, tplid: string) {
 		return path.join(this.getTenantFolders(tenant).cover, `${tplid}.png`);
 	},
-	getTenantFolders: function (tenant: string) {
+	getTenantFolders: function (tenant: string | Types.ObjectId) {
 		tenant = tenant.toString();
 		return {
 			runtime: path.join(process.env.EMP_RUNTIME_FOLDER, tenant),

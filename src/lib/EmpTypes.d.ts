@@ -51,6 +51,16 @@ export type NextDef = {
 	route?: string;
 };
 
+export type MailNextDef = {
+	////  for send mail
+	CMD: string;
+	tenant?: string | Types.ObjectId;
+	recipients?: string[];
+	subject?: string;
+	html?: string;
+	////////////////////////
+};
+
 export type ProcNextParams = {
 	tenant: string | Types.ObjectId;
 	teamid: string;

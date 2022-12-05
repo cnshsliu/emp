@@ -51,6 +51,7 @@
     "hapi-auth-wishhouse": "^0.1.1",
     "hapi-custom-auth": "^0.1.0",
     "hapi-plugin-websocket": "^2.3.8",
+    "hapi-swagger": "^15.0.0",
     "jimp": "^0.16.1",
     "joi": "^17.5.0",
     "lru-cache": "^7.10.1",
