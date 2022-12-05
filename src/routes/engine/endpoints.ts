@@ -2153,11 +2153,13 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						action: Joi.string().required(),
-						eid: Joi.string().required(),
-						from: Joi.string().required(),
-						to: Joi.string().required(),
-						cn: Joi.string().required(),
+						action: Joi.string()
+							.required()
+							.valid("delete", "copy", "move")
+							.description("delete/copy/move"),
+						eid: Joi.string().required().description("EID of the employee"),
+						from: Joi.string().required().description("move from which OU(department)"),
+						to: Joi.string().required().description("move to which OU(department)"),
 					},
 					validator: Joi,
 				},
