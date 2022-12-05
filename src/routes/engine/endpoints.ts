@@ -3010,6 +3010,25 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/wecombot/todo/del",
+			handler: Handlers.WecomBotForTodoDel,
+			config: {
+				description: "Delete wecom bot entry",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/template/set/cover",
 			handler: Handlers.TemplateSetCover,
 			config: {
