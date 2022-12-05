@@ -3205,14 +3205,13 @@ async function TeamDeleteRoleMembers(req: Request, h: ResponseToolkit) {
 				throw new EmpError("NO_PERM", "You don't have permission to change this team");
 			let tmap = team.tmap;
 			let role = PLD.role;
-			let members = PLD.members;
 
 			let touched = false;
 			if (tmap[role]) {
 				tmap[role] = tmap[role].filter((aMember: { eid: string }) => {
 					let tobeDelete = false;
-					for (let i = 0; i < members.length; i++) {
-						if (members[i]["eid"] === aMember.eid) {
+					for (let i = 0; i < PLD.eids.length; i++) {
+						if (PLD.eids[i] === aMember.eid) {
 							tobeDelete = true;
 							break;
 						}
@@ -3797,7 +3796,20 @@ async function OrgChartCopyOrMoveStaff(req: Request, h: ResponseToolkit) {
 					throw new EmpError("ORGCHART_ENTRY_KEEP_LAST_ONE", "This is the last entry");
 				}
 			} else {
-				let newEntry = new OrgChart({ tenant: tenant, ou: to, cn: cn, eid: eid, position: [] });
+				const existingEntry = await OrgChart.findOne({ tenant, ou: from, eid: eid });
+				if (!existingEntry) {
+					throw new EmpError(
+						"ORGCHART_ENTRY_DOES_NOT_EXIST",
+						`Orgchart entry: eid ${eid} in ou ${from} does not exist`,
+					);
+				}
+				let newEntry = new OrgChart({
+					tenant: tenant,
+					ou: to,
+					cn: existingEntry.cn,
+					eid: eid,
+					position: [],
+				});
 				await newEntry.save();
 
 				if (action === "move") {
@@ -4031,7 +4043,7 @@ async function OrgChartExpand(req: Request, h: ResponseToolkit) {
 				selfOu = await OrgChart.findOne({ tenant: tenant, ou: /root/, eid: "OU---" }, { __v: 0 });
 			else selfOu = await OrgChart.findOne({ tenant: tenant, ou: ou, eid: "OU---" }, { __v: 0 });
 			if (include) {
-				ret.push(selfOu);
+				selfOu && ret.push(selfOu);
 			}
 
 			//先放人
@@ -5509,6 +5521,25 @@ async function WecomBotForTodoSet(req: Request, h: ResponseToolkit) {
 	);
 }
 
+async function WecomBotForTodoDel(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant = CRED.tenant._id;
+			let myEid = CRED.employee.eid;
+			let wecomBot = await Webhook.deleteOne({
+				tenant: tenant,
+				owner: myEid,
+				webhook: "wecombot_todo",
+				tplid: PLD.tplid,
+			});
+			return { message: `Wecombot for tplid ${PLD.tplid} deleted` };
+		}),
+	);
+}
+
 async function TemplateSetCover(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
@@ -6662,6 +6693,7 @@ export default {
 	WorkflowAttachmentViewer,
 	FormulaEval,
 	WecomBotForTodoSet,
+	WecomBotForTodoDel,
 	WecomBotForTodoGet,
 	CellsRead,
 	NodeRerun,
