@@ -3,5 +3,5 @@ mtc.localhost {
 }
 
 emp.localhost {
-	reverse_proxy http://localhost:5008
+ 	reverse_proxy http://124.223.94.157:5008
 }

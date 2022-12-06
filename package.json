@@ -22,7 +22,8 @@
     "test": "lab --assert @hapi/code",
     "start": "shx cp ./README.md src/docs && node build/index.js",
     "debug": "node --inspect build/index.js",
-    "docs": "./node_modules/docker/docker -w -I -x node_modules -s yes -o ../raindrop-pages "
+    "docs": "./node_modules/docker/docker -w -I -x node_modules -s yes -o ../raindrop-pages ",
+    "dev.tsc.win": "node ./node_modules/typescript/bin/tsc --watch -p ."
   },
   "dependencies": {
     "@hapi/accept": "^5.0.2",
@@ -51,6 +52,7 @@
     "hapi-auth-wishhouse": "^0.1.1",
     "hapi-custom-auth": "^0.1.0",
     "hapi-plugin-websocket": "^2.3.8",
+    "hapi-swagger": "^15.0.0",
     "jimp": "^0.16.1",
     "joi": "^17.5.0",
     "lru-cache": "^7.10.1",
@@ -80,7 +82,12 @@
   "devDependencies": {
     "@types/hapi__hapi": "^20.0.10",
     "@types/jsonwebtoken": "^8.5.8",
+    "@types/lodash": "^4.14.189",
+    "@types/marked": "^4.0.7",
     "@types/node": "^17.0.31",
+    "@types/node-cron": "^3.0.6",
+    "@types/sanitize-html": "^2.6.2",
+    "@types/sprintf-js": "^1.1.2",
     "@zerollup/ts-transform-paths": "^1.7.18",
     "prettier": "^2.6.2",
     "ttypescript": "^1.5.13",

@@ -12,13 +12,15 @@
  * ## Imports
  *
  */
+import { Request, ResponseToolkit } from "@hapi/hapi";
 import ServerConfig from "../../secret/keep_secret";
 //the authentication package
 import Jwt from "jsonwebtoken";
 import { redisClient } from "../database/redis";
 //mongoose user object
-import User from "../database/models/User";
-import LoginTenant from "../database/models/LoginTenant"
+import { User } from "../database/models/User";
+import { Tenant } from "../database/models/Tenant";
+import { Employee } from "../database/models/Employee";
 
 // private key for signing
 const JwtAuth = {
@@ -38,7 +40,7 @@ const JwtAuth = {
 	 * and checked here to prevent re-use
 	 *
 	 */
-	validate: async function (decoded, request, h) {
+	validate: async function (decoded: Record<string, any>, request: Request, h: ResponseToolkit) {
 		//POST方式，在headers中放了 authorization
 		let authorization = request.headers.authorization;
 		if (!authorization) {
@@ -52,42 +54,37 @@ const JwtAuth = {
 		let result = { isValid: false, credentials: credentials };
 		let credentials_redisKey = `cred_${decoded.id}`;
 		let cachedCredential = await redisClient.get(credentials_redisKey);
-		let user_id = "";
+		cachedCredential = null;
+		let account = "";
 		if (cachedCredential) {
 			result = { isValid: true, credentials: JSON.parse(cachedCredential) };
-			user_id = result.credentials._id;
+			account = result.credentials.user.account;
 		}
 		if (await redisClient.get("cred_force_reload")) {
 			console.log("Found FORCE RELOAD, force reload from database then");
 			cachedCredential = null;
 		}
 		if (!cachedCredential) {
-			let user = await User.findOne({ _id: decoded.id, active: true })
-			const userId = user._id;
-			let matchObj: any = {
-				userid: userId.toString()
-			};
-			if(user.tenant){
-				matchObj.tenant = user.tenant
-			}
-			const loginTenant = await LoginTenant.findOne(
-				matchObj
-			).populate("tenant", {
-				_id: 1,
-				name: 1,
-				owner: 1,
-			}).lean();
-			if (user) {
+			const user = await User.findOne({ _id: decoded.id }).lean();
+			const tenant = user ? await Tenant.findOne({ _id: user.tenant }).lean() : null;
+			const employee = user
+				? await Employee.findOne({
+						userid: user._id,
+						tenant: tenant._id,
+						active: true,
+				  }).lean()
+				: null;
+			if (user && employee && tenant) {
 				result = {
 					isValid: true,
 					credentials: {
 						_id: user._id,
-						username: user.username,
-						email: user.email,
-						tenant: loginTenant?.tenant,
+						tenant: tenant,
+						user: user,
+						employee: employee,
 					},
 				};
-				user_id = user._id;
+				account = user.account;
 				await redisClient.set(credentials_redisKey, JSON.stringify(result.credentials));
 				await redisClient.expire(credentials_redisKey, 10 * 60 * 60);
 				console.log("Refreshed credentials from database successfully");
@@ -98,12 +95,15 @@ const JwtAuth = {
 			}
 		}
 
+		////////////////////////////////////////////////////////////////////////////////
+		// 即便检查正确,也要再进一步坚持是否被管理员踢出(inblack list)
+		////////////////////////////////////////////////////////////////////////////////
 		if (result.isValid) {
 			//does redis have the token
-			let inblack = await redisClient.get(`logout_${user_id}`);
+			let inblack = await redisClient.get(`logout_${account}`);
 			//oops - it's been blacklisted - sorry
 			if (inblack) {
-				console.log(`invalid: authorizaiton token inblack, user ${user_id} logged out?`);
+				console.log(`invalid: authorizaiton token inblack, user ${account} logged out?`);
 				result = {
 					isValid: false,
 					credentials: {},
@@ -114,17 +114,15 @@ const JwtAuth = {
 	},
 
 	// create token
-	createToken: function (obj) {
+	createToken: function (obj: string | Buffer | object) {
 		return Jwt.sign(obj, JwtAuth.privateKey);
 	},
-	verify: function (tk, options, callback) {
-		let id = options.id;
-		let expirein = options.expirein;
+	verify: function (tk: string, options: any, callback: any) {
 		return Jwt.verify(tk, JwtAuth.privateKey);
 	},
 
 	// set jwt auth strategy
-	setJwtStrategy: async function (server) {
+	setJwtStrategy: async function (server: any) {
 		server.auth.strategy("token", "jwt", {
 			key: JwtAuth.privateKey,
 			validate: JwtAuth.validate,

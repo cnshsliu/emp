@@ -1,3 +1,8 @@
+import { UserType } from "../database/models/User";
+import { EmployeeType } from "../database/models/Employee";
+import { TenantType } from "../database/models/Tenant";
+import { Types } from "mongoose";
+
 export type AvatarInfo = {
 	path: string;
 	media: string;
@@ -30,22 +35,34 @@ export type ErrResponse = {
 
 export type NextDef = {
 	CMD: string;
-	tenant: string;
+	tenant: string | Types.ObjectId;
 	teamid: string;
-	from_nodeid: string;
-	from_workid: string;
+	from_nodeid?: string;
+	from_workid?: string;
 	tplid: string;
 	wfid: string;
-	selector: string;
-	byroute: string;
+	selector?: string;
+	byroute?: string;
 	rehearsal: boolean;
 	starter: string;
-	round: number;
+	wfstarter?: string;
+	round?: number;
 	parallel_id?: string;
+	route?: string;
+};
+
+export type MailNextDef = {
+	////  for send mail
+	CMD: string;
+	tenant?: string | Types.ObjectId;
+	recipients?: string[];
+	subject?: string;
+	html?: string;
+	////////////////////////
 };
 
 export type ProcNextParams = {
-	tenant: string;
+	tenant: string | Types.ObjectId;
 	teamid: string;
 	tplid: string;
 	wfid: string;
@@ -150,8 +167,31 @@ export type workFullInfo = {
 };
 
 export type DoerInfo = {
-	uid: string;
+	eid: string;
 	cn: string;
 };
 
-export type DoersArray = [DoerInfo];
+export type MtcCredentials = {
+	user: UserType;
+	employee: EmployeeType;
+	tenant: TenantType;
+};
+
+export type PondFileInfoFromPayloadType = {
+	author: string;
+	forKey: string;
+	serverId?: string;
+	contentType: string;
+	realName: string;
+	stepid: string;
+};
+
+export type PondFileInfoOnServerType = {
+	tenant: string;
+	eid: string;
+	fileName: string;
+	folder: string;
+	fullPath: string;
+};
+
+export type DoersArray = DoerInfo[];
