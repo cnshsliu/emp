@@ -86,10 +86,10 @@ const Mailman = {
 	 * Set email to user so they can reset their password
 	 *
 	 */
-	sendMailResetPassword: function (user, vrfCode) {
+	sendMailResetPassword: function (email, vrfCode) {
 		var url = Tools.getFrontEndUrl();
 		var from = ServerConfig.email.smtp.from;
-		var mailbody = `<center><p>A reset password requested has been made for ${user.email} </p> 
+		var mailbody = `<center><p>A reset password requested has been made for ${email} </p> 
 The verification code is<br/>
 <font style="font-size:36px">${vrfCode}</font>
 <br/>
@@ -99,7 +99,7 @@ which is only valid in 15 minutes
 		Mailman.mail(
 			ServerConfig.email.smtp,
 			from,
-			user.email,
+			email,
 			"",
 			"",
 			`Reset Password Verification Code: ${vrfCode}`,

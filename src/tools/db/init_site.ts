@@ -1,5 +1,5 @@
 import { Mongoose, dbConnect } from "../../database/mongodb";
-import Site from "../../database/models/Site";
+import { Site, SiteType } from "../../database/models/Site";
 
 dbConnect().then(async () => {
 	console.log("Db connected");

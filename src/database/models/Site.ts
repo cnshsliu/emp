@@ -1,11 +1,11 @@
 "use strict";
-import Mongoose from "mongoose";
+import { Schema, InferSchemaType, model, HydratedDocument } from "mongoose";
 
-const schema = new Mongoose.Schema(
+const schema = new Schema(
 	{
 		name: { type: String, required: true },
 		siteid: { type: String, required: true, index: true, unique: true },
-		owner: { type: String, required: true },
+		admins: [String],
 		mode: { type: String, required: true },
 		password: { type: String, required: true },
 		users: [String],
@@ -15,4 +15,5 @@ const schema = new Mongoose.Schema(
 	},
 	{ versionKey: false },
 );
-export default Mongoose.model("Site", schema);
+export type SiteType = HydratedDocument<InferSchemaType<typeof schema>>;
+export const Site = model("Site", schema);

@@ -67,7 +67,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						tplid: Joi.string().required(),
-						starters: Joi.string(),
+						starters: Joi.string().trim(),
 						expr: Joi.string(),
 					},
 					validator: Joi,
@@ -88,7 +88,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						tplid: Joi.string().required(),
-						starters: Joi.string(),
+						starters: Joi.string().trim(),
 					},
 					validator: Joi,
 				},
@@ -211,7 +211,8 @@ const internals = {
 					}).unknown(),
 					payload: {
 						doc: Joi.string().required(),
-						tplid: Joi.string().optional(),
+						tplid: Joi.string().required(),
+						desc: Joi.string().optional().allow(""),
 						forceupdate: Joi.boolean().optional().default(false),
 						lastUpdatedAt: Joi.string(),
 						bwid: Joi.string().optional(),
@@ -412,8 +413,8 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/template/delete/byname",
-			handler: Handlers.TemplateDeleteByName,
+			path: "/template/delete/by/tplid",
+			handler: Handlers.TemplateDeleteByTplid,
 			config: {
 				description: "Delete a template by name(tplid)",
 				notes: "Delete a template by name(tplid)",
@@ -861,7 +862,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						wfid: Joi.string().required(),
-						attachments: Joi.any(),
+						attachments: Joi.array().items({ serverId: Joi.string().required() }),
 					},
 					validator: Joi,
 				},
@@ -1080,26 +1081,6 @@ const internals = {
 			},
 		},
 
-		/* {
-      method: "POST",
-      path: "/workflow/list",
-      handler: Handlers.WorkflowList,
-      config: {
-        description: "Get a list of workflow with criteria",
-        tags: ["api"],
-        auth: "token",
-        validate: {
-          headers: Joi.object({
-            Authorization: Joi.string(),
-          }).unknown(),
-          payload: {
-            filter: Joi.object().required().description("fitler definition"),
-            sortdef: Joi.object().optional().description("sort definition"),
-          },
-          validator: Joi,
-        },
-      },
-    }, */
 		{
 			method: "POST",
 			path: "/workflow/search",
@@ -1216,23 +1197,6 @@ const internals = {
 						wfid: Joi.string().required(),
 						workid: Joi.string().optional(),
 					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/workflow/upgrade",
-			handler: Handlers.WorkflowUpgrade,
-			config: {
-				description: "get workflow kvars",
-				tags: ["api"],
-				auth: "token",
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					payload: {},
 					validator: Joi,
 				},
 			},
@@ -1476,6 +1440,7 @@ const internals = {
 						limit: Joi.number().optional(),
 						reason: Joi.string().optional(),
 						showpostponed: Joi.boolean().optional().default(false),
+						debug: Joi.boolean().optional().default(false),
 					},
 					validator: Joi,
 				},
@@ -1495,13 +1460,31 @@ const internals = {
 					}).unknown(),
 					payload: {
 						doer: Joi.string().required(),
-						todoid: Joi.string().optional().description("must provide if nodeid is absent"),
-						wfid: Joi.string()
-							.optional()
-							.description("wfid and nodeid must provide if workid is absent"),
-						nodeid: Joi.string()
-							.optional()
-							.description("wfid and nodeid must provide if workid is absent"),
+						todoid: Joi.string().required(),
+						route: Joi.string().optional(),
+						comment: Joi.string().optional().allow(""),
+						kvars: Joi.object().optional(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/work/do/bynode",
+			handler: Handlers.WorkDoByNode,
+			config: {
+				description: "Do a work by nodeid",
+				auth: "token",
+				tags: ["api"],
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						doer: Joi.string().required(),
+						wfid: Joi.string().required(),
+						nodeid: Joi.string().required(),
 						route: Joi.string().optional(),
 						comment: Joi.string().optional().allow(""),
 						kvars: Joi.object().optional(),
@@ -1698,13 +1681,6 @@ const internals = {
 			config: {
 				description: "demo api return some data",
 				tags: ["api"],
-				auth: "token",
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					validator: Joi,
-				},
 			},
 		},
 		{
@@ -1871,8 +1847,7 @@ const internals = {
 						teamid: Joi.string().required(),
 						role: Joi.string().trim().required(),
 						members: Joi.array().items({
-							uid: Joi.string().required(),
-							cn: Joi.string().required(),
+							eid: Joi.string().required(),
 						}),
 					},
 					validator: Joi,
@@ -1898,8 +1873,7 @@ const internals = {
 						role: Joi.string().trim().required(),
 						members: Joi.array()
 							.items({
-								uid: Joi.string().required(),
-								cn: Joi.string().required(),
+								eid: Joi.string().required(),
 							})
 							.optional()
 							.default([]),
@@ -1946,10 +1920,7 @@ const internals = {
 					payload: {
 						teamid: Joi.string().required(),
 						role: Joi.string().trim().required(),
-						members: Joi.array().items({
-							uid: Joi.string().required(),
-							cn: Joi.string().required(),
-						}),
+						eids: Joi.array().items(Joi.string()),
 					},
 					validator: Joi,
 				},
@@ -2004,7 +1975,7 @@ const internals = {
 			path: "/workflow/docallback",
 			handler: Handlers.DoCallback,
 			config: {
-				description: "Callback to a WAIT worknode",
+				description: "Callback to a ASYNC script node",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2012,8 +1983,8 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						cbp: Joi.object().required(),
-						route: Joi.string().required(),
+						cbpid: Joi.string().required(),
+						decision: Joi.string().required(),
 						kvars: Joi.object().optional(),
 						atts: Joi.object().optional(),
 					},
@@ -2064,7 +2035,7 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/member/sysperm",
+			path: "/employee/sysperm",
 			handler: Handlers.MemberSystemPerm,
 			config: {
 				description: "Check org member's permission on object",
@@ -2075,7 +2046,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						member_email: Joi.string().required(),
+						eid: Joi.string().required(),
 						what: Joi.string().required(),
 						instance_id: Joi.string().optional(),
 						op: Joi.string().required(),
@@ -2086,11 +2057,11 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/orgchart/import",
-			handler: Handlers.OrgChartImport,
+			path: "/orgchart/import/excel",
+			handler: Handlers.OrgChartImportExcel,
 			config: {
-				description: "Import CSV orgchart",
-				tags: ["api"],
+				description: "Import orgchart from Excel",
+				tags: ["api", "orgchart"],
 				auth: "token",
 				payload: {
 					maxBytes: 1024 * 1024 * 100,
@@ -2105,7 +2076,6 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						password: Joi.string().required(),
 						default_user_password: Joi.string().required(),
 						file: Joi.any().meta({ swaggerType: "file" }),
 					},
@@ -2119,7 +2089,7 @@ const internals = {
 			handler: Handlers.OrgChartAddOrDeleteEntry,
 			config: {
 				description: "Add CSV orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2140,7 +2110,7 @@ const internals = {
 			handler: Handlers.OrgChartExport,
 			config: {
 				description: "Export CSV orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2159,7 +2129,7 @@ const internals = {
 			handler: Handlers.OrgChartGetAllOUs,
 			config: {
 				description: "Get all ous from orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2175,19 +2145,21 @@ const internals = {
 			path: "/orgchart/copyormovestaff",
 			handler: Handlers.OrgChartCopyOrMoveStaff,
 			config: {
-				description: "Copy or move staff",
-				tags: ["api"],
+				description: "Copy or move staff from one OU to another OU",
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						action: Joi.string().required(),
-						uid: Joi.string().required(),
-						from: Joi.string().required(),
-						to: Joi.string().required(),
-						cn: Joi.string().required(),
+						action: Joi.string()
+							.required()
+							.valid("delete", "copy", "move")
+							.description("delete/copy/move"),
+						eid: Joi.string().required().description("EID of the employee"),
+						from: Joi.string().required().description("move from which OU(department)"),
+						to: Joi.string().required().description("move to which OU(department)"),
 					},
 					validator: Joi,
 				},
@@ -2199,14 +2171,14 @@ const internals = {
 			handler: Handlers.OrgChartGetLeader,
 			config: {
 				description: "Check leader within orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						uid: Joi.string().required(),
+						eid: Joi.string().required(),
 						leader: Joi.string().required(),
 					},
 					validator: Joi,
@@ -2219,7 +2191,7 @@ const internals = {
 			handler: Handlers.OrgChartListOu,
 			config: {
 				description: "List out OU",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2239,7 +2211,7 @@ const internals = {
 			handler: Handlers.OrgChartGetStaff,
 			config: {
 				description: "Check staffs within orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2258,7 +2230,7 @@ const internals = {
 			handler: Handlers.OrgChartList,
 			config: {
 				description: "List out orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2275,7 +2247,7 @@ const internals = {
 			handler: Handlers.OrgChartExpand,
 			config: {
 				description: "expand one level of orgchart",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2295,7 +2267,7 @@ const internals = {
 			handler: Handlers.OrgChartAddPosition,
 			config: {
 				description: "Add positon to an org user",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2315,7 +2287,7 @@ const internals = {
 			handler: Handlers.OrgChartDelPosition,
 			config: {
 				description: "Delete a position from an org user",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2331,17 +2303,23 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/orgchart/authorized/admin",
+			path: "/orgchart/check/is/authorized/admin",
 			handler: Handlers.OrgChartAuthorizedAdmin,
 			config: {
 				description: "Delete a position from an org user",
-				tags: ["api"],
+				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
-					payload: {},
+					payload: {
+						eid: Joi.string()
+							.optional()
+							.description(
+								"if absent, check for current user, if present, check this eid while the current user must be one of orgchart admins",
+							),
+					},
 					validator: Joi,
 				},
 			},
@@ -2885,6 +2863,9 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
+					payload: {
+						serverId: Joi.string().required(),
+					},
 					validator: Joi,
 				},
 			},
@@ -3022,6 +3003,25 @@ const internals = {
 					payload: {
 						tplid: Joi.string(),
 						key: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/wecombot/todo/del",
+			handler: Handlers.WecomBotForTodoDel,
+			config: {
+				description: "Delete wecom bot entry",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string(),
 					},
 					validator: Joi,
 				},
@@ -3680,6 +3680,26 @@ const internals = {
 					payload: {
 						tplid: Joi.string().required().allow(""),
 						wfid: Joi.string().required().allow(""),
+					},
+					validator: Joi,
+				},
+			},
+		},
+
+		{
+			method: "POST",
+			path: "/print/log",
+			handler: Handlers.PrintLog,
+			config: {
+				description: "Get process data",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						msg: Joi.string().required().allow(""),
 					},
 					validator: Joi,
 				},
