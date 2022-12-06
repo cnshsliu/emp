@@ -31,7 +31,7 @@ import Cache from "../../lib/Cache";
 import { getOpenId } from './api'
 import { exit, listenerCount } from "process";
 import LoginTenant from "../../database/models/LoginTenant";
-import * as tencentcloud from "tencentcloud-sdk-nodejs"
+import * as tencentcloud from "tencentcloud-sdk-nodejs";
 
 const buildSessionResponse = async (user) => {
 	let token = JwtAuth.createToken({ id: user._id });
@@ -2033,8 +2033,8 @@ async function SendSms(req, h) {
 		* 你也可以直接在代码中写死密钥对，但是小心不要将代码复制、上传或者分享给他人，
 		* 以免泄露密钥对危及你的财产安全。
 		* SecretId、SecretKey 查询: https://console.cloud.tencent.com/cam/capi */
-			secretId: "AKIDlKdfQu85lAKDpAD9pDKAjYBZhZBXfYCa",
-			secretKey: "A4i6GAnAIAm8E5h390bw1rRkna8QSDj0",
+			secretId: ServerConfig.smsConfig.secretId,
+			secretKey: ServerConfig.smsConfig.secretKey,
 		},
 		/* 必填：地域信息，可以直接填写字符串ap-guangzhou，支持的地域列表参考 https://cloud.tencent.com/document/api/382/52071#.E5.9C.B0.E5.9F.9F.E5.88.97.E8.A1.A8 */
 		region: "ap-guangzhou",
@@ -2068,7 +2068,7 @@ async function SendSms(req, h) {
 	const params = {
 	/* 短信应用ID: 短信SmsSdkAppId在 [短信控制台] 添加应用后生成的实际SmsSdkAppId，示例如1400006666 */
 	// 应用 ID 可前往 [短信控制台](https://console.cloud.tencent.com/smsv2/app-manage) 查看
-	SmsSdkAppId: "1400389753",
+	SmsSdkAppId: ServerConfig.smsConfig.smsSdkAppId,
 	/* 短信签名内容: 使用 UTF-8 编码，必须填写已审核通过的签名 */
 	// 签名信息可前往 [国内短信](https://console.cloud.tencent.com/smsv2/csms-sign) 或 [国际/港澳台短信](https://console.cloud.tencent.com/smsv2/isms-sign) 的签名管理查看
 	SignName: "喜欢屋科技",
