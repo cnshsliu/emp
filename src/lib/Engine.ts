@@ -1,4 +1,6 @@
 import Cheerio from "cheerio";
+import MongoSession from "./MongoSession";
+import { Types, ClientSession } from "mongoose";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
 import cronEngine from "node-cron";
 import Wreck from "@hapi/wreck";
@@ -8,23 +10,24 @@ import { marked as Marked } from "marked";
 import Parser from "./Parser";
 import Mutex from "./Mutex";
 import moment from "moment";
-import Template from "../database/models/Template";
-import User from "../database/models/User";
+import { Template } from "../database/models/Template";
+import { User } from "../database/models/User";
+import { Employee, EmployeeType } from "../database/models/Employee";
 import List from "../database/models/List";
-import Workflow from "../database/models/Workflow";
+import { Workflow, WorkflowType } from "../database/models/Workflow";
 import Handlebars from "handlebars";
 import SanitizeHtml from "sanitize-html";
-import Todo from "../database/models/Todo";
-import Crontab from "../database/models/Crontab";
+import { Todo, TodoType } from "../database/models/Todo";
+import { Crontab, CrontabType } from "../database/models/Crontab";
 import Webhook from "../database/models/Webhook";
 import Work from "../database/models/Work";
 import Route from "../database/models/Route";
 import CbPoint from "../database/models/CbPoint";
-import Comment from "../database/models/Comment";
+import { Comment, CommentType } from "../database/models/Comment";
 import Thumb from "../database/models/Thumb";
 import Delegation from "../database/models/Delegation";
 import KVar from "../database/models/KVar";
-import Cell from "../database/models/Cell";
+import { Cell } from "../database/models/Cell";
 import TempSubset from "../database/models/TempSubset";
 import DelayTimer from "../database/models/DelayTimer";
 import KsTpl from "../database/models/KsTpl";
@@ -49,6 +52,7 @@ import { redisClient, redisConnect } from "../database/redis";
 
 import type {
 	NextDef,
+	MailNextDef,
 	ProcNextParams,
 	ErrorReturn,
 	histroyTodoEntry,
@@ -57,7 +61,7 @@ import type {
 	ActionDef,
 	SmtpInfo,
 } from "./EmpTypes";
-const asyncFilter = async (arr, predicate) => {
+const asyncFilter = async (arr: Array<any>, predicate: any) => {
 	const results = await Promise.all(arr.map(predicate));
 
 	return arr.filter((_v, index) => results[index]);
@@ -88,7 +92,7 @@ let checkingTimer = false;
 
 const podium = new Podium();
 const Client: any = {};
-const callYarkNodeWorker = function (msg) {
+const callYarkNodeWorker = function (msg: object) {
 	msg = JSON.parse(JSON.stringify(msg));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(path.dirname(__filename) + "/worker/YarkNodeWorker.js", {
@@ -125,7 +129,7 @@ const callYarkNodeWorker = function (msg) {
 
 //
 // msg: {endpoint: URL,data: JSON}
-const callWebApiPosterWorker = async function (msg) {
+const callWebApiPosterWorker = async function (msg: object) {
 	msg = JSON.parse(JSON.stringify(msg));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(path.dirname(__filename) + "/worker/WebApiPosterWorker.js", {
@@ -140,7 +144,7 @@ const callWebApiPosterWorker = async function (msg) {
 	});
 };
 
-const callSendMailWorker = async function (msg) {
+const callSendMailWorker = async function (msg: object) {
 	try {
 		msg = JSON.parse(JSON.stringify(msg));
 		return new Promise((resolve, reject) => {
@@ -169,8 +173,8 @@ const callSendMailWorker = async function (msg) {
  * @param {function} fn function to be run
  * @param {context} context
  */
-const once = function (fn, context) {
-	var result;
+const once = function (fn: any, context: any) {
+	var result: any;
 
 	return function () {
 		if (fn) {
@@ -207,7 +211,7 @@ const serverInit = async function () {
 	]);
 };
 
-const sendNexts = async function (nexts) {
+const sendNexts = async function (nexts: Array<NextDef> | Array<MailNextDef>) {
 	if (isMainThread) {
 		for (let i = 0; i < nexts.length; i++) {
 			if (nexts[i].tenant && typeof nexts[i].tenant !== "string") {
@@ -280,25 +284,21 @@ Client.clientInit = async function () {
 	);
 };
 
-const cleanupFaultCrons = async function () {
-	let crons = await Crontab.find();
-	for (let i = 0; i < crons.length; i++) {
-		let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
-		if (tmp.length !== 5 || cronEngine.validate(crons[i].expr) === false) {
-			await stopCronTask(crons[i]._id);
-			await Crontab.deleteOne({ _id: crons[i]._id });
-		}
-	}
-};
-
 const rescheduleCrons = async function () {
 	try {
-		await cleanupFaultCrons();
-		let crons = await Crontab.find({ scheduled: false });
+		let crons = await Crontab.find({}, { __v: 0 });
+		for (let i = 0; i < crons.length; i++) {
+			let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
+			if (tmp.length !== 5 || cronEngine.validate(crons[i].expr) === false) {
+				await stopCronTask(crons[i]._id.toString());
+				await Crontab.deleteOne({ _id: crons[i]._id });
+			}
+		}
+		crons = await Crontab.find({ scheduled: false }, { __v: 0 });
 		for (let i = 0; i < crons.length; i++) {
 			if (cronEngine.validate(crons[i].expr) === true) {
-				if (crontabsMap[crons[i]._id]) {
-					await stopCronTask(crons[i]._id);
+				if (crontabsMap[crons[i]._id.toString()]) {
+					await stopCronTask(crons[i]._id.toString());
 				}
 				await scheduleCron(crons[i]);
 				await Crontab.updateOne({ _id: crons[i]._id }, { $set: { scheduled: true } });
@@ -308,7 +308,7 @@ const rescheduleCrons = async function () {
 	}
 };
 
-const startWorkflowByCron = async (cron) => {
+const startWorkflowByCron = async (cron: CrontabType) => {
 	let doers = await getDoer(
 		cron.tenant,
 		"", //Team id
@@ -320,11 +320,11 @@ const startWorkflowByCron = async (cron) => {
 		false,
 	); //
 	console.log("Cron Start Workflow for ", doers.length, " people");
-	let emails = doers.map((x) => x.uid);
-	await __batchStartWorkflow(cron.tenant, cron.tplid, emails, "Cron");
+	let eids = doers.map((x) => x.eid);
+	await __batchStartWorkflow(cron.tenant, cron.tplid, eids, "Cron");
 };
 
-const dispatchWorkByCron = async (cron) => {
+const dispatchWorkByCron = async (cron: CrontabType) => {
 	let todoObj = JSON.parse(cron.extra);
 	console.log("dispatch Croned Task", JSON.stringify(todoObj));
 	//如果运行中的工作流进程已不存在，则删掉crontab
@@ -357,32 +357,42 @@ const dispatchWorkByCron = async (cron) => {
 	}
 };
 
-const startBatchWorkflow = async (tenant, starters, tplid, directorEmail) => {
+const startBatchWorkflow = async (
+	tenant: string,
+	starters: string,
+	tplid: string,
+	directorEid: string,
+) => {
 	let doers = await getDoer(
 		tenant,
 		"", //Team id
 		starters, //PDS
-		directorEmail,
+		directorEid,
 		null,
 		null, //expalinPDS 没有workflow实例
 		null, //kvarString
 		false,
 	); //
-	let directorCN = await Cache.getUserName(tenant, directorEmail, "startBatchWorkflow");
+	let directorCN = await Cache.getUserName(tenant, directorEid, "startBatchWorkflow");
 	console.log(directorCN, " start Workflow for ", doers.length, " people");
-	let emails = doers.map((x) => x.uid);
-	await __batchStartWorkflow(tenant, tplid, emails, directorCN);
+	let eids = doers.map((x) => x.eid);
+	await __batchStartWorkflow(tenant, tplid, eids, directorCN);
 };
-const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
-	for (let i = 0; i < emails.length; i++) {
+const __batchStartWorkflow = async (
+	tenant: string | Types.ObjectId,
+	tplid: string,
+	eids: string[],
+	sender: string,
+) => {
+	for (let i = 0; i < eids.length; i++) {
 		let processTitle =
-			(await Cache.getUserName(tenant, emails[i], "__batchStartWorkflow")) + ": " + tplid;
+			(await Cache.getUserName(tenant, eids[i], "__batchStartWorkflow")) + ": " + tplid;
 		let msgToSend = {
 			CMD: "CMD_startWorkflow",
 			rehearsal: false,
 			tenant: tenant,
 			tplid: tplid,
-			starter: emails[i],
+			starter: eids[i],
 			pbo: [],
 			teamid: "",
 			wfid: IdGenerator(),
@@ -399,7 +409,7 @@ const __batchStartWorkflow = async (tenant, tplid, emails, sender) => {
 	}
 };
 
-const scheduleCron = async (cron) => {
+const scheduleCron = async (cron: CrontabType) => {
 	switch (cron.method) {
 		case "STARTWORKFLOW":
 			console.log(
@@ -428,21 +438,38 @@ const scheduleCron = async (cron) => {
 			timezone: "Asia/Shanghai",
 		},
 	);
-	crontabsMap[cron._id] = task;
+	crontabsMap[cron._id.toString()] = task;
 };
 
-const stopCronTask = async function (cronId) {
+const stopCronTask = async function (cronId: string | Types.ObjectId) {
 	try {
-		let my_job = crontabsMap[cronId];
+		const theKey = typeof cronId === "string" ? cronId : cronId.toString();
+		let my_job = crontabsMap[theKey];
 		my_job && my_job.stop();
 	} catch (e) {
 		console.error(e);
 	}
 };
 
-const runScheduled = async function (obj, isCron = false) {
+const runScheduled = async function (
+	obj: {
+		tenant: string | Types.ObjectId;
+		tplid: string;
+		teamid: string;
+		wfid: string;
+		nodeid: string;
+		workid: string;
+		round?: number;
+	},
+	isCron = false,
+) {
 	//打开对应的Workflow
-	let wf = await RCL.getWorkflow({ tenant: obj.tenant, wfid: obj.wfid }, "Engine.runScheduled");
+	await RCL.resetCache(
+		{ tenant: obj.tenant, wfid: obj.wfid },
+		"Engine.runScheduled",
+		RCL.CACHE_ELEVEL_REDIS,
+	);
+	let wf = await Workflow.findOne({ tenant: obj.tenant, wfid: obj.wfid }, { __v: 0 });
 	if (!wf) throw new EmpError("WORKFLOW_NOT_FOUND", "Workflow does not exist");
 	if (wf.status !== "ST_RUN") {
 		throw new EmpError("WF_STATUS_NOT_ST_RUN", "Workflow status is not ST_RUN");
@@ -491,29 +518,28 @@ const runScheduled = async function (obj, isCron = false) {
 /**
  * doWork = async() 执行一个工作项
  *
- * @param {...} doWork = asynctenant -
- * @param {...} doer - 工作者
- * @param {...} workid - 工作编号, optional, 如提供，按workid查节点，如未提供，按nodeid查节点
- * @param {...} wfid - 工作流编号
- * @param {...} nodeid - 节点编号
- * @param {...} route - 路由
- * @param {...} kvars - 携带变量
+ * doWork = asynctenant -
+ * doer - 工作者
+ * workid - 工作编号, optional, 如提供，按workid查节点，如未提供，按nodeid查节点
+ * wfid - 工作流编号
+ * nodeid - 节点编号
+ * route - 路由
+ * kvars - 携带变量
  *
- * @return {...}
+ *
  */
 const doWork = async function (
-	email,
-	todoid,
-	tenant,
-	doer,
-	wfid,
-	nodeid,
-	userDecision,
-	kvarsFromBrowserInput,
-	comment,
+	myEid: string,
+	todoid: string,
+	tenant: string,
+	doer: string,
+	wfid: string,
+	userDecision: string,
+	kvarsFromBrowserInput: object,
+	comment: string,
+	nodeid?: string,
 ) {
-	//workid, 如提供，按workid查节点，如未提供，按nodeid查节点
-	let fact_email = email;
+	let fact_eid = myEid;
 	let todo_filter = {
 		tenant: tenant,
 		doer: doer, //此时，如果是rehearsal，是演练者
@@ -522,22 +548,28 @@ const doWork = async function (
 		wfstatus: "ST_RUN",
 	};
 	//找到该Todo数据库对象
-	let todo = await Todo.findOne(todo_filter);
-	if (!SystemPermController.hasPerm(fact_email, "work", todo, "update"))
-		throw new EmpError("NO_PERM", "You don't have permission to modify this work");
-
+	let todo = (await Todo.findOne(todo_filter, { __v: 0 })) as TodoType;
 	if (Tools.isEmpty(todo)) {
-		console.error("Todo ", nodeid, todoid, "not found, see following filter");
+		console.error(
+			`Todo "${nodeid ? nodeid : todoid}" ${nodeid ? "" : todoid}, not found, see following filter`,
+		);
 		console.error(todo_filter);
 		//return { error: "Todo Not Found" };
-		throw new EmpError(
-			"WORK_RUNNING_NOT_EXIST",
-			`Doable work ${nodeid}, ${todoid} ${todo_filter} not found`,
-		);
+		throw new EmpError("WORK_RUNNING_NOT_EXIST", `Doable work ${todoid} ${todo_filter} not found`);
 	}
+	//TODO: cache
+	const fact_employee = (await Employee.findOne(
+		{
+			tenant: tenant,
+			eid: fact_eid,
+		},
+		{ __v: 0 },
+	)) as EmployeeType;
+	if (!SystemPermController.hasPerm(fact_employee, "work", todo, "update"))
+		throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 
 	//此时，是真正的用户
-	let fact_doer = await getWorkDoer(tenant, todo, email);
+	let fact_doer = await getWorkDoer(tenant, todo, myEid);
 	if (fact_doer === "NOT_YOUR_REHEARSAL") {
 		throw new EmpError("NOT_YOUR_REHEARSAL", "Not your rehearsal");
 	} else if (fact_doer === "NO_PERM_TO_DO") {
@@ -548,7 +580,6 @@ const doWork = async function (
 		tenant,
 		todo,
 		fact_doer,
-		wfid,
 		todo.workid,
 		userDecision,
 		kvarsFromBrowserInput,
@@ -556,27 +587,36 @@ const doWork = async function (
 	);
 };
 
-const hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
+const hasPermForWork = async function (
+	tenant_id: string | Types.ObjectId,
+	myEid: string,
+	doerEid: string,
+) {
 	let hasPerm = false;
-	if (doerEmail === myEmail) {
+	if (doerEid === myEid) {
 		hasPerm = true;
 	} else {
-		if ((await Cache.getMyGroup(myEmail)) === "ADMIN") {
-			//如果我是管理员，则只要doerEmail是我的组织成员之一，即返回真
-			let doerUser = await User.findOne({
-				email: doerEmail,
-				tenant: tenant_id,
-			});
-			if (doerUser) {
+		if ((await Cache.getEmployeeGroup(tenant_id, myEid)) === "ADMIN") {
+			//如果我是管理员，则只要doerEid是我的组织成员之一，即返回真
+			let doerEmployee = await Employee.findOne(
+				{
+					email: doerEid,
+					tenant: tenant_id,
+				},
+				{ __v: 0 },
+			);
+			if (doerEmployee) {
 				hasPerm = true;
+			} else {
+				throw new EmpError("USER_NOT_FOUND", `${doerEmployee} does not exist in your tenant`);
 			}
 		} else {
-			//否则，doerEmail当前有委托给我，则返回真
-			let delegationToMe = await delegationToMeToday(tenant_id, myEmail);
+			//否则，doerEid当前有委托给我，则返回真
+			let delegationToMe = await delegationToMeToday(tenant_id, myEid);
 
 			let delegators = [];
 			delegators = delegationToMe.map((x) => x.delegator);
-			if (delegators.includes(doerEmail)) {
+			if (delegators.includes(doerEid)) {
 				hasPerm = true;
 			}
 		}
@@ -584,13 +624,13 @@ const hasPermForWork = async function (tenant_id, myEmail, doerEmail) {
 	return hasPerm;
 };
 
-const getWorkDoer = async function (tenant, work, currentUser) {
+const getWorkDoer = async function (tenant: string, work: TodoType, currentUserEid: string) {
 	if (work.rehearsal) {
-		if (work.wfstarter === currentUser) return work.doer;
+		if (work.wfstarter === currentUserEid) return work.doer;
 		else return "NOT_YOUR_REHEARSAL";
 	} else {
-		if (currentUser !== work.doer) {
-			let hasPerm = await hasPermForWork(tenant, currentUser, work.doer);
+		if (currentUserEid !== work.doer) {
+			let hasPerm = await hasPermForWork(tenant, currentUserEid, work.doer);
 			if (!hasPerm) {
 				return "NO_PERM_TO_DO";
 			}
@@ -601,23 +641,14 @@ const getWorkDoer = async function (tenant, work, currentUser) {
 
 /**
  * 完成一个Todo
- *
- * @param {...} todo -
- * @param {...} doer -
- * @param {...} workid -
- * @param {...} route -
- * @param {...} kvarsFromBrowserInput -
- *
- * @return {...}
  */
 const __doneTodo = async function (
 	tenant: string,
-	todo: any,
+	todo: TodoType,
 	doer: string,
-	wfid: string,
 	workid: string,
 	userDecision: string,
-	kvarsFromBrowserInput: any,
+	kvarsFromBrowserInput: object,
 	comment: string,
 ) {
 	let logMsg = "";
@@ -626,20 +657,10 @@ const __doneTodo = async function (
 			? JSON.parse(kvarsFromBrowserInput)
 			: {};
 	let isoNow = Tools.toISOString(new Date());
-	let nodeid = todo.nodeid;
-	if (Tools.isEmpty(todo)) {
-		throw new EmpError("WORK_NOT_EXIST", "Todo not exist", {
-			wfid,
-			nodeid,
-			workid: todo.workid,
-			todoid: todo.todoid,
-			status: todo.status,
-		});
-	}
 	if (Tools.isEmpty(todo.wfid)) {
 		throw new EmpError("WORK_WFID_IS_EMPTY", "Todo wfid is empty", {
-			wfid,
-			nodeid,
+			wfid: todo.wfid,
+			nodeid: todo.nodeid,
 			workid: todo.workid,
 			status: todo.status,
 		});
@@ -653,8 +674,8 @@ const __doneTodo = async function (
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.__doneTodo");
 	if (Tools.isEmpty(wf.wftitle)) {
 		throw new EmpError("WORK_WFTITLE_IS_EMPTY", "Todo wftitle is empty unexpectedly", {
-			wfid,
-			nodeid,
+			wfid: todo.wfid,
+			nodeid: todo.nodeid,
 			workid: todo.workid,
 			todoid: todo.todoid,
 			status: todo.status,
@@ -696,7 +717,10 @@ const __doneTodo = async function (
 	let sameWorkTodos = null;
 	//记录所有参与人共同作用的最后选择
 	let workDecision = userDecision ? userDecision : "";
-	sameWorkTodos = await Todo.find({ tenant: tenant, wfid: todo.wfid, workid: todo.workid });
+	sameWorkTodos = await Todo.find(
+		{ tenant: tenant, wfid: todo.wfid, workid: todo.workid },
+		{ __v: 0 },
+	);
 	if (sameWorkTodos.length === 1) {
 		completeFlag = CF.ONE_DOER; //can done worknode
 		workDecision = userDecision;
@@ -785,7 +809,7 @@ const __doneTodo = async function (
 	workDecision = workDecision ? workDecision : "";
 	log(
 		tenant,
-		wfid,
+		todo.wfid,
 		`[DoTask] [${todo.title}] [${todo.tplid}] [${doer}] [${userDecision}] [${workDecision}] [${completeFlag}] [${CFNameMap[completeFlag]}]`,
 	);
 
@@ -838,8 +862,8 @@ const __doneTodo = async function (
 		workNode.attr("decision", workDecision);
 		workNode.attr("doneat", isoNow);
 		//place todo decision into kvarsFromBrowserInput;
-		kvarsFromBrowserInput["$decision_" + nodeid] = {
-			name: "$decision_" + nodeid,
+		kvarsFromBrowserInput["$decision_" + todo.nodeid] = {
+			name: "$decision_" + todo.nodeid,
 			value: workDecision,
 		};
 		//////////////////////////////////////////////////
@@ -886,7 +910,7 @@ const __doneTodo = async function (
 				let kvarsForScript = await Parser.userGetVars(
 					tenant,
 					"EMP", //系统，no checkVisiForWhom, 因此，脚本中可以使用visi控制的所有参数
-					wfid,
+					todo.wfid,
 					Const.FOR_WHOLE_PROCESS, //整个工作流
 					[],
 					[],
@@ -916,7 +940,6 @@ const __doneTodo = async function (
 					//console.log(pdsResolvedForScript);
 					codeRetString = await runCode(
 						tenant, //tenant
-						Tools.getEmailDomain(wf.starter), //Tenant Domain
 						wf.tplid,
 						wf.wfid,
 						wf.starter,
@@ -943,7 +966,7 @@ const __doneTodo = async function (
 				}
 				//Get a clean KVAR array
 				//Script运行结束后，下面这些vars不需要被记录在节点上
-				delete codeRetObj["RET"];
+				//delete codeRetObj["RET"];
 				delete codeRetObj["USE_TEAM"];
 				delete codeRetObj["INNER_TEAM"];
 
@@ -951,8 +974,8 @@ const __doneTodo = async function (
 				//直接忽略掉脚本中的Return, 而是使用用户的 userChoice来决定流程流向
 				if (codeRetDecision !== "DEFAULT" && codeRetDecision !== "undefined") {
 					workResultRoute = codeRetDecision;
-					codeRetObj["$decision_" + nodeid] = {
-						name: "$decision_" + nodeid,
+					codeRetObj["$decision_" + todo.nodeid] = {
+						name: "$decision_" + todo.nodeid,
 						value: codeRetDecision,
 					};
 				}
@@ -961,7 +984,7 @@ const __doneTodo = async function (
 						tenant,
 						todo.round,
 						wf.wfid,
-						nodeid,
+						todo.nodeid,
 						workid,
 						codeRetObj,
 						"EMP",
@@ -980,7 +1003,7 @@ const __doneTodo = async function (
 				wfid: todo.wfid,
 				tpRoot: tpRoot,
 				wfRoot: wfRoot,
-				this_nodeid: nodeid,
+				this_nodeid: todo.nodeid,
 				this_workid: todo.workid,
 				decision: workResultRoute, //用户所做的选择
 				nexts: nexts, //TODO: 在这里处理关键逻辑
@@ -989,7 +1012,7 @@ const __doneTodo = async function (
 				starter: wf.starter,
 			});
 			console.log(
-				`From ${nodeid} by ${workResultRoute} to ${JSON.stringify(
+				`From ${todo.nodeid} by ${workResultRoute} to ${JSON.stringify(
 					nexts.map((x) => x.selector),
 					null,
 					2,
@@ -1080,10 +1103,16 @@ const __doneTodo = async function (
 		sendCCMessage(
 			tenant,
 			cced,
-			`[MTC cc]: Task ${todo.title} done by ${await Cache.getUserName(todo.tenant, todo.doer)}.`,
+			`[MTC cc]: Task ${todo.title} done by ${await Cache.getUserName(
+				todo.tenant.toString(),
+				todo.doer,
+			)}.`,
 			`Task </BR><B><a href="${frontendUrl}/work/${todo.todoid}">${
 				todo.title
-			}</a></B></BR> was done by ${await Cache.getUserName(todo.tenant, todo.doer)}  </BR>
+			}</a></B></BR> was done by ${await Cache.getUserName(
+				todo.tenant.toString(),
+				todo.doer,
+			)}  </BR>
 </BR></BR>In workflow process:
 <a href="${frontendUrl}/workflow/${wf.wfid}">${wf.wfid}</a>`,
 			wf.rehearsal,
@@ -1198,7 +1227,15 @@ const __doneTodo = async function (
 		).then();
 	}
 
-	return { workid: todo.workid, todoid: todo.todoid, status: todo.status, doneat: todo.doneat };
+	return {
+		workid: todo.workid,
+		todoid: todo.todoid,
+		nodeid: todo.nodeid,
+		tplid: wf.tplid,
+		wfid: todo.wfid,
+		status: todo.status,
+		doneat: todo.doneat,
+	};
 };
 
 const procWeComBot = async function (
@@ -1220,12 +1257,15 @@ const procWeComBot = async function (
 				{ _id: 0, author: 1 },
 			);
 			//找名字固定为 wecombots_tpl的且内容包含当前tplid的列表
-			let wecomBot = await List.findOne({
-				tenant: tenant,
-				author: template.author,
-				name: "wecombots_tpl",
-				entries: { $elemMatch: { key: wf.tplid } },
-			}).select({
+			let wecomBot = await List.findOne(
+				{
+					tenant: tenant,
+					author: template.author,
+					name: "wecombots_tpl",
+					entries: { $elemMatch: { key: wf.tplid } },
+				},
+				{ __v: 0 },
+			).select({
 				// 从列表中过滤当前tplid
 				entries: {
 					$elemMatch: { key: wf.tplid },
@@ -1334,7 +1374,7 @@ const setPeopleFromContent = async function (
 	emailDomainReferenceUser,
 	content,
 	people,
-	emails,
+	eids,
 ) {
 	let tmp = Tools.getUidsFromText(content);
 	for (let i = 0; i < tmp.length; i++) {
@@ -1342,22 +1382,22 @@ const setPeopleFromContent = async function (
 		let receiverCN = await Cache.getUserName(tenant, toWhomEmail, "setPeopleFromContent");
 		if (receiverCN !== "USER_NOT_FOUND") {
 			people.push(tmp[i]);
-			emails.push(toWhomEmail);
+			eids.push(toWhomEmail);
 		}
 	}
-	emails = [...new Set(emails)];
+	eids = [...new Set(eids)];
 	people = [...new Set(people)];
 	people = people.map((p) => Tools.getEmailPrefix(p));
-	return [people, emails];
+	return [people, eids];
 };
 
 //对每个@somebody存储，供somebody反向查询comment
 const postCommentForTodo = async function (tenant, doer, todo, content) {
 	if (content.trim().length === 0) return;
-	let emails = [todo.wfstarter];
+	let eids = [todo.wfstarter];
 	let people = [Tools.getEmailPrefix(todo.wfstarter)];
 	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForTodo");
-	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
+	[people, eids] = await setPeopleFromContent(tenant, doer, content, people, eids);
 	let msg = {
 		tenant: todo.tenant,
 		doer: doer,
@@ -1384,7 +1424,7 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 		content,
 		context,
 		people,
-		emails,
+		eids,
 		todo.rehearsal,
 		msg,
 	);
@@ -1395,14 +1435,17 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 };
 
 const postCommentForComment = async function (tenant, doer, cmtid, content, threadid) {
-	let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid });
+	let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid }, { __v: 0 });
 
-	let theTodo = await Todo.findOne({ tenant: tenant, todoid: cmt.context.todoid }).lean();
+	let theTodo = await Todo.findOne(
+		{ tenant: tenant, todoid: cmt.context.todoid },
+		{ __v: 0 },
+	).lean();
 	let people = cmt.people;
 	people.push(Tools.getEmailPrefix(cmt.who));
-	let emails = people.map((uid) => Tools.makeEmailSameDomain(uid, doer));
+	let eids = people.map((eid) => Tools.makeEmailSameDomain(eid, doer));
 	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForComment");
-	[people, emails] = await setPeopleFromContent(tenant, doer, content, people, emails);
+	[people, eids] = await setPeopleFromContent(tenant, doer, content, people, eids);
 	let msg = {
 		tenant: tenant,
 		doer: doer,
@@ -1426,7 +1469,7 @@ const postCommentForComment = async function (tenant, doer, cmtid, content, thre
 		content,
 		cmt.context, //继承上一个comment的业务上下文
 		people,
-		emails,
+		eids,
 		cmt.rehearsal,
 		msg,
 		threadid,
@@ -1441,14 +1484,15 @@ const __postComment = async function (
 	content,
 	context,
 	thePeople,
-	emails,
+	eids,
 	rehearsal,
 	emailMsg = null,
 	threadid = null,
-) {
+): Promise<CommentType> {
 	try {
 		//找里面的 @somebody， regexp是@后面跟着的连续非空字符
-		let comment = new Comment({
+		let comment: CommentType = null;
+		comment = new Comment({
 			tenant: tenant,
 			rehearsal: rehearsal,
 			who: doer,
@@ -1459,13 +1503,13 @@ const __postComment = async function (
 			content: content,
 			context: context,
 			threadid: threadid ? threadid : "",
-		});
-		comment = await comment.save();
+		}) as CommentType;
+		comment = (await comment.save()) as CommentType;
 		await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${comment.context.wfid}`);
 		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
 		//对TODO的comment是thread级Comment，需要将其threadid设置为其自身的_id
 		if (comment.objtype === "TODO") {
-			comment.threadid = comment._id;
+			comment.threadid = comment._id.toString();
 			comment = await comment.save();
 		} else if (threadid) {
 			//对Comment的Comment需要将其thread  Comment的 updatedAt进行更新
@@ -1473,20 +1517,20 @@ const __postComment = async function (
 			let threadComment = await Comment.findOneAndUpdate(
 				{ tenant: tenant, _id: comment.threadid },
 				{ updatedAt: new Date(0) },
-				{ new: true },
+				{ upsert: false, new: true },
 			);
 		}
 		//TODO: send TIMEOUT seconds later, then check if still exists, if not, don't send email
 		if (emailMsg) {
 			setTimeout(async () => {
-				let theComment = await Comment.findOne({ tenant: tenant, _id: comment._id });
+				let theComment = await Comment.findOne({ tenant: tenant, _id: comment._id }, { __v: 0 });
 				if (theComment) {
-					for (let i = 0; i < emails.length; i++) {
-						if (emails[i] === doer) {
+					for (let i = 0; i < eids.length; i++) {
+						if (eids[i] === doer) {
 							console.log("Bypass: comment's author email to him/herself");
 							continue;
 						}
-						let receiverCN = await Cache.getUserName(tenant, emails[i], "__postComment");
+						let receiverCN = await Cache.getUserName(tenant, eids[i], "__postComment");
 						if (receiverCN === "USER_NOT_FOUND") continue;
 						let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
 						let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
@@ -1495,14 +1539,14 @@ const __postComment = async function (
 
 						sendTenantMail(
 							tenant, //not rehearsal
-							rehearsal ? doer : emails[i],
+							rehearsal ? doer : eids[i],
 							subject,
 							body,
 							"COMMENT_MAIL",
 						).then((res) => {
 							console.log(
 								"Mailer send email to ",
-								rehearsal ? doer + "(" + emails[i] + ")" : emails[i],
+								rehearsal ? doer + "(" + eids[i] + ")" : eids[i],
 								"subject:",
 								subject,
 							);
@@ -1514,7 +1558,7 @@ const __postComment = async function (
 			}, (Const.DEL_NEW_COMMENT_TIMEOUT + 5) * 1000);
 			//}, 1000);
 		}
-		comment = JSON.parse(JSON.stringify(comment));
+		comment = JSON.parse(JSON.stringify(comment)) as CommentType;
 		comment.whoCN = await Cache.getUserName(tenant, comment.who, "__postComment");
 		comment.towhomCN = await Cache.getUserName(tenant, toWhom, "__postComment");
 		comment.splitted = splitComment(comment.content);
@@ -1522,13 +1566,13 @@ const __postComment = async function (
 		comment.mdcontent = tmpret.mdcontent;
 		comment.mdcontent2 = tmpret.mdcontent2;
 		let people = [];
-		let emails = [];
-		[people, emails] = await setPeopleFromContent(
+		let eids = [];
+		[people, eids] = await setPeopleFromContent(
 			tenant,
 			comment.who, //Email domain reference user
 			comment.content,
 			people,
-			emails,
+			eids,
 		);
 		comment.people = people;
 		comment.transition = true;
@@ -1544,13 +1588,13 @@ const __postComment = async function (
 const convertDoersToHTMLMessage = (doers: DoersArray): string => {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
-		ret += doers[i].cn + "(" + doers[i].uid + ")" + "</BR>";
+		ret += doers[i].cn + "(" + doers[i].eid + ")" + "</BR>";
 	}
 	return ret;
 };
 
 const sendCCMessage = async (
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	cced: DoersArray,
 	subject: string,
 	body: string,
@@ -1561,13 +1605,13 @@ const sendCCMessage = async (
 		try {
 			sendTenantMail(
 				tenant, //not rehearsal
-				rehearsal ? starter : cced[i].uid,
+				rehearsal ? starter : cced[i].eid,
 				subject,
 				body,
 				"TASK_CC_MAIL",
 			).then((res) => {});
 		} catch (error) {
-			console.log("Mailer send email to TASK cc ", rehearsal ? starter : cced[i].uid, "failed");
+			console.log("Mailer send email to TASK cc ", rehearsal ? starter : cced[i].eid, "failed");
 		}
 	}
 };
@@ -1646,24 +1690,41 @@ const doCallback = async function (tenant: string, cbp: any, payload: any) {
 
 /**
  * revokeWork = async() 撤回，撤回一个已经完成的工作
- *
- * @param {...} revokeWork = asynctenant -
- * @param {...} wfid -
- * @param {...} todoid : 已经完成了的todo的id
- *
- * @return {...}
  */
-const revokeWork = async function (email, tenant, wfid, todoid, comment) {
+const revokeWork = async function (
+	employee: EmployeeType,
+	tenant: string | Types.ObjectId,
+	wfid: string,
+	todoid: string,
+	comment: string,
+) {
 	// 先找到当前的TODO
-	let old_todo = await Todo.findOne({ todoid: todoid, status: "ST_DONE" });
+	let theEmployee = employee;
+	let old_todo = await Todo.findOne({ todoid: todoid }, { __v: 0 });
 	if (Tools.isEmpty(old_todo)) {
-		throw new EmpError("WORK_NOT_REVOCABLE", "Todo ST_DONE does not exist", { wfid, todoid });
+		throw new EmpError("WORK_NOT_REVOCABLE", "Todo does not exist", { wfid, todoid });
 	}
-	if (old_todo.rehearsal) email = old_todo.doer;
-	if (!SystemPermController.hasPerm(email, "work", old_todo, "update"))
+	if (old_todo.status !== "ST_DONE") {
+		throw new EmpError(
+			"WORK_NOT_REVOCABLE",
+			`Todo ${old_todo.nodeid} status is not ST_DONE but ${old_todo.status}`,
+			{
+				wfid,
+				todoid,
+				nodeid: old_todo.nodeid,
+			},
+		);
+	}
+	if (old_todo.rehearsal) {
+		theEmployee = await Employee.findOne({ tenant: tenant, eid: old_todo.doer }, { __v: 0 });
+	}
+	if (!theEmployee) {
+		throw new EmpError("EMPLOYEE_NOT_FOUND", `Employee ${old_todo.doer} does not exist.`);
+	}
+	if (!SystemPermController.hasPerm(theEmployee, "work", old_todo, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.revokeWork");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
+	if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
@@ -1671,7 +1732,6 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 	let info: workFullInfo = {} as workFullInfo;
 	info = await __getWorkFullInfoRevocableAndReturnable(
 		tenant,
-		email,
 		wf,
 		tpRoot,
 		wfRoot,
@@ -1680,13 +1740,17 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 		info,
 	);
 	if (info.revocable === false) {
-		throw new EmpError("WORK_NOT_REVOCABLE", "Todo is not revocable", {
-			wfid,
-			todoid,
-			nodeid: info.nodeid,
-			title: info.title,
-			status: info.status,
-		});
+		throw new EmpError(
+			"WORK_NOT_REVOCABLE",
+			`Todo is not revocable (nodeid: ${old_todo.nodeid} status: ${old_todo.status})  `,
+			{
+				wfid,
+				todoid,
+				nodeid: old_todo.nodeid,
+				title: old_todo.title,
+				status: old_todo.status,
+			},
+		);
 	}
 
 	let isoNow = Tools.toISOString(new Date());
@@ -1695,7 +1759,7 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 		if (comment.indexOf("{{") >= 0 || comment.indexOf("[") >= 0) {
 			let ALL_VISIED_KVARS = await Parser.userGetVars(
 				tenant,
-				email,
+				theEmployee.eid,
 				wfid,
 				Const.FOR_WHOLE_PROCESS,
 				[],
@@ -1804,12 +1868,13 @@ const revokeWork = async function (email, tenant, wfid, todoid, comment) {
 		"Engine.revokeWork",
 	);
 	try {
-		if (comment.trim().length > 0) await postCommentForTodo(tenant, email, old_todo, comment);
+		if (comment.trim().length > 0)
+			await postCommentForTodo(tenant, theEmployee.eid, old_todo, comment);
 	} catch (err) {}
 
 	await sendNexts(nexts);
 
-	log(tenant, wfid, `[Revoke] [${old_todo.title}] [${old_todo.tplid}] [${email}]`);
+	log(tenant, wfid, `[Revoke] [${old_todo.title}] [${old_todo.tplid}] [${theEmployee.eid}]`);
 
 	return todoid;
 };
@@ -1875,19 +1940,20 @@ const addAdhoc = async function (payload) {
 		byroute: "DEFAULT",
 		status: "ST_RUN",
 	});
-	await adhocWork.save();
+	adhocWork = await adhocWork.save();
+	return adhocWork.workid;
 };
 
 /**
- * explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, uid, pds, 除pds外，其它均可选。 如果wfid存在，则使用uid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了uid，则
+ * explainPds = async() Explain PDS. payload一共携带四个参数，wfid, teamid, eid, pds, 除pds外，其它均可选。 如果wfid存在，则使用eid使用wfid的starter， teamid使用wfid的teamid； 若制定了teamid，则使用该teamid；若指定了eid，则
  *
- * @param {...} payload: {tenant, wfid, pds, email}  if wfid presents, will user wf.starter as base to getDoer, or else, user uid
+ * @param {...} payload: {tenant, wfid, pds, eid}  if wfid presents, will user wf.starter as base to getDoer, or else, user eid
  *
  * @return {...}
  */
 const explainPds = async function (payload) {
 	let theTeamid = "";
-	let theUser = payload.email;
+	let theUser = payload.eid;
 	let theKvarString = payload.kvar;
 	let tpRoot = null,
 		wfRoot = null;
@@ -1928,47 +1994,52 @@ const explainPds = async function (payload) {
 /**
  * sendback = async() 退回，退回到上一个节点
  *
- * @param {...} tenant -
- * @param {...} wfid -
- * @param {...} todoid - 当前的节点，sendback到这个节点之前的
- * @param {...} doer -
- * @param {...} kvars -
- *
- * @return {...}
  */
-const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comment) {
+const sendback = async function (
+	tenant: string | Types.ObjectId,
+	eid: string,
+	wfid: string,
+	todoid: string,
+	doer: string,
+	kvars: string | Record<string, any>,
+	comment: string,
+) {
 	let fact_doer = doer;
-	let fact_email = email;
+	let fact_eid = eid;
 
-	let todo = await Todo.findOne({ tenant: tenant, todoid: todoid });
+	let todo = await Todo.findOne({ tenant: tenant, todoid: todoid }, { __v: 0 });
 
 	if (Tools.isEmpty(todo)) {
 		throw new EmpError("WORK_NOT_EXIST", "Todoid Not exist: " + todoid);
 	}
-	if (todo.rehearsal) email = todo.doer;
+	if (todo.rehearsal) eid = todo.doer;
 	if (todo.doer !== fact_doer) {
 		throw new EmpError("WORK_DOER_WRONG", `${fact_doer} is not the right person`);
 	}
-	if (email !== fact_doer) {
-		let hasPerm = await hasPermForWork(tenant, email, fact_doer);
+	if (eid !== fact_doer) {
+		let hasPerm = await hasPermForWork(tenant, eid, fact_doer);
 		if (!hasPerm) {
 			throw new EmpError("NO_PERM_TO_DO", "Not doer or no delegation");
 		}
-		fact_email = fact_doer;
+		fact_eid = fact_doer;
 	}
 
 	//出发的节点的状态必须是ST_RUN
 	if (todo.status !== "ST_RUN") {
 		throw new EmpError("WORK_UNEXPECTED_STATUS", "Todo status is not ST_RUN");
 	}
-	if (!SystemPermController.hasPerm(fact_email, "work", todo, "update"))
+	const fact_employee = (await Employee.findOne(
+		{ tenant, eid: fact_eid },
+		{ __v: 0 },
+	)) as EmployeeType;
+	if (!SystemPermController.hasPerm(fact_employee, "work", todo, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this work");
 
 	if (typeof kvars === "string") kvars = Tools.hasValue(kvars) ? JSON.parse(kvars) : {};
 	let isoNow = Tools.toISOString(new Date());
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.sendback");
 	let wfUpdate = {};
-	if (!SystemPermController.hasPerm(fact_email, Const.ENTITY_WORKFLOW, wf, "update"))
+	if (!SystemPermController.hasPerm(fact_employee, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 
 	let wfIO = await Parser.parse(wf.doc);
@@ -1977,7 +2048,6 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 	let info: workFullInfo = {} as workFullInfo;
 	info = await __getWorkFullInfoRevocableAndReturnable(
 		tenant,
-		email,
 		wf,
 		tpRoot,
 		wfRoot,
@@ -2053,6 +2123,7 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 		todo = await Todo.findOneAndUpdate(
 			{ tenant: tenant, wfid: todo.wfid, todoid: todo.todoid },
 			{ $set: { comment: comment } },
+			{ upsert: false, new: true },
 		);
 	}
 	await Parser.setVars(
@@ -2105,7 +2176,7 @@ const sendback = async function (email, tenant, wfid, todoid, doer, kvars, comme
 	} catch (err) {}
 
 	await sendNexts(nexts);
-	log(tenant, wfid, `[Sendback] [${todo.title}] [${todo.tplid}] [${email}]`);
+	log(tenant, wfid, `[Sendback] [${todo.title}] [${todo.tplid}] [${eid}]`);
 	return todoid;
 };
 
@@ -2203,7 +2274,7 @@ Client.onYarkNode = async function (obj) {
 		await RCL.resetCache(
 			{ tenant: obj.tenant, wfid: obj.wfid },
 			"Engine.onYarkNode",
-			RCL.CACHE_ELEVEL_MEM,
+			RCL.CACHE_ELEVEL_REDIS,
 		);
 
 		/* callYarkNodeWorker(obj).then((res) => {
@@ -2419,9 +2490,9 @@ const replaceUser_child = async function (msg) {
 				break;
 			case "execute":
 				let tempsubset = {
-					todo: await TempSubset.findOne({ tranx: msg.tranx, objtype: "todo" }).lean(),
-					wf: await TempSubset.findOne({ tranx: msg.tranx, objtype: "wf" }).lean(),
-					tpl: await TempSubset.findOne({ tranx: msg.tranx, objtype: "tpl" }).lean(),
+					todo: await TempSubset.findOne({ tranx: msg.tranx, objtype: "todo" }, { __v: 0 }).lean(),
+					wf: await TempSubset.findOne({ tranx: msg.tranx, objtype: "wf" }, { __v: 0 }).lean(),
+					tpl: await TempSubset.findOne({ tranx: msg.tranx, objtype: "tpl" }, { __v: 0 }).lean(),
 				};
 				tempsubset.todo &&
 					msg.todo.length > 0 &&
@@ -2436,7 +2507,7 @@ const replaceUser_child = async function (msg) {
 				/*
 				if (tempsubset.wf && msg.wf.length > 0) {
 					regex = new RegExp(`\\b${tempsubset.wf.from}\\b`, "g");
-					let cursor = Workflow.find({ wfid: { $in: msg.wf } }).cursor();
+					let cursor = Workflow.find({ wfid: { $in: msg.wf } }, {__v:0}).cursor();
 
 					for (let wf = await cursor.next(); wf != null; wf = await cursor.next()) {
 						let update = {};
@@ -2450,7 +2521,7 @@ const replaceUser_child = async function (msg) {
 				*/
 				if (tempsubset.tpl && msg.tpl.length > 0) {
 					regex = new RegExp(`\\b${tempsubset.tpl.from}\\b`, "g");
-					let cursor = Template.find({ tplid: { $in: msg.tpl } }).cursor();
+					let cursor = Template.find({ tplid: { $in: msg.tpl } }, { __v: 0 }).cursor();
 
 					for (let tpl = await cursor.next(); tpl != null; tpl = await cursor.next()) {
 						let update = { doc: tpl.doc.replace(regex, tempsubset.tpl.to) };
@@ -2465,7 +2536,7 @@ const replaceUser_child = async function (msg) {
 };
 
 //Client是指接受 yarkNode消息的client
-const yarkNode_internal = async function (obj) {
+const yarkNode_internal = async function (obj: NextDef) {
 	let nexts = [];
 	let parent_nexts = [];
 	if (Tools.isEmpty(obj.teamid)) obj.teamid = "NOTSET";
@@ -2581,8 +2652,8 @@ const yarkNode_internal = async function (obj) {
 			);
 			if (Array.isArray(doers) === false) {
 				console.error("C.GetDoer should return array", 5);
-				//if doers.uid, then doers is a single user,so place it into array;
-				if ((doers as any).uid) doers = [doers];
+				//if doers.eid, then doers is a single user,so place it into array;
+				if ((doers as any).eid) doers = [doers];
 				else {
 					doers = [];
 				}
@@ -2615,7 +2686,10 @@ const yarkNode_internal = async function (obj) {
 					}
 					attach_csv = csvDef[0];
 				}
-				let cell = await Cell.findOne({ tenant: tenant, wfid: obj.wfid, forKey: attach_csv });
+				let cell = await Cell.findOne(
+					{ tenant: tenant, wfid: obj.wfid, forKey: attach_csv },
+					{ __v: 0 },
+				);
 				if (cell) {
 					cells = cell.cells;
 				}
@@ -2625,7 +2699,7 @@ const yarkNode_internal = async function (obj) {
 				if (cells && Array.isArray(cells) && cells.length > 0) {
 					for (let ri = 1; ri < cells.length; ri++) {
 						let recipient = cells[ri][0];
-						recipient = await Tools.makeEmailSameDomain(recipient, obj.starter);
+						recipient = Tools.makeEmailSameDomain(recipient, obj.starter);
 						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
 						try {
 							KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
@@ -2684,7 +2758,7 @@ const yarkNode_internal = async function (obj) {
 				//根据doer取用户
 				try {
 					for (let i = 0; i < doers.length; i++) {
-						let recipient = doers[i].uid;
+						let recipient = doers[i].eid;
 						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
 						try {
 							let tmp_subject = tpNode.find("subject").first().text();
@@ -2816,7 +2890,6 @@ const yarkNode_internal = async function (obj) {
 			//console.log(pdsResolvedForScript);
 			codeRetString = await runCode(
 				obj.tenant, //tenant
-				Tools.getEmailDomain(obj.starter), //Tenant Domain
 				obj.tplid,
 				obj.wfid,
 				obj.starter,
@@ -2849,7 +2922,7 @@ const yarkNode_internal = async function (obj) {
 		}
 		//Get a clean KVAR array
 		//Script运行结束后，下面这些vars不需要被记录在节点上
-		delete codeRetObj["RET"];
+		//delete codeRetObj["RET"];
 		delete codeRetObj["USE_TEAM"];
 		delete codeRetObj["INNER_TEAM"];
 
@@ -2932,6 +3005,7 @@ const yarkNode_internal = async function (obj) {
 						//status: "ST_PASS",
 					},
 					{ $set: { to_workid: andNodeExisting.attr("id") } },
+					{ upsert: false, new: true },
 				);
 				workid = andNodeExisting.attr("id");
 			} else {
@@ -2979,6 +3053,7 @@ const yarkNode_internal = async function (obj) {
 						//status: "ST_PASS",
 					},
 					{ $set: { to_workid: andNodeExisting.attr("id") } },
+					{ upsert: false, new: true },
 				);
 				workid = andNodeExisting.attr("id");
 			} else {
@@ -3086,12 +3161,22 @@ const yarkNode_internal = async function (obj) {
 		let parent_work_id = isStandalone ? "" : workid;
 		let runmode = isStandalone ? "standalone" : "sub";
 		try {
+			const parentStarter = (await Employee.findOne(
+				{
+					tenant: obj.tenant,
+					eid: wf.starter,
+				},
+				{ __v: 0 },
+			)) as EmployeeType;
+			if (!parentStarter) {
+				throw new EmpError("EMPLOYEE_NOT_FOUND", `Start SUB ${sub_tpl_id} by ${wf.starter}`);
+			}
 			await startWorkflow(
 				//runsub
 				wf.rehearsal,
 				obj.tenant,
 				sub_tpl_id,
-				wf.starter,
+				parentStarter,
 				textPboArray,
 				teamid,
 				sub_wf_id,
@@ -3107,6 +3192,7 @@ const yarkNode_internal = async function (obj) {
 			log(tenant, obj.wfid, `[Start Sub] [Failed] [${runmode}] ${sub_tpl_id}`, {
 				message: e.message,
 			});
+			throw new EmpError("START_SUB_FAILED", e.message);
 		}
 		if (isStandalone) {
 			wfRoot.append(
@@ -3152,10 +3238,13 @@ const yarkNode_internal = async function (obj) {
 		let parent_wfid = wfRoot.attr("pwfid");
 		let parent_workid = wfRoot.attr("pworkid");
 		if (Tools.hasValue(parent_wfid) && Tools.hasValue(parent_workid) && wf.runmode === "sub") {
-			let parent_wf = await RCL.getWorkflow(
+			await RCL.resetCache(
 				{ tenant: obj.tenant, wfid: parent_wfid },
 				"Engine.yarkNode_internal",
+				RCL.CACHE_ELEVEL_REDIS,
 			);
+			let parent_wf = await Workflow.findOne({ tenant: obj.tenant, wfid: parent_wfid }, { __v: 0 });
+
 			let parent_tplid = parent_wf.tplid;
 			let parent_wfIO = await Parser.parse(parent_wf.doc);
 			let parent_tpRoot = parent_wfIO(".template");
@@ -3222,7 +3311,7 @@ const yarkNode_internal = async function (obj) {
 		}
 		log(tenant, obj.wfid, "End");
 		let sendEmailTo = obj.starter;
-		let ew = await Cache.getUserEw(sendEmailTo);
+		let ew = await Cache.getUserEw(obj.tenant, sendEmailTo);
 		let withEmail = ew && ew.email;
 		if (withEmail) {
 			let cn = await Cache.getUserName(tenant, sendEmailTo, "yarkNode_internal");
@@ -3284,7 +3373,10 @@ const yarkNode_internal = async function (obj) {
 				}
 				attach_csv = csvDef[0];
 			}
-			let cell = await Cell.findOne({ tenant: tenant, wfid: obj.wfid, forKey: attach_csv });
+			let cell = await Cell.findOne(
+				{ tenant: tenant, wfid: obj.wfid, forKey: attach_csv },
+				{ __v: 0 },
+			);
 			if (cell) {
 				cells = cell.cells;
 			}
@@ -3295,10 +3387,9 @@ const yarkNode_internal = async function (obj) {
 			doerOrDoers = [];
 			if (cells && Array.isArray(cells) && cells.length > 0) {
 				for (let ri = 1; ri < cells.length; ri++) {
-					let doerEmail = Tools.makeEmailSameDomain(cells[ri][0], obj.starter);
 					doerOrDoers.push({
-						uid: doerEmail,
-						cn: await Cache.getUserName(tenant, doerEmail, "yarkNode_internal"),
+						eid: cells[ri][0],
+						cn: await Cache.getUserName(tenant, cells[ri][0], "yarkNode_internal"),
 					});
 				}
 			}
@@ -3336,7 +3427,12 @@ const yarkNode_internal = async function (obj) {
 
 		let thisRound = obj.round;
 		//If this round work already exists?
-		if (await Work.findOne({ tenant: tenant, wfid: wf.wfid, nodeid: nodeid, round: thisRound })) {
+		if (
+			await Work.findOne(
+				{ tenant: tenant, wfid: wf.wfid, nodeid: nodeid, round: thisRound },
+				{ __v: 0 },
+			)
+		) {
 			thisRound = thisRound + 1;
 		}
 		//
@@ -3393,12 +3489,15 @@ const yarkNode_internal = async function (obj) {
 			Const.VAR_NOT_EFFICIENT,
 		);
 		let transferable = Tools.blankToDefault(tpNode.attr("transferable"), "false") === "true";
-		let existingSameNodeWorks = await Work.find({
-			tenant: obj.tenant,
-			wfid: wf.wfid,
-			nodeid: nodeid,
-			status: "ST_RUN",
-		});
+		let existingSameNodeWorks = await Work.find(
+			{
+				tenant: obj.tenant,
+				wfid: wf.wfid,
+				nodeid: nodeid,
+				status: "ST_RUN",
+			},
+			{ __v: 0 },
+		);
 		let repeaton = getRepeaton(tpNode);
 		let cronrun = parseInt(Tools.blankToDefault(tpNode.attr("cronrun"), "0"));
 		let cronexpr = Tools.blankToDefault(tpNode.attr("cronexpr"), "0 8 * * 1");
@@ -3533,7 +3632,7 @@ const rerunNode = async function (tenant: string, wfid: string, nodeid: string) 
 		byroute: workNode.attr("byroute"),
 		selector: "#" + nodeid,
 		starter: wf.starter,
-		round: workNode.attr("round"),
+		round: parseInt(workNode.attr("round")),
 	};
 	await sendNexts([an]);
 };
@@ -3593,24 +3692,18 @@ const createTodo = async function (obj) {
 		obj.doer = [obj.doer];
 	}
 	for (let i = 0; i < obj.doer.length; i++) {
-		let doerEmail = "";
-		if (obj.doer[i].uid) doerEmail = obj.doer[i].uid;
+		let doerEid = "";
+		if (obj.doer[i].eid) doerEid = obj.doer[i].eid;
 		else {
-			if (typeof obj.doer[i] === "string") doerEmail = obj.doer[i];
+			if (typeof obj.doer[i] === "string") doerEid = obj.doer[i];
 		}
-		let doerName = "";
-		if (obj.doer[i].cn) doerName = obj.doer[i].cn;
-		else doerName = await Cache.getUserName(obj.tenant, doerEmail, "createTodo");
+		let doerName = await Cache.getUserName(obj.tenant, doerEid, "createTodo");
 
-		if (Tools.isEmpty(doerName)) {
-			console.warn(`in createTodo: doer: ${doerEmail} does not exist. set doerName to "UNKNOWN"`);
-			doerName = "UNKNOWN";
-		}
 		//在新建单人TODO时替换doerCN
 		let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
 		let cellInfo = "";
 		if (obj.cells && obj.cells.length > 0) {
-			cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEmail);
+			cellInfo = Parser.getUserCellsTableAsHTMLByUser(obj.cells, doerEid);
 		}
 		let todoid = IdGenerator();
 
@@ -3619,7 +3712,7 @@ const createTodo = async function (obj) {
 			 * 用户离职后，在User数据表中，将其设置为active=false，并设置其succeed继承人
 			 */
 			// 如active=true，则返回自身，否则，使用继承者
-			let doer = await getSucceed(obj.tenant, doerEmail);
+			let doer = await getSucceed(obj.tenant, doerEid);
 
 			//检查是否已存在相同wfid，相同workid，相同doer，状态为ST_RUN的Todo
 			const existing = await Todo.findOne(
@@ -3862,7 +3955,7 @@ const getBackPath = async function (tenant, round, wfid, workId, withouts, path)
 		status: "ST_PASS",
 	};
 	try {
-		let routes = await Route.find(filter);
+		let routes = await Route.find(filter, { __v: 0 });
 		for (let i = 0; i < routes.length; i++) {
 			//  如果在path中没有
 			if (path.filter((x) => x.workid === routes[i].from_workid).length < 1) {
@@ -3886,7 +3979,7 @@ const getRoundWork = async function (tenant, round, wfid, path) {
 	};
 	if (round > -1) filter["round"] = round;
 	try {
-		let works = await Work.find(filter);
+		let works = await Work.find(filter, { __v: 0 });
 		for (let i = 0; i < works.length; i++) {
 			//  如果在path中没有
 			if (path.filter((x) => x.workid === works[i].workid).length < 1) {
@@ -3899,23 +3992,32 @@ const getRoundWork = async function (tenant, round, wfid, path) {
 	}
 };
 
-const transferWork = async function (tenant, whom, myEmail, todoid) {
-	let whomUser = await User.findOne(
-		{ tenant: tenant, email: whom + myEmail.substring(myEmail.indexOf("@")) },
-		{ email: 1, username: 1, _id: 0 },
+const transferWork = async function (
+	tenant: string | Types.ObjectId,
+	whom: string,
+	myEid: string,
+	todoid: string,
+) {
+	let whomEmployee = await Employee.findOne(
+		{ tenant: tenant, eid: whom },
+		{ eid: 1, nickname: 1, _id: 0 },
 	);
-	if (!whomUser) return whomUser;
-	let filter = { tenant: tenant, doer: myEmail, todoid: todoid, status: "ST_RUN" };
-	let todo = await Todo.findOneAndUpdate(filter, { $set: { doer: whomUser.email } }, { new: true });
+	if (!whomEmployee) return whomEmployee;
+	let filter = { tenant: tenant, doer: myEid, todoid: todoid, status: "ST_RUN" };
+	let todo = await Todo.findOneAndUpdate(
+		filter,
+		{ $set: { doer: whomEmployee.eid } },
+		{ upsert: false, new: true },
+	);
 
-	let newDoer = whomUser.email;
-	let ew = await Cache.getUserEw(newDoer);
+	let newDoer = whomEmployee.eid;
+	let ew = await Cache.getUserEw(tenant, newDoer);
 	if (ew === false) {
 		console.log(newDoer, " does not receive email on new task");
-		return whomUser;
+		return whomEmployee;
 	}
 
-	let fromCN = await Cache.getUserName(tenant, myEmail, "transferWork");
+	let fromCN = await Cache.getUserName(tenant, myEid, "transferWork");
 	let newCN = await Cache.getUserName(tenant, newDoer, "transferWork");
 	await informUserOnNewTodo({
 		tenant: tenant,
@@ -3930,11 +4032,11 @@ const transferWork = async function (tenant, whom, myEmail, todoid) {
 		cellInfo: "",
 	});
 
-	return whomUser;
+	return whomEmployee;
 };
 
 const sendTenantMail = async function (
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	recipients: string | string[],
 	subject: string,
 	mail_body: string,
@@ -4006,7 +4108,7 @@ const informUserOnNewTodo = async function (inform) {
 	try {
 		let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
 		console.log("\t==>sendEmailTo", sendEmailTo);
-		let ew = await Cache.getUserEw(sendEmailTo);
+		let ew = await Cache.getUserEw(inform.tenant, sendEmailTo);
 		let withEmail = true;
 		if (typeof ew === "boolean" && ew === false) {
 			console.log(inform.doer, " does not receive email on new task");
@@ -4107,10 +4209,11 @@ This mail should go to ${inform.doer} but send to you because this is rehearsal'
 	}
 };
 
-const getSucceed = async (tenant, doerEmail) => {
-	let user = await User.findOne({ tenant: tenant, email: doerEmail }, { active: 1, succeed: 1 });
-	if (!user) return doerEmail;
-	return user.active ? doerEmail : user.succeed;
+//TODO: get succeed eid from cache
+const getSucceed = async (tenant: string, doerEid: string) => {
+	let user = await Employee.findOne({ tenant: tenant, eid: doerEid }, { active: 1, succeed: 1 });
+	if (!user) return doerEid;
+	return user.active ? doerEid : user.succeed;
 };
 
 const WreckPost = async (url, content) => {
@@ -4169,7 +4272,7 @@ const log = function (tenant, wfid, txt, json = null, withConsole = false) {
 	}
 };
 
-const getWfLogFilename = function (tenant: string, wfid: string) {
+const getWfLogFilename = function (tenant: string | Types.ObjectId, wfid: string) {
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_log_folder = emp_runtime_folder + "/" + tenant + "/log";
@@ -4180,46 +4283,37 @@ const getWfLogFilename = function (tenant: string, wfid: string) {
 	let logfile = `${wfidfolder}/process.log`;
 	return logfile;
 };
-/**
- *
- * @param {...} tenant,
- * @param {...} wfid,
- * @param {...} tpl_node -
- * @param {...} kvars_json -
- * @param {...} code -
- *
- * @return {...}
- */
 const runCode = async function (
-	tenant,
-	tenantDomain,
-	tplid,
-	wfid,
-	starter,
-	kvars_json,
-	pdsResolved_json,
-	code,
-	callbackId,
-	isTry = false,
+	tenant: string | Types.ObjectId,
+	tplid: string,
+	wfid: string,
+	starter: string,
+	kvars_json: Record<string, any>,
+	pdsResolved_json: Record<string, any>,
+	code: string,
+	callbackId: string,
+	isTry: boolean = false,
 ) {
 	//dev/emplabs/tenant每个租户自己的node_modules
 	let result = "DEFAULT";
 	let emp_node_modules = process.env.EMP_NODE_MODULES;
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+	if (!fs.existsSync(emp_tenant_folder))
+		fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
 
 	let all_code = `
 module.paths.push('${emp_node_modules}');
 module.paths.push('${emp_tenant_folder}/emplib');
 let innerTeam = null;
 let isTry = ${isTry};
-const tenantDomain = "${tenantDomain}";
 const tplid="${tplid}";
 const wfid="${wfid}";
 const starter="${starter}";
 const MtcAPIAgent = require("axios").default;
 const kvars =  ${JSON.stringify(kvars_json)};
 const pdsDoers = ${JSON.stringify(pdsResolved_json)};
+const axios=MtcAPIAgent;
 let retkvars={};
 function setInnerTeam(teamConf){
   innerTeam = teamConf;
@@ -4279,12 +4373,9 @@ const MtcDecision = function(nodeid, value){
 };
 const MtcPDSHasDoer = function(pds, who){
   let ret = false;
-  if(who.indexOf('@')< 0){
-    who = who + tenantDomain;
-  }
   if(pdsDoers[pds]){
     for(let i=0; i<pdsDoers[pds].length; i++){
-      if(pdsDoers[pds][i]["uid"] === who){
+      if(pdsDoers[pds][i]["eid"] === who){
         ret = true;
         break;
       }
@@ -4341,21 +4432,23 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 		const { stdout, stderr } = await Exec(cmdName, { timeout: 10000 });
 		if (stderr.trim() !== "") {
 			console.log(`[Workflow CODE] error: ${stderr}. Normally caused by proxy setting..`);
-		}
-		let returnedLines = stdout.trim();
-		//////////////////////////////////////////////////
-		// Write logs
-		log(tenant, wfid, "Script============");
-		log(tenant, wfid, code);
-		log(tenant, wfid, "============Script");
-		log(tenant, wfid, returnedLines);
-		log(tenant, wfid, "==================");
+			ret = JSON.stringify({ RET: `SCRIPT_ERROR: ${stderr}` });
+		} else {
+			let returnedLines = stdout.trim();
+			//////////////////////////////////////////////////
+			// Write logs
+			log(tenant, wfid, "Script============");
+			log(tenant, wfid, code);
+			log(tenant, wfid, "============Script");
+			log(tenant, wfid, returnedLines);
+			log(tenant, wfid, "==================");
 
-		// write returnedLines to a file associated with wfid
-		//////////////////////////////////////////////////
-		let lines = returnedLines.split("\n");
-		stdOutRet = lines[lines.length - 1];
-		ret = stdOutRet;
+			// write returnedLines to a file associated with wfid
+			//////////////////////////////////////////////////
+			let lines = returnedLines.split("\n");
+			stdOutRet = lines[lines.length - 1];
+			ret = stdOutRet;
+		}
 		console.log("[Workflow CODE] return: " + JSON.stringify(ret));
 
 		if (isTry) {
@@ -4420,24 +4513,13 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
 
 /**
  * Start a workflow
- * @param  {} tenant    Tenant id
- * @param  {} tplid     Template ID
- * @param  {} starter   Starter
- * @param  {} teamid    Id of role mapping team
- * @param  {} wfid      current workflow id
- * @param  {} wfid      give it a title
- * @param  {} parent_wf_id   parent workflow id
- * @param  {} parent_work_id  parent work id
- * @param  {} parent_vars     parent workflow vars
- * @param  {} runmode     uarent workflow vars
- * @param  {} uploadedFiles     uarent workflow vars
  */
 
 const startWorkflow = async function (
 	rehearsal: boolean,
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	tplid: string,
-	starter: string,
+	starter: EmployeeType,
 	textPbo: string,
 	teamid: string,
 	wfid: string,
@@ -4449,7 +4531,10 @@ const startWorkflow = async function (
 	uploadedFiles: any,
 ) {
 	let filter = { tenant: tenant, tplid: tplid };
-	let theTemplate = await Template.findOne(filter);
+	let theTemplate = await Template.findOne(filter, { __v: 0 });
+	if (!theTemplate) {
+		throw new EmpError("TEMPLATE_NOT_FOUND", `Tempalte ${tplid} not found`);
+	}
 
 	return await startWorkflow_with(
 		rehearsal,
@@ -4471,10 +4556,10 @@ const startWorkflow = async function (
 
 const startWorkflow_with = async function (
 	rehearsal: boolean,
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	tplid: string,
 	theTemplate: Emp.TemplateObj,
-	starter: string,
+	starter: EmployeeType,
 	textPbo: string,
 	teamid: string,
 	wfid: string,
@@ -4485,22 +4570,25 @@ const startWorkflow_with = async function (
 	runmode = "standalone",
 	uploadedFiles: any,
 ) {
+	if (!starter.nickname) {
+		throw new EmpError("STARTER_SHOULD_BE_EMPLOYEE", "Starter should be an employee object");
+	}
 	if (parent_vars === null || parent_vars === undefined) {
 		parent_vars = {};
 	}
 	parent_vars["starter"] = {
 		label: "Starter",
-		value: starter,
+		value: starter.eid,
 		type: "plaintext",
 		name: "starter",
 	};
 	parent_vars["starterCN"] = {
-		value: await Cache.getUserName(tenant, starter, "startWorkflow_with"),
+		value: starter.nickname,
 		label: "StarterCN",
 		type: "plaintext",
 		name: "starterCN",
 	};
-	let starterStaff = await OrgChartHelper.getStaff(tenant, starter);
+	let starterStaff = await OrgChartHelper.getStaff(tenant, starter.eid);
 	if (starterStaff) {
 		parent_vars["ou_SOU"] = {
 			label: "StarterOU",
@@ -4511,7 +4599,7 @@ const startWorkflow_with = async function (
 	}
 
 	// let filter = { tenant: tenant, tplid: tplid };
-	// let theTemplate = await Template.findOne(filter);
+	// let theTemplate = await Template.findOne(filter, {__v:0});
 	let isoNow = Tools.toISOString(new Date());
 	wfid = Tools.isEmpty(wfid) ? IdGenerator() : wfid;
 
@@ -4528,7 +4616,7 @@ const startWorkflow_with = async function (
 	let startDoc =
 		`<div class="process">` +
 		theTemplate.doc +
-		`<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
+		`<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter.eid}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
 		"</div>";
 	//KVAR above
 	let pboat = theTemplate.pboat;
@@ -4542,7 +4630,7 @@ const startWorkflow_with = async function (
 		wftitle: wftitle,
 		teamid: teamid,
 		tplid: tplid,
-		starter: starter,
+		starter: starter.eid,
 		status: "ST_RUN",
 		doc: startDoc,
 		rehearsal: rehearsal,
@@ -4553,7 +4641,7 @@ const startWorkflow_with = async function (
 	let attachments = [...textPbo, ...uploadedFiles];
 	attachments = attachments.map((x) => {
 		if (x.serverId) {
-			x.author = starter;
+			x.author = starter.eid;
 			x.forWhat = Const.ENTITY_WORKFLOW;
 			x.forWhich = wfid;
 			x.forKey = "pbo";
@@ -4585,12 +4673,12 @@ const startWorkflow_with = async function (
 		rehearsal: rehearsal,
 		selector: ".START",
 		byroute: "DEFAULT",
-		starter: starter,
+		starter: starter.eid,
 		round: 0,
 	};
 
 	await sendNexts([an]);
-	clearOlderRehearsal(tenant, starter, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
+	clearOlderRehearsal(tenant, starter.eid, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
 		(ret) => {},
 	);
 	clearOlderScripts(tenant).then((ret) => {
@@ -4605,17 +4693,17 @@ const startWorkflow_with = async function (
 /**
  * clearnout rehearsal workflow and todos old than 1 day.
  */
-const clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit: any = "h") {
+const clearOlderRehearsal = async function (tenant, starter_eid, howmany = 24, unit: any = "h") {
 	let theMoment = moment().subtract(howmany, unit);
 	let wfFilter = {
 		tenant: tenant,
-		starter: starter,
+		starter: starter_eid,
 		rehearsal: true,
 		updatedAt: { $lt: new Date(theMoment.toDate()) },
 	};
 	//TODO: keep using Mongoose instead of Redis?
-	let wfids = await Workflow.find(wfFilter, { wfid: 1, _id: 0 }).lean();
-	wfids = wfids.map((x) => x.wfid);
+	let wfs = await Workflow.find(wfFilter, { wfid: 1, _id: 0 }).lean();
+	let wfids = wfs.map((x) => x.wfid);
 	if (wfids.length > 0) {
 		for (let i = 0; i < wfids.length; i++) {
 			//TODO: deelte from redis also
@@ -4631,6 +4719,8 @@ const clearOlderRehearsal = async function (tenant, starter, howmany = 24, unit:
 const clearOlderScripts = async function (tenant) {
 	let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 	let emp_tenant_folder = emp_runtime_folder + "/" + tenant;
+	if (!fs.existsSync(emp_tenant_folder))
+		fs.mkdirSync(emp_tenant_folder, { mode: 0o700, recursive: true });
 	//定义两个函数
 	const getDirectories = (srcPath) =>
 		fs.readdirSync(srcPath).filter((file) => fs.statSync(path.join(srcPath, file)).isDirectory());
@@ -4677,9 +4767,13 @@ const clearOlderScripts = async function (tenant) {
 	return "Done";
 };
 
-const stopWorkflow = async function (tenant, myEmail, wfid) {
+const stopWorkflow = async function (
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	wfid: string,
+) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.stopWorkflow");
-	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "update"))
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
@@ -4720,23 +4814,23 @@ const stopWorkflow = async function (tenant, myEmail, wfid) {
 };
 
 const restartWorkflow = async function (
-	tenant,
-	myEmail,
-	wfid,
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	wfid: string,
 	starter = null,
-	pbo = null,
-	teamid = null,
-	wftitle = null,
+	pbo: any = null,
+	teamid: string = null,
+	wftitle: string = null,
 ) {
 	let old_wfid = wfid;
 	let old_wf = await RCL.getWorkflow({ tenant: tenant, wfid: old_wfid }, "Engine.restartWorkflow");
-	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, old_wf, "update"))
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, old_wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let old_wfIO = await Parser.parse(old_wf.doc);
 	let old_wfRoot = old_wfIO(".workflow");
 	let old_pwfid = old_wfRoot.attr("pwfid");
 	let old_pworkid = old_wfRoot.attr("pworkid");
-	await stopWorkflow(tenant, myEmail, old_wfid);
+	await stopWorkflow(tenant, employee, old_wfid);
 	await resetTodosETagByWfId(tenant, old_wfid);
 	let isoNow = Tools.toISOString(new Date());
 	starter = Tools.defaultValue(starter, old_wf.starter);
@@ -4803,22 +4897,33 @@ const restartWorkflow = async function (
 	return wf;
 };
 
-const destroyWorkflow = async function (tenant, myEmail, wfid) {
+const destroyWorkflow = async function (
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	wfid: string,
+) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.destroyWorkflow");
-	if (!SystemPermController.hasPerm(myEmail, Const.ENTITY_WORKFLOW, wf, "delete"))
+	//const myEmployee = (await Employee.findOne({ tenant: tenant, eid: myEid }, {__v:0})) as EmployeeType;
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, wf, "delete"))
 		throw new EmpError("NO_PERM", "You don't have permission to delete this workflow");
-	let myGroup = await Cache.getMyGroup(myEmail);
+	let myGroup = employee.group;
 	//管理员可以destory
 	//starter可以destroy rehearsal
 	//starter可以destroy 尚在第一个活动上的流程
-	if (myGroup === "ADMIN" || (wf.starter === myEmail && (wf.rehearsal || wf.pnodeid === "start"))) {
-		__destroyWorkflow(tenant, wfid).then((ret) => {});
+	if (
+		myGroup === "ADMIN" ||
+		(wf.starter === employee.eid && (wf.rehearsal || wf.pnodeid === "start"))
+	) {
+		return __destroyWorkflow(tenant, wfid).then((ret) => {});
 	} else {
-		throw new EmpError("NO_PERM", "Only by ADMIN or starter at first step");
+		throw new EmpError(
+			"NO_PERM",
+			`Only by ADMIN or starter at first step eid:${employee.eid} group: ${employee.group}`,
+		);
 	}
 };
 
-const __destroyWorkflow = async function (tenant, wfid) {
+const __destroyWorkflow = async function (tenant: string | Types.ObjectId, wfid: string) {
 	console.log("Destroy workflow:", wfid);
 	//TODO: reset TODO ETAG
 	try {
@@ -4892,12 +4997,14 @@ const __destroyWorkflow = async function (tenant, wfid) {
 		process.stdout.write("\tDestroy attached files\r");
 		for (let i = 0; i < wf.attachments.length; i++) {
 			let serverId = wf.attachments[i].serverId;
-			let author = wf.attachments[i].author;
-			let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
-			try {
-				fs.unlinkSync(pondServerFile.fullPath);
-			} catch (err) {
-				console.log("\tDestroy attached: ", err.message);
+			if (serverId) {
+				let author = wf.attachments[i].author;
+				let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
+				try {
+					fs.unlinkSync(pondServerFile.fullPath);
+				} catch (err) {
+					console.log("\tDestroy attached: ", err.message);
+				}
 			}
 		}
 		console.log("Destroy workflow:", wfid, ", Done");
@@ -4927,22 +5034,31 @@ const getWfTextPbo = function (wf) {
 	return attachments;
 };
 
-const workflowGetList = async function (tenant, email, filter, sortdef) {
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, "", "read"))
+const workflowGetList = async function (
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	filter: Record<string, any>,
+	sortdef: string,
+) {
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, "", "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read workflow");
 	filter.tenant = tenant;
 	let option: any = {};
 	if (sortdef) option.sort = sortdef;
 	//TODO: this is not findOne, but find, should we keep it in mongoose?
-	let wfs = await Workflow.find(filter, { doc: 0 }, option).lean();
+	let wfs = (await Workflow.find(filter, { doc: 0 }, option).lean()) as WorkflowType[];
 	for (let i = 0; i < wfs.length; i++) {
 		wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter, "workflowGetList");
 	}
 	return wfs;
 };
 
-const workflowGetLatest = async function (tenant, email, filter) {
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, "", "read"))
+const workflowGetLatest = async function (
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	filter: Record<string, any>,
+) {
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, "", "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read workflow");
 	filter.tenant = tenant;
 	let wfs = await Workflow.find(
@@ -4968,18 +5084,18 @@ const workflowGetLatest = async function (tenant, email, filter) {
 			updatedAt: wfs[0].updatedAt,
 		};
 	} else {
-		return "";
+		return null;
 	}
 };
 
-const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
+const getWorkInfo = async function (tenant: string | Types.ObjectId, eid: string, todoid: string) {
 	//查找TODO，可以找到任何人的TODO
 	let todo_filter = { tenant: tenant, todoid: todoid };
-	let todo = await Todo.findOne(todo_filter);
+	let todo = await Todo.findOne(todo_filter, { __v: 0 });
 	if (!todo) {
 		throw new EmpError("WORK_NOT_EXIST", "Todo not exist");
 	}
-	let peopleInBrowser = emailInBrowser;
+	let peopleInBrowser = eid;
 	let shouldDoer = todo.doer;
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	// Extremely important  BEGIN
@@ -4993,7 +5109,14 @@ const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	// Extremely important  END
 	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	if (!SystemPermController.hasPerm(shouldDoer, "work", todo, "read"))
+	let shouldEmployee = (await Employee.findOne(
+		{
+			tenant: tenant,
+			eid: shouldDoer,
+		},
+		{ __v: 0 },
+	)) as EmployeeType;
+	if (!SystemPermController.hasPerm(shouldEmployee, "work", todo, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this work");
 	try {
 		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.getWorkInfo");
@@ -5018,12 +5141,12 @@ const getWorkInfo = async function (emailInBrowser, tenant, todoid) {
 	}
 };
 
-const getWfHistory = async function (email, tenant, wfid, wf) {
+const getWfHistory = async function (tenant: string, eid: string, wfid: string, wf: any) {
 	let wfIO = await Parser.parse(wf.doc);
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
 
-	return await __getWorkflowWorksHistory(email, tenant, tpRoot, wfRoot, wfid);
+	return await __getWorkflowWorksHistory(tenant, eid, tpRoot, wfRoot, wfid);
 };
 
 const splitComment = function (str) {
@@ -5036,18 +5159,18 @@ const splitComment = function (str) {
 	if (Array.isArray(tmp)) return tmp;
 	else return [];
 };
-//为MD中的@uid添加<span>
-const splitMarked = async function (tenant, cmt) {
+//为MD中的@eid添加<span>
+const splitMarked = async function (tenant: string | Types.ObjectId, cmt: CommentType) {
 	let mdcontent = Marked.parse(cmt.content, {});
 	let splittedMd = splitComment(mdcontent);
 	let people = [];
-	let emails = [];
-	[people, emails] = await setPeopleFromContent(
+	let eids = [];
+	[people, eids] = await setPeopleFromContent(
 		tenant,
 		cmt.who, //Email domain reference user
 		cmt.content,
 		people,
-		emails,
+		eids,
 	);
 	for (let c = 0; c < splittedMd.length; c++) {
 		if (splittedMd[c].startsWith("@")) {
@@ -5097,20 +5220,25 @@ const getComments = async function (tenant, objtype, objid, depth = -1, skip = -
 	}
 	let cmts;
 	if (skip >= 0 && depth >= 0) {
-		cmts = await Comment.find({ tenant, objtype, objid })
+		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
 			.sort({ createdAt: -1 })
 			.limit(depth)
 			.skip(skip)
 			.lean();
 	} else if (depth >= 0) {
-		cmts = await Comment.find({ tenant, objtype, objid })
+		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
 			.sort({ createdAt: -1 })
 			.limit(depth)
 			.lean();
 	} else if (skip >= 0) {
-		cmts = await Comment.find({ tenant, objtype, objid }).sort({ createdAt: -1 }).skip(skip).lean();
+		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
+			.sort({ createdAt: -1 })
+			.skip(skip)
+			.lean();
 	} else {
-		cmts = await Comment.find({ tenant, objtype, objid }).sort({ createdAt: -1 }).lean();
+		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
+			.sort({ createdAt: -1 })
+			.lean();
 	}
 	if (cmts) {
 		for (let i = 0; i < cmts.length; i++) {
@@ -5151,7 +5279,7 @@ const getComments = async function (tenant, objtype, objid, depth = -1, skip = -
 
 const loadWorkflowComments = async function (tenant, wfid) {
 	let cmts = [];
-	let workComments = await Comment.find(
+	let workComments = (await Comment.find(
 		{
 			tenant: tenant,
 			"context.wfid": wfid,
@@ -5161,7 +5289,7 @@ const loadWorkflowComments = async function (tenant, wfid) {
 			__v: 0,
 		},
 		{ sort: "-updatedAt" },
-	).lean();
+	).lean()) as CommentType[];
 	for (let i = 0; i < workComments.length; i++) {
 		let todo = await Todo.findOne(
 			{
@@ -5201,13 +5329,13 @@ const loadWorkflowComments = async function (tenant, wfid) {
 		cmts[i].mdcontent = tmpret.mdcontent;
 		cmts[i].mdcontent2 = tmpret.mdcontent2;
 		let people = [];
-		let emails = [];
-		[people, emails] = await setPeopleFromContent(
+		let eids = [];
+		[people, eids] = await setPeopleFromContent(
 			tenant,
 			cmts[i].who, //Email domain reference user
 			cmts[i].content,
 			people,
-			emails,
+			eids,
 		);
 		cmts[i].people = people;
 		//每个 comment 自身还会有被评价
@@ -5220,8 +5348,7 @@ const loadWorkflowComments = async function (tenant, wfid) {
 };
 
 const __getWorkFullInfoRevocableAndReturnable = async function (
-	tenant: string,
-	peopleInBrowser: string,
+	tenant: string | Types.ObjectId,
 	theWf: any,
 	tpRoot: any,
 	wfRoot: any,
@@ -5235,8 +5362,8 @@ const __getWorkFullInfoRevocableAndReturnable = async function (
 	let tpNode = tpRoot.find("#" + todo.nodeid);
 	let workNode = wfRoot.find("#" + todo.workid);
 
-	ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes";
-	ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes";
+	ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes"; //with Sendback-able?
+	ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes"; //with Revocable ?
 
 	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
 	ret.parallel_actions = _getParallelActions(tpRoot, wfRoot, workNode);
@@ -5246,8 +5373,10 @@ const __getWorkFullInfoRevocableAndReturnable = async function (
 		ret.returnable = false;
 	} else {
 		if (ret.withsb || ret.withrvk) {
+			//sb:Sendback, rvk: Revoke;
 			//一个工作项可以被退回，仅当它没有同步节点，且状态为运行中
 			if (ret.withsb) {
+				//sb: Sendback; rvk: Revoke;
 				ret.returnable =
 					ret.parallel_actions.length === 0 &&
 					todo.status === "ST_RUN" &&
@@ -5291,7 +5420,7 @@ const __getWorkFullInfoRevocableAndReturnable = async function (
 };
 
 const __getWorkFullInfo = async function (
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	peopleInBrowser: string,
 	theWf: any,
 	tpRoot: any,
@@ -5429,9 +5558,8 @@ const __getWorkFullInfo = async function (
 	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
 	ret.parallel_actions = _getParallelActions(tpRoot, wfRoot, workNode);
 
-	__getWorkFullInfoRevocableAndReturnable(
+	const tmp = await __getWorkFullInfoRevocableAndReturnable(
 		tenant,
-		peopleInBrowser,
 		theWf,
 		tpRoot,
 		wfRoot,
@@ -5439,8 +5567,10 @@ const __getWorkFullInfo = async function (
 		todo,
 		ret,
 	);
+	ret.revocable = tmp.revocable;
+	ret.returnable = tmp.returnable;
 
-	ret.wf.history = await __getWorkflowWorksHistory(TodoOwner, tenant, tpRoot, wfRoot, wfid);
+	ret.wf.history = await __getWorkflowWorksHistory(tenant, TodoOwner, tpRoot, wfRoot, wfid);
 	ret.version = Const.VERSION;
 
 	return ret;
@@ -5463,18 +5593,18 @@ const __getWorkFullInfo = async function (
  * ]
  */
 const __getWorkflowWorksHistory = async function (
-	email,
-	tenant,
-	tpRoot,
-	wfRoot,
-	wfid,
+	tenant: string | Types.ObjectId,
+	eid: string,
+	tpRoot: any,
+	wfRoot: any,
+	wfid: string,
 ): Promise<any[]> {
 	let ret = [];
 	let tmpRet = [];
 	//let todo_filter = { tenant: tenant, wfid: wfid, status: /ST_DONE|ST_RETURNED|ST_REVOKED/ };
 	//let todo_filter = { tenant: tenant, wfid: wfid, status: { $ne: "ST_RUN" } };
 	let todo_filter = { tenant: tenant, wfid: wfid };
-	let todos = await Todo.find(todo_filter).sort({ updatedAt: -1 });
+	let todos = await Todo.find(todo_filter, { __v: 0 }).sort({ updatedAt: -1 });
 	for (let i = 0; i < todos.length; i++) {
 		let hasPersonCNInTitle = false;
 		//替换Var之前的原始Title
@@ -5499,7 +5629,7 @@ const __getWorkflowWorksHistory = async function (
 		if (todos[i].decision) todoEntry.decision = todos[i].decision;
 		let kvars = await Parser.userGetVars(
 			tenant,
-			email,
+			eid,
 			todos[i].wfid,
 			todos[i].workid,
 			[],
@@ -5519,7 +5649,7 @@ const __getWorkflowWorksHistory = async function (
 			//组织这个work的doers（多个用户）
 			tmpRet[i].doers = [];
 			tmpRet[i].doers.push({
-				uid: tmpRet[i].doer,
+				eid: tmpRet[i].doer,
 				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
 				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
@@ -5527,7 +5657,7 @@ const __getWorkflowWorksHistory = async function (
 				status: tmpRet[i].status,
 				decision: tmpRet[i].decision,
 			});
-			let work = await Work.findOne({ tenant: tenant, workid: tmpRet[i].workid });
+			let work = await Work.findOne({ tenant: tenant, workid: tmpRet[i].workid }, { __v: 0 });
 			tmpRet[i].workDecision = work && work.decision ? work.decision : "";
 			ret.push(tmpRet[i]);
 			tmp.push(tmpRet[i].workid);
@@ -5540,7 +5670,7 @@ const __getWorkflowWorksHistory = async function (
       }
       */
 			ret[existing_index].doers.push({
-				uid: tmpRet[i].doer,
+				eid: tmpRet[i].doer,
 				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
 				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
@@ -5561,10 +5691,14 @@ const __getWorkflowWorksHistory = async function (
 	return ret;
 };
 
-const getTodosByWorkid = async function (tenant, workid, full) {
+const getTodosByWorkid = async function (
+	tenant: string | Types.ObjectId,
+	workid: string,
+	full: boolean,
+) {
 	let todo_filter = { tenant: tenant, workid: workid };
 	let todos = [];
-	if (full) todos = await Todo.find(todo_filter).sort("-updatedAt").lean();
+	if (full) todos = await Todo.find(todo_filter, { __v: 0 }).sort("-updatedAt").lean();
 	else
 		todos = await Todo.find(todo_filter, { _id: 0, todoid: 1, doer: 1, status: 1, updatedAt: 1 })
 			.sort("-updatedAt")
@@ -5576,9 +5710,9 @@ const getTodosByWorkid = async function (tenant, workid, full) {
 };
 
 const _getFollowingActions = function (
-	tpRoot,
-	wfRoot,
-	workNode,
+	tpRoot: any,
+	wfRoot: any,
+	workNode: any,
 	withWork = false,
 	decentlevel = 0,
 ): ActionDef[] {
@@ -5631,10 +5765,10 @@ const _getFollowingActions = function (
 };
 
 const _getRoutedPassedWorks = async function (
-	tenant,
-	tpRoot,
-	wfRoot,
-	workNode,
+	tenant: string | Types.ObjectId,
+	tpRoot: any,
+	wfRoot: any,
+	workNode: any,
 	withWork = false,
 	decentlevel = 0,
 ): Promise<ActionDef[]> {
@@ -5643,12 +5777,15 @@ const _getRoutedPassedWorks = async function (
 	let workid = workNode.attr("id");
 	if (Tools.isEmpty(tplNodeId)) return [];
 	let ret = [];
-	let routes = await Route.find({
-		tenant: tenant,
-		wfid: wfRoot.attr("id"),
-		from_workid: workid,
-		status: "ST_PASS",
-	});
+	let routes = await Route.find(
+		{
+			tenant: tenant,
+			wfid: wfRoot.attr("id"),
+			from_workid: workid,
+			status: "ST_PASS",
+		},
+		{ __v: 0 },
+	);
 	for (let i = 0; i < routes.length; i++) {
 		let workSelector = `.work[id="${routes[i].to_workid}"]`;
 		let routedWork = workNode.nextAll(workSelector);
@@ -5724,12 +5861,15 @@ const notRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
 const isRoutePassTo = async function (tenant, wfid, workid, checkType, dests) {
 	if (["NODETYPE", "WORKID", "NODEID"].includes(checkType) === false)
 		throw new EmpError("NOT_SUPPORT", "isRoutePassTo " + checkType);
-	let tmp = await Route.findOne({
-		tenant: tenant,
-		wfid: wfid,
-		from_workid: workid,
-		status: "ST_PASS",
-	});
+	let tmp = await Route.findOne(
+		{
+			tenant: tenant,
+			wfid: wfid,
+			from_workid: workid,
+			status: "ST_PASS",
+		},
+		{ __v: 0 },
+	);
 	if (checkType === "NODETYPE") {
 		return dests.includes(tmp.to_nodetype);
 	} else if (checkType === "WORKID") {
@@ -5785,6 +5925,7 @@ const _getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): Ac
 						nodeType: "ACTION",
 						route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
 						byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
+						level: decentlevel,
 					});
 				} else {
 					ret.push({
@@ -5793,6 +5934,7 @@ const _getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): Ac
 						nodeType: Parser.getNodeType(tmpWork),
 						route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
 						byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
+						level: decentlevel,
 					});
 					let tmp = _getFromActions(tpRoot, wfRoot, tmpWork, decentlevel + 1);
 					ret = ret.concat(tmp);
@@ -5821,7 +5963,7 @@ const _getFromActionsWithRoutes = async function (
 		to_workid: workNode.attr("id"),
 		status: "ST_PASS",
 	};
-	let routes = await Route.find(routeFilter);
+	let routes = await Route.find(routeFilter, { __v: 0 });
 	for (let i = 0; i < routes.length; i++) {
 		let fromWork = wfRoot.find("#" + routes[i].from_workid);
 		let fromNodeType = Parser.getNodeType(fromWork);
@@ -5876,20 +6018,19 @@ const getStatusFromClass = function (node) {
 /**
  * getWorkflowOrNodeStatus = async() Get status of workflow or a worknode
  *
- * @param {...} getWorkflowOrNodeStatus = asynctenant -
- * @param {...} wfid - the id of workflow
- * @param {...} workid - the id of work
- *
- * @return {...} status of workid is present, status of workflow if workid is absent
  */
 const getWorkflowOrNodeStatus = async function (
-	email: string,
 	tenant: string,
+	eid: string,
 	wfid: string,
 	workid = null,
 ) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getWorkflowOrNodeStatus");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
+	const theEmployee = (await Employee.findOne(
+		{ tenant: tenant, eid: eid },
+		{ __v: 0 },
+	)) as EmployeeType;
+	if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
@@ -5904,14 +6045,15 @@ const getWorkflowOrNodeStatus = async function (
 
 /**
  *
- * @param {...}
- * @param {...} wfid -
- *
- * @return {...}
  */
-const pauseWorkflow = async function (tenant: string, email: string, wfid: string) {
+const pauseWorkflow = async function (
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	wfid: string,
+) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.pauseWorkflow");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
+	//const theEmployee = (await Employee.findOne({ tenant: tenant, eid: eid }, {__v:0})) as EmployeeType;
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
@@ -5946,7 +6088,7 @@ const pauseWorkflow = async function (tenant: string, email: string, wfid: strin
 	return ret;
 };
 
-const resetTodosETagByWfId = async function (tenant: string, wfid: string) {
+const resetTodosETagByWfId = async function (tenant: string | Types.ObjectId, wfid: string) {
 	let todos = await Todo.find({ tenant: tenant, wfid: wfid }, { doer: 1 });
 	for (let i = 0; i < todos.length; i++) {
 		await Cache.resetETag("ETAG:TODOS:${todos[i].doer}");
@@ -5956,13 +6098,14 @@ const resetTodosETagByWfId = async function (tenant: string, wfid: string) {
 /**
  *  重启一个工作流
  *
- * @param {...} wfid -
- *
- * @return {...}
  */
-const resumeWorkflow = async function (tenant, email, wfid) {
+const resumeWorkflow = async function (
+	tenant: string | Types.ObjectId,
+	employee: EmployeeType,
+	wfid: string,
+) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.resumeWorkflow");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "update"))
+	if (!SystemPermController.hasPerm(employee, Const.ENTITY_WORKFLOW, wf, "update"))
 		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 	let wfIO = await Parser.parse(wf.doc);
 	let wfRoot = wfIO(".workflow");
@@ -5999,11 +6142,6 @@ const resumeWorkflow = async function (tenant, email, wfid) {
 
 /**
  * stopWorks = async() 停止一个流程中所有进行中的Todo
- *
- * @param {...} stopWorks = asynctenant -
- * @param {...} wfid -
- *
- * @return {...}
  */
 const stopWorks = async function (tenant, wfid) {
 	let filter = { tenant: tenant, wfid: wfid, status: "ST_RUN" };
@@ -6060,16 +6198,20 @@ const resumeDelayTimers = async function (tenant, wfid) {
  * 如果忽略workid,则取工作流的变量
  * 如果有workID, 则取工作项的变量
  */
-const getKVars = async function (tenant: string, email: string, wfid: string, workid: string) {
+const getKVars = async function (tenant: string, eid: string, wfid: string, objid: string) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getKVars");
-	if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
+	const theEmployee = (await Employee.findOne(
+		{ tenant: tenant, eid: eid },
+		{ __v: 0 },
+	)) as EmployeeType;
+	if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "read"))
 		throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
-	if (workid) {
-		return await Parser.userGetVars(tenant, email, wfid, workid, [], [], Const.VAR_IS_EFFICIENT);
+	if (objid) {
+		return await Parser.userGetVars(tenant, eid, wfid, objid, [], [], Const.VAR_IS_EFFICIENT);
 	} else {
 		return await Parser.userGetVars(
 			tenant,
-			email,
+			eid,
 			wfid,
 			Const.FOR_WHOLE_PROCESS,
 			[],
@@ -6082,32 +6224,31 @@ const getKVars = async function (tenant: string, email: string, wfid: string, wo
 /**
  * 返回一个工作流所有的延时器
  */
-const getDelayTimers = async function (tenant, wfid) {
+const getDelayTimers = async function (tenant: string | Types.ObjectId, wfid: string) {
 	let filter = { tenant: tenant, wfid: wfid };
-	return await DelayTimer.find(filter);
+	return await DelayTimer.find(filter, { __v: 0 });
 };
 
 /**
  * 返回一个工作流所有运行中的延时器
  */
-const getActiveDelayTimers = async function (tenant, wfid) {
+const getActiveDelayTimers = async function (tenant: string | Types.ObjectId, wfid: string) {
 	let filter = { tenant: tenant, wfid: wfid, wfstatus: "ST_RUN" };
-	return await DelayTimer.find(filter);
+	return await DelayTimer.find(filter, { __v: 0 });
 };
 
 /**
  * getTrack = async() Get the track of work execution reversely.
  *
- * @param {...} getTrack = asynctenant -
- * @param {...} wfid -
- * @param {...} workid -
- *
- * @return {...}  Array :[ {from_workid, from_nodeid} ]
  */
-const getTrack = async function (email: string, tenant: string, wfid: string, workid: string) {
+const getTrack = async function (tenant: string, eid: string, wfid: string, workid: string) {
 	try {
 		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getTrack");
-		if (!SystemPermController.hasPerm(email, Const.ENTITY_WORKFLOW, wf, "read"))
+		const theEmployee = (await Employee.findOne(
+			{ tenant: tenant, eid: eid },
+			{ __v: 0 },
+		)) as EmployeeType;
+		if (!SystemPermController.hasPerm(theEmployee, Const.ENTITY_WORKFLOW, wf, "read"))
 			throw new EmpError("NO_PERM", "You don't have permission to read this workflow");
 		let wfIO = await Parser.parse(wf.doc);
 		let wfRoot = wfIO(".workflow");
@@ -6130,7 +6271,7 @@ const getTrack = async function (email: string, tenant: string, wfid: string, wo
 };
 
 const delegate = async function (
-	tenant: string,
+	tenant: string | Types.ObjectId,
 	delegator: string,
 	delegatee: string,
 	begindate: string,
@@ -6142,11 +6283,11 @@ const delegate = async function (
 			`${delegator} and ${delegatee} are the same one`,
 		);
 	}
-	let users = await User.find(
-		{ tenant: tenant, email: { $in: [delegator, delegatee] } },
-		{ _id: 0, email: 1 },
+	let employees = await Employee.find(
+		{ tenant: tenant, eid: { $in: [delegator, delegatee] } },
+		{ _id: 0, eid: 1 },
 	);
-	if (users.length !== 2) {
+	if (employees.length !== 2) {
 		throw new EmpError(
 			"DELEGATE_FAILED_NOT_SAME_ORG",
 			`${delegator} and ${delegatee} are not in the same org`,
@@ -6154,18 +6295,20 @@ const delegate = async function (
 	}
 	let tz = await Cache.getOrgTimeZone(tenant);
 	let tzdiff = TimeZone.getDiff(tz);
-	let dateBegin = new Date(begindate + "T00:00:00" + tzdiff);
-	let dateEnd = new Date(enddate + "T00:00:00" + tzdiff);
+	let dateBegin = new Date(begindate + (begindate.includes("T00:") ? "" : "T00:00:00") + tzdiff);
+	let dateEnd = new Date(enddate + (enddate.includes("T00:") ? "" : "T00:00:00") + tzdiff);
 	dateEnd.setDate(dateEnd.getDate() + 1);
 	//TODO: 找到重叠的委托及被委托，重复则不允许
 	if (
 		(await Delegation.countDocuments({
+			//我发出去的，有没有时间区间重叠的
 			tenant: tenant,
 			delegator: delegator,
 			begindate: { $lt: dateEnd },
 			enddate: { $gt: dateBegin },
 		})) +
 			(await Delegation.countDocuments({
+				// 我收到的，有没有时间区间重叠的
 				tenant: tenant,
 				delegatee: delegator,
 				begindate: { $lt: dateEnd },
@@ -6185,21 +6328,28 @@ const delegate = async function (
 	obj = await obj.save();
 };
 
-const delegationFromMe = async function (tenant, delegator_email) {
-	return delegationFromMeOnDate(tenant, delegator_email);
+const delegationFromMe = async function (tenant: string | Types.ObjectId, delegator_eid: string) {
+	return delegationFromMeOnDate(tenant, delegator_eid);
 };
-const delegationFromMeToday = async function (tenant, delegator_email) {
-	return delegationFromMeOnDate(tenant, delegator_email, new Date());
+const delegationFromMeToday = async function (
+	tenant: string | Types.ObjectId,
+	delegator_eid: string,
+) {
+	return delegationFromMeOnDate(tenant, delegator_eid, new Date());
 };
-const delegationFromMeOnDate = async function (tenant, delegator_email, onDate = null) {
-	let filter = { tenant: tenant, delegator: delegator_email };
+const delegationFromMeOnDate = async function (
+	tenant: string | Types.ObjectId,
+	delegator_eid: string,
+	onDate = null,
+) {
+	let filter = { tenant: tenant, delegator: delegator_eid };
 	if (onDate) {
 		filter["begindate"] = { $lte: onDate };
 		filter["enddate"] = { $gte: onDate };
 	}
 	let ret = await Delegation.find(
 		filter,
-		{ _id: 1, delegatee: 1, begindate: 1, enddate: 1 },
+		{ _id: 1, delegator: 1, delegatee: 1, begindate: 1, enddate: 1 },
 		{
 			sort: {
 				begindate: 1,
@@ -6209,8 +6359,12 @@ const delegationFromMeOnDate = async function (tenant, delegator_email, onDate =
 	return ret;
 };
 
-const delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
-	let filter = { tenant: tenant, delegatee: delegatee_email };
+const delegationToMeOnDate = async function (
+	tenant: string | Types.ObjectId,
+	delegatee_eid: string,
+	onDate: any,
+) {
+	let filter = { tenant: tenant, delegatee: delegatee_eid };
 	if (onDate) {
 		filter["begindate"] = { $lte: onDate };
 		filter["enddate"] = { $gte: onDate };
@@ -6228,20 +6382,31 @@ const delegationToMeOnDate = async function (tenant, delegatee_email, onDate) {
 	return ret;
 };
 
-const delegationToMe = async function (tenant, delegatee_email) {
-	return delegationToMeOnDate(tenant, delegatee_email, null);
+const delegationToMe = async function (tenant: string | Types.ObjectId, delegatee_eid: string) {
+	return delegationToMeOnDate(tenant, delegatee_eid, null);
 };
-const delegationToMeToday = async function (tenant, delegatee_email) {
-	return delegationToMeOnDate(tenant, delegatee_email, new Date());
+const delegationToMeToday = async function (
+	tenant: string | Types.ObjectId,
+	delegatee_eid: string,
+) {
+	return delegationToMeOnDate(tenant, delegatee_eid, new Date());
 };
 
-const undelegate = async function (tenant, delegator_email, ids) {
-	let idArray = Parser.splitStringToArray(ids);
-	let filter = { tenant: tenant, delegator: delegator_email, _id: { $in: idArray } };
+const undelegate = async function (
+	tenant: string | Types.ObjectId,
+	delegator_eid: string,
+	ids: string[],
+) {
+	let filter = { tenant: tenant, delegator: delegator_eid, _id: { $in: ids } };
 	await Delegation.deleteMany(filter);
 };
 
-const checkVisi = async function (tenant, tplid, email, withTpl = null) {
+const checkVisi = async function (
+	tenant: string | Types.ObjectId,
+	tplid: string,
+	email: string,
+	withTpl: string = null,
+) {
 	let ret = false;
 	let tpl = null;
 	if (withTpl === null) {
@@ -6271,7 +6436,7 @@ const checkVisi = async function (tenant, tplid, email, withTpl = null) {
 				email: tpl.author,
 				insertDefault: true,
 			});
-			visiPeople = tmp.map((x) => x.uid);
+			visiPeople = tmp.map((x) => x.eid);
 		}
 	}
 	ret = visiPeople.includes(email) || visiPeople.includes("all");
@@ -6284,8 +6449,8 @@ const checkVisi = async function (tenant, tplid, email, withTpl = null) {
 const clearUserVisiedTemplate = async function (tenant) {
 	let uvtKeyPrefix = "uvt_" + tenant + "_";
 	let ubtKeyPrefix = "ubt_" + tenant + "_";
-	let tmp = await User.find({ tenant: tenant }, { _id: 0, email: 1 }).lean();
-	tmp = tmp.map((x) => x.email);
+	let employees = await Employee.find({ tenant: tenant }, { _id: 0, eid: 1 }).lean();
+	const tmp = employees.map((x) => x.eid);
 	for (let i = 0; i < tmp.length; i++) {
 		let uvtKey = uvtKeyPrefix + tmp[i];
 		await redisClient.del(uvtKey);
@@ -6416,7 +6581,7 @@ const scanKShares = async function () {
 		};
 		const files = getFiles(process.env.EMP_KSHARE_FOLDER);
 		for (let i = 0; i < files.length; i++) {
-			let aKsTpl = await KsTpl.findOneAndUpdate({ ksid: files[i] }, { doc: 0 });
+			let aKsTpl = await KsTpl.findOne({ ksid: files[i] }, { doc: 0 });
 			if (!aKsTpl) {
 				await new KsTpl({
 					ksid: files[i],
@@ -6434,6 +6599,7 @@ const scanKShares = async function () {
 							doc: fs.readFileSync(path.join(process.env.EMP_KSHARE_FOLDER, files[i]), "utf8"),
 						},
 					},
+					{ upsert: false, new: true },
 				);
 			}
 		}
@@ -6470,21 +6636,6 @@ const init = once(async function () {
 		fs.existsSync(Tools.getDefaultAvatarPath()) ? "OK" : "NOT EXIST",
 		"\n",
 	);
-
-	/* let regexp = new RegExp("avatar/avatar_");
-	 let users = await User.find({ "avatarinfo.path": regexp });
-	for (let i = 0; i < users.length; i++) {
-		let tenant = users[i].tenant.toString();
-		let oldPath = users[i].avatarinfo.path;
-		let newPath = path.join(Tools.getTenantFolders(tenant).avatar, users[i].email);
-		try {
-			fs.renameSync(oldPath, newPath);
-		} catch (error) {
-		} finally {
-		}
-		console.log(tenant, newPath);
-		await User.updateOne({ _id: users[i]._id }, { $set: { "avatarinfo.path": newPath } });
-	} */
 
 	await serverInit();
 	await Client.clientInit();
@@ -6808,16 +6959,19 @@ const checkAnd = async function (
 	//在该版本之前已经运行的流程，可能会有问题。因为没有counterPart. 手工修复可以吗？
 	if (counterPart) {
 		/*
-    let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }).sort(
+			 let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }, {__v:0}).sort(
       "-round"
     );
     counterPartRound = work.round;
     */
-		let route = await Route.findOne({
-			tenant: tenant,
-			wfid: wfid,
-			from_nodeid: counterPart,
-		}).sort("-round");
+		let route = await Route.findOne(
+			{
+				tenant: tenant,
+				wfid: wfid,
+				from_nodeid: counterPart,
+			},
+			{ __v: 0 },
+		).sort("-round");
 		counterPartRound = route.round;
 		counterPartPassedRoutesNumber = await Route.countDocuments({
 			tenant: tenant,
@@ -6859,7 +7013,9 @@ const checkAnd = async function (
 	};
 	console.log("Check AND counterPart and Round", counterPart, counterPartRound);
 	//routeFromNodes 有Route对象的节点，status可能是PASS，也可能是INGORE
-	let routeFromNodes = [...new Set((await Route.find(routeFilter)).map((x) => x.from_nodeid))];
+	let routeFromNodes = [
+		...new Set((await Route.find(routeFilter, { __v: 0 })).map((x) => x.from_nodeid)),
+	];
 	//要么，
 	if (
 		(counterPartPassedRoutesNumber === fromNodeIds.length &&
@@ -6962,7 +7118,11 @@ const ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) 
 				workid: work.attr("id"),
 				status: "ST_RUN",
 			};
-			await Todo.findOneAndUpdate(todoFilter, { $set: { status: "ST_IGNORE" } }, { new: true });
+			await Todo.findOneAndUpdate(
+				todoFilter,
+				{ $set: { status: "ST_IGNORE" } },
+				{ upsert: false, new: true },
+			);
 		}
 	});
 	return ret;
@@ -7047,10 +7207,6 @@ const __getFutureSecond = function (wfRoot, delayString) {
 
 /**
  * checkDelayTimer 检查定时器时间是否已达到(超时),如果已超时,则完成定时器,并ProcNext
- *
- * @param {...}
- *
- * @return {...}
  */
 const checkDelayTimer = async function () {
 	//禁止同时多个线程进行检查
@@ -7062,7 +7218,7 @@ const checkDelayTimer = async function () {
 		//时间早于当前时间,表明该定时器已超时;
 		//也就是,从数据库中找到所有已超时或到时的DelayTimer
 		let filter = { wfstatus: "ST_RUN", time: { $lt: now.getTime() } };
-		let delayTimers = await DelayTimer.find(filter);
+		let delayTimers = await DelayTimer.find(filter, { __v: 0 });
 		let nexts = [];
 		for (let i = 0; i < delayTimers.length; i++) {
 			try {
@@ -7092,14 +7248,14 @@ const checkDelayTimer = async function () {
 /**
  * endAllWorks = async() 结束全部工作项: 将工作流中所有运行中的节点设为ST_END
  *
- * @param {...}
- * @param {...} wfid -
- * @param {...} tpRoot -
- * @param {...} wfRoot -
- *
- * @return {...}
  */
-const endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
+const endAllWorks = async function (
+	tenant: string | Types.ObjectId,
+	wfid: string,
+	tpRoot: any,
+	wfRoot: any,
+	wfstatus: string,
+) {
 	let workSelector = ".work.ST_RUN";
 	wfRoot.find(workSelector).each(async function (i, el) {
 		let work = Cheerio(el);
@@ -7125,13 +7281,16 @@ const endAllWorks = async function (tenant, wfid, tpRoot, wfRoot, wfstatus) {
 	);
 };
 
-const stopWorkflowCrons = async function (tenant, wfid) {
+const stopWorkflowCrons = async function (tenant: string | Types.ObjectId, wfid: string) {
 	try {
 		process.stdout.write("\tDestroy Crontab\r");
-		let cronTabs = await Crontab.find({
-			tenant: tenant,
-			wfid: wfid,
-		});
+		let cronTabs = await Crontab.find(
+			{
+				tenant: tenant,
+				wfid: wfid,
+			},
+			{ __v: 0 },
+		);
 		for (let i = 0; i < cronTabs.length; i++) {
 			await stopCronTask(cronTabs[i]._id);
 			await Crontab.deleteOne({ _id: cronTabs[i]._id });
@@ -7145,9 +7304,9 @@ const getEmailRecipientsFromDoers = function (doers) {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
 		if (i === 0) {
-			ret += doers[i].uid;
+			ret += doers[i].eid;
 		} else {
-			ret += ", " + doers[i].uid;
+			ret += ", " + doers[i].eid;
 		}
 	}
 	return ret;
@@ -7246,11 +7405,14 @@ const procNext = async function (procParams: ProcNextParams) {
 	let cronexpr = Tools.blankToDefault(tpNode.attr("cronexpr"), "0 8 * * 1");
 	if ((cronrun === 1 || cronrun === 2) && repeaton !== decision) {
 		//clean existing crontab jobs
-		let cronTab = await Crontab.findOne({
-			tenant: tenant,
-			wfid: wfid,
-			workid: this_workid,
-		});
+		let cronTab = await Crontab.findOne(
+			{
+				tenant: tenant,
+				wfid: wfid,
+				workid: this_workid,
+			},
+			{ __v: 0 },
+		);
 		await stopCronTask(cronTab._id);
 		await Crontab.deleteOne({ _id: cronTab._id });
 	}
@@ -7374,7 +7536,7 @@ const procNext = async function (procParams: ProcNextParams) {
       round: round,
       workid: this_workid,
       status: "ST_DONE",
-    })
+			}, {__v:0})
   ).map((x) => {
     withouts.push(x.from_workid);
     return x.from_workid;
@@ -7413,13 +7575,6 @@ const procNext = async function (procParams: ProcNextParams) {
 /**
  * wfRoot不为空，是为了从wfRoot中找innerTeam
  * 目前只在yarkNode中的INFORM和ACTION中用到
- * @param {...} tenant -
- * @param {...} teamid -
- * @param {...} pds -
- * @param {...} starter -
- * @param {...} wfRoot = null -
- *
- * @return {...}
  */
 const getDoer = async function (
 	tenant,
@@ -7433,7 +7588,7 @@ const getDoer = async function (
 ) {
 	let ret = [];
 	if (!pds || (pds && pds === "DEFAULT")) {
-		return [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
+		return [{ eid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	//先吧kvarString变为kvar对象
 	let kvars = {};
@@ -7474,22 +7629,22 @@ const getDoer = async function (
 	);
 	//如果返回为空，并且需要插入缺省starter，则返回缺省starter
 	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length === 0))) {
-		ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
+		ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
 	}
 	return ret;
 };
 
 /**
  * 生成6位短信验证码
- * @returns 
+ * @returns
  */
 const randomNumber = () => {
-    let Num = Math.round(Math.random() * 1000000);
-    if (Num < 100000 || Num > 1000000) {
-        return randomNumber();
-    } else {
-        return Num;
-    }
+	let Num = Math.round(Math.random() * 1000000);
+	if (Num < 100000 || Num > 1000000) {
+		return randomNumber();
+	} else {
+		return Num;
+	}
 };
 
 if (isMainThread) init();
@@ -7551,10 +7706,10 @@ export default {
 	stopCronTask,
 	scheduleCron,
 	startBatchWorkflow,
-	rescheduleCrons,
 	sendNexts,
 	sendTenantMail,
 	sendSystemMail,
 	scanKShares,
-	randomNumber
+	randomNumber,
+	rescheduleCrons,
 };
