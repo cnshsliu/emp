@@ -1,13 +1,15 @@
 import { isMainThread, parentPort } from "worker_threads";
+import { Types } from "mongoose";
+import { expect } from "@hapi/code";
 import fs from "fs";
+import assert from "assert";
 import Tools from "../tools/tools";
-import User from "../database/models/User";
-import LoginTenant from "../database/models/LoginTenant";
-import Template from "../database/models/Template";
+import { Employee } from "../database/models/Employee";
+import { Template } from "../database/models/Template";
 import KsTpl from "../database/models/KsTpl";
-import Tenant from "../database/models/Tenant";
+import { Tenant } from "../database/models/Tenant";
 import OrgChart from "../database/models/OrgChart";
-import Site from "../database/models/Site";
+import { Site, SiteType } from "../database/models/Site";
 import { redisClient } from "../database/redis";
 import LRU from "lru-cache";
 
@@ -16,109 +18,95 @@ const lruCache = new LRU({ max: 10000 });
 import type { CoverInfo, AvatarInfo, SmtpInfo } from "./EmpTypes";
 const PERM_EXPIRE_SECONDS = 60;
 
-const asyncFilter = async (arr: any[], predicate: any) => {
-	const results = await Promise.all(arr.map(predicate));
-
-	return arr.filter((_v: any, index) => results[index]);
-};
-
 const internals = {
+	/**
+	 * 设置 eid -> username 映射缓存
+	 */
 	setUserName: async function (
-		email: string,
+		tenant: string | Types.ObjectId,
+		eid: string,
 		username: string = null,
 		expire: number = 60,
 	): Promise<string> {
-		email = email.toLowerCase().trim();
+		const lruKey = `USERNAME:${tenant}:${eid}`;
 		if (!username) {
-			let user = await User.findOne({ email: email }, { username: 1, ew: 1 });
-			if (user) {
-				username = user.username;
+			let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { nickname: 1, ew: 1 });
+			if (employee) {
+				username = employee.nickname;
 				{
-					let ewToSet = JSON.stringify(user.ew ? user.ew : { email: true, wecom: false });
-					lruCache.set(`EW:${email}`, ewToSet);
+					lruCache.set(`EW:${tenant}:{eid}`, employee.notify);
 				}
 			}
 		}
 		if (username) {
-			lruCache.set(`USERNAME:${email}`, username);
+			lruCache.set(lruKey, username);
 		}
 		return username;
 	},
 
+	/* 根据eid从缓存去的用户名称 */
 	getUserName: async function (
-		tenant: string,
-		email: string,
+		tenant: string | Types.ObjectId,
+		eid: string,
 		where: string = "unknown",
 	): Promise<string> {
-		email = await internals.ensureTenantEmail(tenant, email);
-		//let username = await redisClient.get("USERNAME:" + email);
-		let username = lruCache.get(`USERNAME:${email}`) as string;
-		if (username) {
-			return username;
-		} else {
-			let user = await User.findOne({ tenant: tenant, email: email }, { username: 1, ew: 1 });
-			if (user) {
-				await internals.setUserName(email, user.username, 60);
-				console.log(`[Cache 3️⃣ ] 👤 getUserName ${email}  ${user.username} in ${where}`);
-				return user.username;
+		assert(eid, "getUserName should be passed an non-empty email string");
+		expect(eid).to.not.include("@");
+		let lruKey = `USERNAME:${tenant}:${eid}`;
+		let ret = lruCache.get(lruKey) as string;
+		if (!ret) {
+			let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { nickname: 1 });
+			if (employee) {
+				await internals.setUserName(tenant, eid, employee.nickname, 60);
+				console.log(`[Cache 3️⃣ ] 👤 getUserName ${eid}  ${employee.nickname} in ${where}`);
+				ret = employee.nickname;
 			} else {
 				console.warn(
 					isMainThread ? "MainThread:" : "\tChildThread:" + "Cache.getUserName, Email:",
-					email,
+					eid,
 					" not found",
 				);
-				return "USER_NOT_FOUND";
+				ret = "USER_NOT_FOUND";
 			}
 		}
+		return ret;
 	},
 
-	getUserEw: async function (email: string): Promise<any> {
-		email = email.toLowerCase().trim();
-		const key = `EW:${email}`;
+	/* 根据eid去的用户的提醒发送设置 */
+	getUserEw: async function (tenant: string | Types.ObjectId, eid: string): Promise<any> {
+		const key = `EW:${tenant}:${eid}`;
 		let ew = lruCache.get(key);
 		if (ew) {
 			//console.log(`[Cache 1️⃣ ] ✉️  getUserEw ${email}  ${ew}`);
 			return ew;
 		} else {
-			await internals.setUserName(email, null, 60);
+			await internals.setUserName(tenant, eid, null, 60);
 			ew = lruCache.get(key);
 			return ew;
 		}
 	},
 
-	getUserSignature: async function (tenant: string, email: string): Promise<string> {
-		let key = "SIGNATURE:" + email;
+	/* 从缓存去的用户的签名档 */
+	getUserSignature: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
+		let key = `SIGNATURE:${tenant}:${eid}`;
 		let signature = lruCache.get(key) as string;
 		if (signature) {
 			return signature;
 		} else {
-			let user = await User.findOne({ tenant: tenant, email: email });
-			if (user) {
-				let loginTenant = await LoginTenant.findOne(
-					{
-						tenant: tenant,
-						userid: user._id
-					},{ 
-						signature: 1 
-					}
-				)
-				if(loginTenant && loginTenant.signature){
-					let setTo = "";
-					if (user.signature) {
-						setTo = user.signature;
-					}
-
-					lruCache.set(key, setTo);
-					return setTo;
-				} else {
-					return ""
-				}
+			let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { signature: 1 });
+			if (employee && employee.signature) {
+				lruCache.set(key, employee.signature);
+				return employee.signature;
 			} else {
 				return "";
 			}
 		}
 	},
 
+	/**
+	 * 取得key的时间戳的ETag
+	 * https://zh.m.wikipedia.org/zh-hans/HTTP_ETag
+	 */
 	getETag: function (key: string): string {
 		let cached = lruCache.get(key) as string;
 		if (cached) {
@@ -130,6 +118,10 @@ const internals = {
 		}
 	},
 
+	/**
+	 * 	resetETag: async() 根据key重置ETtag
+	 *
+	 */
 	resetETag: async function (key: string) {
 		let etag = new Date().getTime().toString();
 		lruCache.set(key, etag);
@@ -141,6 +133,9 @@ const internals = {
 		return etag;
 	},
 
+	/**
+	 * 根据key删除ETtag
+	 */
 	delETag: async function (key: string) {
 		lruCache.delete(key);
 		if (!isMainThread) {
@@ -148,7 +143,10 @@ const internals = {
 		}
 	},
 
-	getTplCoverInfo: async function (tenant: string, tplid: string): Promise<CoverInfo> {
+	getTplCoverInfo: async function (
+		tenant: string | Types.ObjectId,
+		tplid: string,
+	): Promise<CoverInfo> {
 		let key = "TPLCOVER:" + tplid;
 		let cached = lruCache.get(key) as CoverInfo;
 		if (cached) {
@@ -159,9 +157,9 @@ const internals = {
 				{ tenant: tenant, tplid: tplid },
 				{ _id: 0, coverTag: 1 },
 			).lean();
-			let theCoverImagePath = Tools.getTemplateCoverPath(tenant, tplid);
+			let theCoverImagePath = Tools.getTemplateCoverPath(tenant.toString(), tplid);
 			let coverinfo = {
-				path: Tools.getTemplateCoverPath(tenant, tplid),
+				path: Tools.getTemplateCoverPath(tenant.toString(), tplid),
 				media: "image/png",
 				etag: theTpl.coverTag,
 			};
@@ -174,72 +172,60 @@ const internals = {
 		lruCache.delete(key);
 	},
 
-	getUserAvatarInfo: async function (tenant: string, email: string): Promise<AvatarInfo> {
-		let key = "AVATAR:" + email;
+	getUserAvatarInfo: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+	): Promise<AvatarInfo> {
+		let key = `AVATAR:${tenant}:${eid}`;
 		let cached = lruCache.get(key) as AvatarInfo;
-		if (cached) {
-			return cached;
-		} else {
-			let ret = null;
-			let user = await User.findOne({ tenant: tenant, email: email });
-			if(user){
-				let loginTenant = await LoginTenant.findOne(
-					{
-						tenant: tenant,
-						userid: user._id
-					},{ 
-						avatarinfo: 1 
-					}
-				)
-				if (loginTenant && loginTenant.avatarinfo && loginTenant.avatarinfo.path) {
-					if (fs.existsSync(loginTenant.avatarinfo.path)) {
-						ret = loginTenant.avatarinfo;
-					} else {
-						ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
-					}
+		if (!cached) {
+			let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { avatarinfo: 1 });
+			if (employee && employee.avatarinfo && employee.avatarinfo.path) {
+				if (fs.existsSync(employee.avatarinfo.path)) {
+					cached = employee.avatarinfo;
 				} else {
-					ret = { path: Tools.getDefaultAvatarPath(), media: "image/png", tag: "nochange" };
+					cached = {
+						path: Tools.getDefaultAvatarPath(),
+						media: "image/png",
+						tag: "nochange",
+					} as unknown as AvatarInfo;
 				}
+			} else {
+				cached = {
+					path: Tools.getDefaultAvatarPath(),
+					media: "image/png",
+					tag: "nochange",
+				} as unknown as AvatarInfo;
 			}
-			lruCache.set(key, ret);
-			return ret;
+			lruCache.set(key, cached);
 		}
+		return cached;
 	},
 
-	getUserOU: async function (tenant: string, email: string): Promise<string> {
+	/**
+	 * 取得用户所在的部门
+	 *
+	 * @param {string} tenant
+	 * @param {string} eid
+	 * @returns {Promise<string>}
+	 */
+	getUserOU: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
 		//TODO: where is the updateing?
-		let key = "OU:" + tenant + email;
+		let key = `OU:${tenant}:${eid}`;
 		let ouCode = lruCache.get(key) as string;
 		if (ouCode) {
 			return ouCode;
 		} else {
-			email = await internals.ensureTenantEmail(tenant, email);
-			let filter = { tenant: tenant, uid: email };
+			let filter = { tenant: tenant, eid: eid };
 			let theStaff = await OrgChart.findOne(filter);
 			if (theStaff) {
 				lruCache.set(key, theStaff.ou);
 				return theStaff.ou;
 			} else {
-				console.warn("Cache.getUserOU from orgchart, Email:", email, " not found");
+				console.warn("Cache.getUserOU from orgchart, Email:", eid, " not found");
 				return "USER_NOT_FOUND_OC";
 			}
 		}
-	},
-
-	ensureTenantEmail: async function (tenant: string, email: string): Promise<string> {
-		let ret = email;
-		if (email.indexOf("@") === 0) {
-			email = email.substring(1);
-		}
-		let tenantDomain = await this.getTenantDomain(tenant);
-		if (email.indexOf("@") > 0) {
-			ret = email.substring(0, email.indexOf("@")) + tenantDomain;
-		} else {
-			email = email + tenantDomain;
-			ret = email;
-		}
-		//console.log(`Ensure Tenant email ${email} to ${ret}`);
-		return ret;
 	},
 
 	setOnNonExist: async function (
@@ -248,47 +234,34 @@ const internals = {
 		expire: number = 60,
 	): Promise<boolean> {
 		lruCache.set(key, value);
-		//await redisClient.expire(key, expire);
 		return true;
 	},
 
-	getMyGroup: async function (email: string): Promise<string> {
-		if (email[0] === "@") email = email.substring(1);
-		let key = "USRGRP:" + email.toLowerCase();
+	getEmployeeGroup: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
+		let key = `USRGRP:${tenant}:${eid}`;
 		let mygroup = lruCache.get(key) as string;
 		if (!mygroup) {
-			let filter = { email: email };
-			let user = await User.findOne(filter);
-			if (user) {
-				let loginTenantFilter = {
-					userid: user._id,
-					tenant: user.tenant
-				}
-				let loginTenant = await LoginTenant.findOne(
-					loginTenantFilter, { 
-						group: 1 
-					}
-				)
-				if(loginTenant){
-					lruCache.set(key, loginTenant.group);
-					//await redisClient.expire(key, PERM_EXPIRE_SECONDS);
-					mygroup = loginTenant.group;
-				}else {
-					console.error("Get My Group: LoginTenant not found: filter", loginTenantFilter);
-				}
+			const employeeFilter = { tenant, eid };
+			let employee = await Employee.findOne(employeeFilter, {
+				group: 1,
+			});
+			if (employee) {
+				lruCache.set(key, employee.group);
+				//await redisClient.expire(key, PERM_EXPIRE_SECONDS);
+				mygroup = employee.group;
 			} else {
-				console.error("Get My Group: User not found: filter", filter);
+				console.error("Get My Group: Employee not found: filter", employeeFilter);
 			}
 		}
 
 		return mygroup;
 	},
 
-	getOrgTimeZone: async function (tenant: string): Promise<string> {
+	getOrgTimeZone: async function (tenant: string | Types.ObjectId): Promise<string> {
 		let key = "OTZ:" + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
-			let org = await Tenant.findOne({ _id: tenant });
+			let org = await Tenant.findOne({ _id: tenant }, { timezone: 1 });
 			if (org) {
 				ret = org.timezone;
 				lruCache.set(key, ret);
@@ -299,11 +272,11 @@ const internals = {
 		return ret;
 	},
 
-	getOrgSmtp: async function (tenant: string): Promise<SmtpInfo> {
+	getOrgSmtp: async function (tenant: string | Types.ObjectId): Promise<SmtpInfo> {
 		let key = "SMTP:" + tenant;
 		let ret = lruCache.get(key) as SmtpInfo;
 		if (!ret) {
-			let org = await Tenant.findOne({ _id: tenant });
+			let org = await Tenant.findOne({ _id: tenant }, { smtp: 1 });
 			if (org) {
 				ret = org.smtp;
 				if (ret) {
@@ -324,15 +297,15 @@ const internals = {
 		return ret;
 	},
 
-	delOrgTags: async function (tenant: string): Promise<void> {
+	delOrgTags: async function (tenant: string | Types.ObjectId): Promise<void> {
 		await internals.removeOrgRelatedCache(tenant, "ORGTAGS");
 	},
 
-	getOrgTags: async function (tenant: string): Promise<string> {
+	getOrgTags: async function (tenant: string | Types.ObjectId): Promise<string> {
 		let key = "ORGTAGS:" + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
-			let org = await Tenant.findOne({ _id: tenant });
+			let org = await Tenant.findOne({ _id: tenant }, { tags: 1 });
 			if (org) {
 				ret = org.tags;
 				if (ret) {
@@ -344,40 +317,14 @@ const internals = {
 		return ret;
 	},
 
-	//如果用户登录时直接使用用户ID而不是邮箱，由于无法确认当前Tenant
-	//所以，不能用Cache.getTenantDomain
-	//但可以使用getSiteDomain, 通过 SiteDomain的owner的邮箱地址来获取域名
-	//这种情况适用于单一site部署的情况，在单site部署时，在site信息中，设置owner
-	//owner邮箱就是企业的邮箱地址。
-	//在SaaS模式下，由于是多个企业共用，无法基于单一的site来判断邮箱地址
-	//刚好，Site模式下是需要用户输入邮箱地址的
-	//
-	//该方法在 account/handler中被使用，当用户登录时只使用用户ID时，调用本方法
-	getSiteDomain: async function (siteid: string): Promise<string> {
-		let key = "SITEDOMAIN:" + siteid;
-		let ret = lruCache.get(key) as string;
-		if (!ret) {
-			let site = await Site.findOne({ siteid: siteid });
-			if (site) {
-				let domain = site.owner.substring(site.owner.indexOf("@"));
-				lruCache.set(key, domain);
-				//await redisClient.expire(key, 30 * 24 * 60 * 60);
-				ret = domain;
-			}
-		}
-		//console.log(`Domain of ${siteid} is ${ret}`);
-		return ret;
-	},
-
-	getTenantDomain: async function (tenant: string): Promise<string> {
+	getTenantDomain: async function (tenant: string | Types.ObjectId): Promise<string> {
 		let key = "TNTD:" + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
-			let theTenant = await Tenant.findOne({ _id: tenant }, { owner: 1, name: 1 });
+			let theTenant = await Tenant.findOne({ _id: tenant }, { domain: 1 });
 			if (theTenant) {
-				let domain = theTenant.owner.substring(theTenant.owner.indexOf("@"));
-				lruCache.set(key, domain);
-				ret = domain;
+				lruCache.set(key, theTenant.domain);
+				ret = theTenant.domain;
 			}
 		}
 		//console.log(`Tenant ${tenant} domain: ${ret}`);
@@ -385,7 +332,6 @@ const internals = {
 	},
 
 	getMyPerm: async function (permKey: string): Promise<string> {
-		console.log("YYYYYYYYYYYYYYYYYYESSSSSSSSSSS");
 		return lruCache.get(permKey);
 	},
 	setMyPerm: async function (permKey: string, perm: string): Promise<string> {
@@ -398,30 +344,37 @@ const internals = {
 		return key;
 	},
 
-	removeKeyByEmail: async function (email: string, cacheType: string = null): Promise<string> {
-		let emailKey = email.toLowerCase().trim();
+	removeKeyByEid: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		cacheType: string = null,
+	): Promise<string> {
+		let eidKey = `${tenant}:${eid}`;
 		if (cacheType) {
-			lruCache.delete(cacheType + ":" + emailKey);
+			lruCache.delete(cacheType + ":" + eidKey);
 		} else {
-			lruCache.delete("USRGRP:" + emailKey);
-			lruCache.delete("PERM:" + emailKey);
-			lruCache.delete("USERNAME:" + emailKey);
-			lruCache.delete("EW:" + emailKey);
-			lruCache.delete("OU:" + emailKey);
-			lruCache.delete("AVATAR:" + emailKey);
-			lruCache.delete("SIGNATURE:" + emailKey);
+			lruCache.delete("USRGRP:" + eidKey);
+			lruCache.delete("PERM:" + eidKey);
+			lruCache.delete("USERNAME:" + eidKey);
+			lruCache.delete("EW:" + eidKey);
+			lruCache.delete("OU:" + eidKey);
+			lruCache.delete("AVATAR:" + eidKey);
+			lruCache.delete("SIGNATURE:" + eidKey);
 		}
-		return email;
+		return eid;
 	},
 
-	removeOrgRelatedCache: async function (tenant: string, cacheType: string): Promise<string> {
+	removeOrgRelatedCache: async function (
+		tenant: string | Types.ObjectId,
+		cacheType: string,
+	): Promise<string> {
 		if (cacheType) lruCache.delete(cacheType + ":" + tenant);
 		else {
 			lruCache.delete("OTZ:" + tenant);
 			lruCache.delete("SMTP:" + tenant);
 			lruCache.delete("ORGTAGS:" + tenant);
 		}
-		return tenant;
+		return tenant.toString();
 	},
 
 	getVisi: async function (tplid: string): Promise<string> {
@@ -443,17 +396,17 @@ const internals = {
 	},
 
 	//设置重置密码的Token
-	setRstPwdVerificationCode: async function (email: string, vrfCode: string): Promise<string> {
+	setRstPwdVerificationCode: async function (account: string, vrfCode: string): Promise<string> {
 		//这里要用Redis的expire机制，lru-cache也有，但没有用过, 直接用 redis保险
-		let rstPwdKey = "RSTPWD:" + email;
+		let rstPwdKey = `RSTPWD:${account}`;
 		await redisClient.set(rstPwdKey, vrfCode);
 		//Keep this expire, don't delete it
 		await redisClient.expire(rstPwdKey, 15 * 60);
 		return rstPwdKey;
 	},
 	//取得重置密码的Token
-	getRstPwdVerificationCode: async function (email: string): Promise<string> {
-		let rstPwdKey = "RSTPWD:" + email;
+	getRstPwdVerificationCode: async function (account: string): Promise<string> {
+		let rstPwdKey = `RSTPWD:${account}`;
 		let ret = await redisClient.get(rstPwdKey);
 		return ret;
 	},

@@ -6,6 +6,9 @@ import JasonWebToken from "jsonwebtoken";
 import JwtAuth from "../auth/jwt-strategy";
 import Routes from "./routes";
 import Views from "./views";
+import Inert from "@hapi/inert";
+import Vision from "@hapi/vision";
+import HapiSwagger from "hapi-swagger";
 
 import Good from "@hapi/good";
 import hapiAuthJwt from "hapi-auth-jwt2";
@@ -40,7 +43,7 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		 */
 		routes: {
 			//Allow CORS for all
-			// cors: true, 
+			// cors: true,
 			cors: {
 				origin: ["*"],
 				credentials: true,
@@ -91,18 +94,21 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		await theHapiServer.server.register({ plugin: hapiAuthWishHouse });
 		await theHapiServer.server.register({ plugin: WishHouseAuthStrategy });
 	},
-	/* register_swagger: async () => {
-    await theHapiServer.server.register([
-      Inert,
-      Vision,
-      { plugin: HapiSwagger, options: }, {
-        info: {
-          title: "HyperFlow API Documentation",
-          version: "2.0",
-        },
-      }
-    ]);
-  }, */
+	register_swagger: async () => {
+		await theHapiServer.server.register([
+			Inert,
+			Vision,
+			{
+				plugin: HapiSwagger,
+				options: {
+					info: {
+						title: "EMP Documentation",
+						version: "2.0",
+					},
+				},
+			},
+		]);
+	},
 	starter: async () => {
 		if (theHapiServer.server_initialized) {
 			return theHapiServer.server;
@@ -110,7 +116,7 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		await theHapiServer.register_Good();
 		await theHapiServer.register_authJwt();
 		await theHapiServer.register_authWishHouse();
-		//await register_swagger();
+		await theHapiServer.register_swagger();
 
 		await JwtAuth.setJwtStrategy(theHapiServer.server);
 		await Routes.init(theHapiServer.server);

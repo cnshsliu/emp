@@ -1,33 +1,38 @@
 import Tools from "../tools/tools";
+import EmpError from "./EmpError";
+import { Types, ClientSession } from "mongoose";
 import OrgChart from "../database/models/OrgChart";
-import Cache from "./Cache";
+import { Employee } from "../database/models/Employee";
 const OrgChartHelper = {
 	FIND_ALL: 3,
 	FIND_ALL_UPPER: 2,
 	FIND_FIRST_UPPER: 1,
 	FIND_IN_OU: 0,
 	/**
-	 * Get the common name of a uid
-	 * for people, uid is their email
-	 * for department, uid is "OU-department id"
+	 * Get the common name of a eid
+	 * for department, eid is "OU-department id"
 	 */
-	getCN: async function (tenant, uid) {
-		let filter: any = { tenant: tenant, uid: uid };
-		let person = await OrgChart.findOne(filter, { cn: 1 });
-		return person ? person.cn : "Not found";
+	getCN: async function (tenant: string | Types.ObjectId, eid: string) {
+		let filter: any = { tenant: tenant, eid: eid };
+		let ocEntry = await Employee.findOne(filter, { nickname: 1 });
+		return ocEntry ? ocEntry.nickname : "Not found";
 	},
-	getOuCN: async function (tenant, ou) {
-		let filter: any = { tenant: tenant, ou: ou, uid: "OU---" };
+	getOuCN: async function (tenant: string | Types.ObjectId, ou: string) {
+		let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
 		let theOu = await OrgChart.findOne(filter, { cn: 1 });
 		return theOu ? theOu.cn : ou + " Not found";
 	},
-	getOuFullCN: async function (tenant, ou, includeRoot = true) {
-		let filter: any = { tenant: tenant, uid: "OU---", ou: "root" };
+	getOuFullCN: async function (
+		tenant: string | Types.ObjectId,
+		ou: string,
+		includeRoot: boolean = true,
+	) {
+		let filter: any = { tenant: tenant, eid: "OU---", ou: "root" };
 		let rootOu = await OrgChart.findOne(filter, { ou: 1, cn: 1 });
 		if (ou === "root") {
 			return rootOu.cn;
 		} else {
-			let filter: any = { tenant: tenant, uid: "OU---" };
+			let filter: any = { tenant: tenant, eid: "OU---" };
 			let allOus = await OrgChart.find(filter, { ou: 1, cn: 1 });
 			let tmpArr = [];
 			tmpArr.push(rootOu.cn);
@@ -47,80 +52,88 @@ const OrgChartHelper = {
 		}
 	},
 
-	getStaffOU: async function (tenant, email) {
-		let filter: any = { tenant: tenant, uid: email };
-		let theStaff = await OrgChart.findOne(filter);
+	getStaffOU: async function (tenant: string | Types.ObjectId, eid: string) {
+		let filter: any = { tenant: tenant, eid: eid };
+		let theStaff = await OrgChart.findOne(filter, { __v: 0 });
 		let theOu = null;
 		if (theStaff) {
-			filter = { tenant: tenant, ou: theStaff.ou, uid: "OU---" };
-			theOu = await OrgChart.findOne(filter);
+			filter = { tenant: tenant, ou: theStaff.ou, eid: "OU---" };
+			theOu = await OrgChart.findOne(filter, { __v: 0 });
 		}
 		return theOu;
 	},
-	getStaffOUCode: async function (tenant, email) {
-		let theStaff = await this.getStaff(tenant, email);
+
+	getStaffOUCode: async function (tenant: string | Types.ObjectId, eid: string) {
+		let theStaff = await this.getStaff(tenant, eid);
 		if (theStaff && theStaff.ou) return theStaff.ou;
 		else return "unknown ou";
 	},
-	getStaff: async function (tenant, email) {
-		email = await Cache.ensureTenantEmail(tenant, email);
-		let filter: any = { tenant: tenant, uid: email };
-		let theStaff = await OrgChart.findOne(filter);
-		return theStaff;
+
+	getStaff: async function (tenant: string | Types.ObjectId, eid: string) {
+		if (eid.indexOf("@") >= 0)
+			throw new EmpError("UPGRADE_REQUIRED", "The second param should be eid, not email");
+		let filter: any = { tenant: tenant, eid: eid };
+		return await OrgChart.findOne(filter, { __v: 0 });
 	},
 
 	/**
-	 * Get the position of a person
+	 * Get the position of a ocEntry
 	 */
-	getPosition: async function (tenant, uid) {
-		let filter: any = { tenant: tenant, uid: uid };
-		let person = await OrgChart.findOne(filter, { position: 1 });
-		return person ? person.position : "Not found";
+	getPosition: async function (tenant: string | Types.ObjectId, eid: string) {
+		let filter: any = { tenant: tenant, eid: eid };
+		let ocEntry = await OrgChart.findOne(filter, { position: 1 });
+		return ocEntry ? ocEntry.position : "Not found";
 	},
+
 	/**
 	 * Get all peers, include leaders and staffs
 	 */
-	getAllPeers: async function (tenant, uid) {
-		let filter: any = { tenant: tenant, uid: uid };
+	getAllPeers: async function (tenant: string | Types.ObjectId, eid: string) {
+		let filter: any = { tenant: tenant, eid: eid };
 		//找到用户
-		let person = await OrgChart.findOne(filter, { ou: 1 });
+		let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
 		let ret = [];
-		if (person) {
+		if (ocEntry) {
 			//找到用户的所有Peers
-			filter = { tenant: tenant, ou: person.ou, uid: { $not: /^OU-/ } };
-			ret = await OrgChart.find(filter);
+			filter = { tenant: tenant, ou: ocEntry.ou, eid: { $not: /^OU-/ } };
+			ret = await OrgChart.find(filter, { __v: 0 });
 		}
 		return ret;
 	},
+
 	/**
 	 *  Get Peers by position name
 	 *  the peers is in the same ou
 	 */
-	getSpecificPeers: async function (tenant, uid, position) {
-		let filter: any = { tenant: tenant, uid: uid };
+	getSpecificPeers: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		position: string,
+	) {
+		let filter: any = { tenant: tenant, eid: eid };
 		//找到用户
-		let person = await OrgChart.findOne(filter, { ou: 1 });
+		let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
 		let ret = [];
-		if (person) {
+		if (ocEntry) {
 			//找到用户的所有Peers
-			filter = { tenant: tenant, ou: person.ou, position: position };
-			ret = await OrgChart.find(filter);
+			filter = { tenant: tenant, ou: ocEntry.ou, position: position };
+			ret = await OrgChart.find(filter, { __v: 0 });
 		}
 		return ret;
 	},
+
 	/**
 	 *   getUpperOrPeerByPosition: async() Get positions upwards from current usrs's org-level, upper or the same level
 	 *
-	 * @param {...}   getUpperOrPeerByPosition: asynctenant -
-	 * @param {...} uid - the email of a staff whose leader(s) to query
-	 * @param {...} positions - a colon separated position names
-	 * @param {...} mode - 0: in this ou, 1: find then stop; 2: find all up to root, 3. find all;
-	 * @param {...} ou - Organization unit
-	 *
-	 * @return {...} An array of OrgChart entries
 	 */
-	getUpperOrPeerByPosition: async function (tenant, uid, positions, mode = 0, ou = "") {
-		let filter: any = { tenant: tenant, uid: uid };
+	getUpperOrPeerByPosition: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		positions: string,
+		mode: number = OrgChartHelper.FIND_IN_OU,
+		ou: string = "",
+	) {
+		let filter: any = { tenant: tenant, eid: eid };
 		//找到用户
 		if (ou === null || ou === undefined) ou = "";
 		let ret = [];
@@ -130,12 +143,12 @@ const OrgChartHelper = {
 			.filter((x) => x.length > 0);
 
 		if (ou === "" && mode !== OrgChartHelper.FIND_ALL) {
-			let person = await OrgChart.findOne(filter, { ou: 1 });
-			if (!person) {
-				console.log(`User ${uid} not found`);
+			let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
+			if (!ocEntry) {
+				console.log(`Orgchart Entry ${eid} not found`);
 				return [];
 			}
-			ou = person.ou;
+			ou = ocEntry.ou;
 		}
 		//找到用户的所有Peers
 		let ouCondition = undefined;
@@ -165,10 +178,10 @@ const OrgChartHelper = {
 				let tmpFilter = {
 					tenant: tenant,
 					ou: ouCondition,
-					uid: { $ne: "OU---" },
+					eid: { $ne: "OU---" },
 					position: { $in: posArr },
 				};
-				ret = await OrgChart.find(tmpFilter);
+				ret = await OrgChart.find(tmpFilter, { __v: 0 });
 				if (ret && Array.isArray(ret) && ret.length > 0) {
 					break;
 				}
@@ -189,7 +202,7 @@ const OrgChartHelper = {
 			//部门需要在ouIn数组中，也就是从当前用户所在部门开始，自底向上一直到root
 			ou: ouCondition,
 			//排除部门定义，也就是只包含用户
-			uid: { $ne: "OU---" },
+			eid: { $ne: "OU---" },
 			//所搜索的职位
 			position: { $in: posArr },
 		};
@@ -200,19 +213,15 @@ const OrgChartHelper = {
 			delete filter.ou;
 		}
 
-		ret = await OrgChart.find(filter);
+		ret = await OrgChart.find(filter, { __v: 0 });
 		return ret;
 	},
 
 	/**
 	 *   getOrgStaff: async() GetStaff by PDS
 	 *
-	 * @param {...}   getOrgStaff: asynctenant -
-	 * @param {...} rdsPart - PDS def format: ouReg1/pos1:pos2&ouReg2/pos3:pos4
-	 *
-	 * @return {...} an array of OrgChart entries
 	 */
-	getOrgStaff: async function (tenant, uid, rdsPart) {
+	getOrgStaff: async function (tenant: string | Types.ObjectId, eid: string, rdsPart: string) {
 		let that = this;
 		let ret = [];
 		// ouReg1/pos1:pos2&ouReg2/pos3:pos4
@@ -230,18 +239,18 @@ const OrgChartHelper = {
 
 			if (qstr.indexOf("/") < 0) {
 				ret = ret.concat(
-					await that.getUpperOrPeerByPosition(tenant, uid, qstr, OrgChartHelper.FIND_ALL, ""),
+					await that.getUpperOrPeerByPosition(tenant, eid, qstr, OrgChartHelper.FIND_ALL, ""),
 				);
 			} else {
 				let tmp = qstr.split("/");
 				let ouReg = tmp[0].trim();
 				if (ouReg === "*") {
 					ret = ret.concat(
-						await that.getUpperOrPeerByPosition(tenant, uid, tmp[1], OrgChartHelper.FIND_ALL),
+						await that.getUpperOrPeerByPosition(tenant, eid, tmp[1], OrgChartHelper.FIND_ALL),
 					);
 				} else {
 					ret = ret.concat(
-						await that.getUpperOrPeerByPosition(tenant, uid, tmp[1], findScope, ouReg),
+						await that.getUpperOrPeerByPosition(tenant, eid, tmp[1], findScope, ouReg),
 					);
 				}
 			}

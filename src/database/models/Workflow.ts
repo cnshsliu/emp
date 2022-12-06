@@ -1,7 +1,7 @@
-import Mongoose from "mongoose";
+import { Schema, InferSchemaType, HydratedDocument, model } from "mongoose";
 
 let _startTime = null;
-const schema = new Mongoose.Schema(
+const schema = new Schema(
 	{
 		wfid: {
 			type: String,
@@ -17,7 +17,7 @@ const schema = new Mongoose.Schema(
 		endpoint: { type: String, default: "" },
 		endpointmode: { type: String, default: "both" },
 		wftitle: { type: String, required: true },
-		tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		teamid: { type: String, required: false, default: "" },
 		tplid: { type: String, required: [true, "不能为空"], index: true },
 		status: { type: String, required: [true, "不能为空"], index: true },
@@ -26,11 +26,13 @@ const schema = new Mongoose.Schema(
 		rehearsal: { type: Boolean, required: true, default: false, index: true },
 		runmode: { type: String, default: "standalone" },
 		version: { type: Number, default: 1 },
-		attachments: { type: [Mongoose.Schema.Types.Mixed], default: [] },
+		attachments: { type: [Schema.Types.Mixed], default: [] },
 		pnodeid: { type: String, required: false, default: "" },
 		pworkid: { type: String, required: false, default: "" },
 		cselector: { type: [String], default: [] },
 		allowdiscuss: { type: Boolean, default: true },
+		createdAt: { type: Date },
+		updatedAt: { type: Date },
 	},
 	{ timestamps: true },
 );
@@ -44,4 +46,9 @@ schema.post("find", function () {
 	}
 });
 
-export default Mongoose.model("Workflow", schema);
+type extraFields = {
+	starterCN?: string;
+	commentCount?: number;
+};
+export type WorkflowType = HydratedDocument<InferSchemaType<typeof schema>> & extraFields;
+export const Workflow = model("Workflow", schema);

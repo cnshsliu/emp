@@ -1,27 +1,27 @@
 import Jimp from "jimp";
+import { Types } from "mongoose";
 import zlib from "zlib";
-import Moment from "moment";
+import type { PondFileInfoOnServerType } from "../lib/EmpTypes";
 import lodash from "lodash";
-import fs from "fs";
 import path from "path";
-import sprintf from "sprintf-js";
+import { sprintf } from "sprintf-js";
 const replaceReg = / |　/gi;
 const Tools = {
 	NID: "000000000000000000000000",
 	USER_SYS: "000000000000000000000000",
 	USER_AST: "000000000000000000000001",
 	MAX_PIN_KEEP: -365,
-	toISOString: function (date) {
+	toISOString: function (date: Date) {
 		return date.toISOString();
 	},
-	getISODate: function (date) {
+	getISODate: function (date: Date) {
 		let y = date.getFullYear();
 		let m = date.getMonth() + 1;
 		let d = date.getDate();
 
 		return y + "-" + (m < 10 ? "0" + m : m) + "-" + (d < 10 ? "0" + d : d);
 	},
-	ISODate: function (fodate) {
+	ISODate: function (fodate: any) {
 		return (
 			fodate.year +
 			"-" +
@@ -30,63 +30,55 @@ const Tools = {
 			(fodate.day < 10 ? "0" + fodate.day : fodate.day)
 		);
 	},
-	getBeforeDate: function (month) {
+	getBeforeDate: function (month: string) {
 		let y = Number(month.substring(0, 4));
 		let m = Number(month.substring(5)) + 1;
 		if (m > 12) {
 			m = 1;
 			y = y + 1;
 		}
-		let d = 1;
 		let tmp = y + "-";
 		if (m < 10) tmp += "0";
 		tmp += m;
 		tmp += "-01";
 		return new Date(tmp);
 	},
-	/**
-	 * hasValue() Check a var is NOT undefined/null/""
-	 *
-	 * @param {...} obj -
-	 *
-	 * @return {...} true if obj is not undefined, null or zero-length string
-	 */
-	hasValue: function (obj) {
+	hasValue: function (obj: any) {
 		if (obj === undefined) return false;
 		if (obj === null) return false;
 		if (obj === "") return false;
 
 		return true;
 	},
-	isEmpty: function (obj) {
+	isEmpty: function (obj: any) {
 		return !this.hasValue(obj);
 	},
-	blankToDefault: function (val, defaultValue) {
+	blankToDefault: function (val: any, defaultValue: any) {
 		if (this.isEmpty(val)) return defaultValue;
 		else return val;
 	},
 
-	emptyThenDefault: function (val, defaultValue) {
+	emptyThenDefault: function (val: any, defaultValue: any) {
 		if (this.isEmpty(val)) return defaultValue;
 		else return val;
 	},
 
-	cleanupDelimiteredString: function (str) {
+	cleanupDelimiteredString: function (str: string) {
 		return str
 			.split(/[ ;,]/)
 			.filter((x) => x.trim().length > 0)
 			.join(";");
 	},
-	sleep: async function (miliseconds) {
+	sleep: async function (miliseconds: number) {
 		await new Promise((resolve) => setTimeout(resolve, miliseconds));
 	},
-	isArray: function (input) {
+	isArray: function (input: any) {
 		return input instanceof Array || Object.prototype.toString.call(input) === "[object Array]";
 	},
-	nbArray: function (arr) {
+	nbArray: function (arr: any) {
 		return arr && this.isArray(arr) && arr.length > 0;
 	},
-	chunkString: function (str, len) {
+	chunkString: function (str: any, len: number) {
 		const size = Math.ceil(str.length / len);
 		const r = Array(size);
 		let offset = 0;
@@ -99,10 +91,7 @@ const Tools = {
 		return r;
 	},
 
-	/**
-	 * 全角转半角
-	 */
-	qtb: function (str) {
+	qtb: function (str: string) {
 		str = str.replace(/；/g, ";");
 		str = str.replace(/：/g, ":");
 		str = str.replace(/，/g, ",");
@@ -112,21 +101,21 @@ const Tools = {
 		return str;
 	},
 
-	isObject: function (input) {
+	isObject: function (input: object) {
 		// IE8 will treat undefined and null as object if it wasn't for
 		// input != null
 		return input != null && Object.prototype.toString.call(input) === "[object Object]";
 	},
 
-	hasOwnProp: function (a, b) {
+	hasOwnProp: function (a: any, b: string) {
 		return Object.prototype.hasOwnProperty.call(a, b);
 	},
 
-	isObjectEmpty: function (obj) {
+	isObjectEmpty: function (obj: any) {
 		if (Object.getOwnPropertyNames) {
 			return Object.getOwnPropertyNames(obj).length === 0;
 		} else {
-			var k;
+			var k: any;
 			for (k in obj) {
 				if (Tools.hasOwnProp(obj, k)) {
 					return false;
@@ -136,26 +125,26 @@ const Tools = {
 		}
 	},
 
-	isUndefined: function (input) {
+	isUndefined: function (input: any) {
 		return input === void 0;
 	},
 
-	isNumber: function (input) {
+	isNumber: function (input: any) {
 		return typeof input === "number" || Object.prototype.toString.call(input) === "[object Number]";
 	},
 
-	isDate: function (input) {
+	isDate: function (input: any) {
 		return input instanceof Date || Object.prototype.toString.call(input) === "[object Date]";
 	},
 
-	copyObject: function (obj) {
+	copyObject: function (obj: any) {
 		let ret = {};
 		for (let key in obj) {
 			if (key !== "_id") ret[key] = obj[key];
 		}
 		return ret;
 	},
-	copyObjectAsis: function (obj) {
+	copyObjectAsis: function (obj: any) {
 		let ret = {};
 		for (let key in obj) {
 			ret[key] = obj[key];
@@ -163,7 +152,7 @@ const Tools = {
 		return ret;
 	},
 
-	fromObject: function (obj, names) {
+	fromObject: function (obj: any, names: string[]) {
 		let ret = {};
 		for (let i = 0; i < names.length; i++) {
 			if (obj[names[i]] !== undefined) ret[names[i]] = obj[names[i]];
@@ -171,19 +160,19 @@ const Tools = {
 		return ret;
 	},
 
-	log: function (obj, tag) {
+	log: function (obj: any, tag: string) {
 		if (tag) console.log(tag + " " + JSON.stringify(obj, null, 2));
 		else console.log(JSON.stringify(obj, null, 2));
 	},
 
-	codeToBase64: function (code) {
+	codeToBase64: function (code: any) {
 		return Buffer.from(code).toString("base64");
 	},
-	base64ToCode: function (base64) {
+	base64ToCode: function (base64: any) {
 		return Buffer.from(base64, "base64").toString("utf-8");
 	},
 
-	getTagsFromString: function (tagstring) {
+	getTagsFromString: function (tagstring: string) {
 		let tmp = tagstring.replace(replaceReg, "");
 		tmp = tmp.replace(/,$|，$/, "");
 		let tags = tmp.split(/,|，/);
@@ -192,23 +181,28 @@ const Tools = {
 		return tags;
 	},
 
-	resizeImage: async function (images, width, height = Jimp.AUTO, quality) {
+	resizeImage: async function (
+		images: string[],
+		width: number,
+		height = Jimp.AUTO,
+		quality: number,
+	) {
 		await Promise.all(
 			images.map(async (imgPath) => {
 				const image = await Jimp.read(imgPath);
-				await image.resize(width, height);
-				await image.quality(quality);
-				await image.writeAsync(imgPath);
+				image.resize(width, height);
+				image.quality(quality);
+				image.writeAsync(imgPath);
 			}),
 		);
 	},
 
-	defaultValue: function (obj, defaultValue, allowEmptyString = false) {
+	defaultValue: function (obj: any, defaultValue: any, allowEmptyString = false) {
 		if (allowEmptyString && obj === "") return obj;
 		return this.isEmpty(obj) ? defaultValue : obj;
 	},
 
-	zipit: function (input, options) {
+	zipit: function (input: any, options: zlib.ZlibOptions) {
 		const promise = new Promise(function (resolve, reject) {
 			zlib.gzip(input, options, function (error, result) {
 				if (!error) resolve(result);
@@ -217,7 +211,7 @@ const Tools = {
 		});
 		return promise;
 	},
-	unzipit: function (input, options) {
+	unzipit: function (input: any, options: zlib.ZlibOptions) {
 		const promise = new Promise(function (resolve, reject) {
 			zlib.gunzip(input, options, function (error, result) {
 				if (!error) resolve(result);
@@ -226,7 +220,9 @@ const Tools = {
 		});
 		return promise;
 	},
-	makeEmailSameDomain: function (uid, email) {
+	makeEmailSameDomain: function (uid: string, email: string) {
+		throw new Error(`makeEmailSameDomain(${uid}, ${email}) is deprecated`);
+		/*
 		let domain = this.getEmailDomain(email);
 		let tmp = uid.indexOf("@");
 		if (tmp < 0) return uid + domain;
@@ -235,31 +231,17 @@ const Tools = {
 		} else {
 			return uid.substring(0, tmp) + domain;
 		}
+		*/
 	},
-	getEmailDomain: function (email) {
+	getEmailDomain: function (email: string) {
 		let tmp = email.indexOf("@");
 		if (tmp < 0) return "notemail";
 		return email.substring(tmp);
 	},
-	getEmailPrefix: function (email) {
+	getEmailPrefix: function (email: string) {
 		let tmp = email.indexOf("@");
 		if (tmp < 0) return email;
 		return email.substring(0, tmp);
-	},
-	sendInvitationEmail_for_joinOrgChart: async function (ZMQ, admin_username, admin_email, email) {
-		let frontendUrl = Tools.getFrontEndUrl();
-		var mailbody = `<p>${admin_username} (email: ${admin_email}) </p> <br/> invite you to join his organization, <br/>
-       Please login to Metatocome to accept <br/>
-      <a href='${frontendUrl}'>${frontendUrl}</a>`;
-		await ZMQ.server.QueSend(
-			"EmpBiz",
-			JSON.stringify({
-				CMD: "SendSystemMail",
-				recipients: process.env.TEST_RECIPIENTS || email,
-				subject: `[EMP] Invitation from ${admin_username}`,
-				html: Tools.codeToBase64(mailbody),
-			}),
-		);
 	},
 
 	getFrontEndUrl: function () {
@@ -284,26 +266,30 @@ const Tools = {
 		);
 	},
 
-	getPondServerFile: function (tenant, uid, serverId) {
+	getPondServerFile: function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		serverId: string,
+	): PondFileInfoOnServerType {
 		let attachment_folder = Tools.getTenantFolders(tenant).attachment;
 		return {
-			tenant: tenant,
-			uid: uid,
+			tenant: tenant.toString(),
+			eid: eid,
 			fileName: serverId,
-			folder: path.join(attachment_folder, uid),
-			fullPath: path.join(attachment_folder, uid, serverId),
+			folder: path.join(attachment_folder, eid),
+			fullPath: path.join(attachment_folder, eid, serverId),
 		};
 	},
-	getRandomInt: function (min, max) {
+	getRandomInt: function (min: number, max: number) {
 		return Math.floor(Math.random() * (max - min + 1)) + min;
 	},
 
-	randomString: function (length, chars) {
+	randomString: function (length: number, chars: string) {
 		var result = "";
 		for (var i = length; i > 0; --i) result += chars[Math.floor(Math.random() * chars.length)];
 		return result;
 	},
-	getUidsFromText: function (content) {
+	getUidsFromText: function (content: string) {
 		let people = [];
 		let m = content.match(/@([\w]+)/g);
 		if (m) {
@@ -319,15 +305,14 @@ const Tools = {
 	getDefaultAvatarPath: function () {
 		return path.join(process.env.EMP_STATIC_FOLDER, "default_avatar.png");
 	},
-	getUserAvatarPath: function (tenant, email) {
+	getUserAvatarPath: function (tenant: string, email: string) {
 		return path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar", "avatar_" + email);
 	},
-	getTemplateCoverPath: function (tenant, tplid) {
+	getTemplateCoverPath: function (tenant: string, tplid: string) {
 		return path.join(this.getTenantFolders(tenant).cover, `${tplid}.png`);
 	},
-	getTenantFolders: function (tenant) {
+	getTenantFolders: function (tenant: string | Types.ObjectId) {
 		tenant = tenant.toString();
-		let emp_runtime_folder = process.env.EMP_RUNTIME_FOLDER;
 		return {
 			runtime: path.join(process.env.EMP_RUNTIME_FOLDER, tenant),
 			avatar: path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar"),

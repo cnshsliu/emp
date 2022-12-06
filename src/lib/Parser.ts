@@ -3,20 +3,23 @@ import lodash from "lodash";
 import Moment from "moment";
 import Const from "./Const";
 import Tools from "../tools/tools";
+import { Types, ClientSession } from "mongoose";
 import EmpError from "./EmpError";
-import User from "../database/models/User";
-import Team from "../database/models/Team";
+import { Employee } from "../database/models/Employee";
+import { Team, TeamType } from "../database/models/Team";
 import KVar from "../database/models/KVar";
 import OrgChart from "../database/models/OrgChart";
 import OrgChartAdmin from "../database/models/OrgChartAdmin";
-import Cell from "../database/models/Cell";
+import { Cell } from "../database/models/Cell";
 import Cache from "./Cache";
 import OrgChartHelper from "./OrgChartHelper";
 import type { DoerInfo, DoersArray } from "./EmpTypes";
 
 const Parser = {
-	parse: async function (str) {
-		return Cheerio.load(str, {}, false);
+	parse: async function (str: string) {
+		const $ = Cheerio.load(str);
+		//TODO:
+		return Cheerio.load(str);
 	},
 	/*
  * //field defiition:
@@ -47,22 +50,15 @@ const Parser = {
             }
 */
 
-	/**
-	 * Parser.mergeValueFrom = async() Merge value from another object
-	 *
-	 * @param {...} objA - 值被合并的对象，
-	 * @param {...} objB - 合并来源对象
-	 *
-	 * @return {...} 返回合并后的对象，key从objA中来，objA中不存在的key值不会合并过来
-	 */
-	mergeValueFrom: async function (objA, objB) {
+	mergeValueFrom: async function (objA: any, objB: any) {
 		for (let [name, valueDef] of Object.entries(objA)) {
+			valueDef = valueDef;
 			if (objB[name]) {
 				objA[name]["value"] = objB[name]["value"];
 			}
 		}
 	},
-	mergeVars: async function (tenant, vars, newVars_json) {
+	mergeVars: async function (tenant: string | Types.ObjectId, vars: any, newVars_json: any) {
 		try {
 			if (newVars_json === null || newVars_json === undefined) {
 				newVars_json = {};
@@ -116,28 +112,24 @@ const Parser = {
 		}
 	},
 
-	/**
-	 * @param {...} tenant -
-	 * @param {...} checkVisiForWhom - 用户过滤Visi
-	 * @param {...} wfid - The id of workflow
-	 * @param {...} objid - the id of object, for whole workflow, use Const.FOR_WHOLE_PROCESS, for work, use it's workid
-	 * @param {...} doers = [] -只要不是空字符串数组，则只检查数组里的用户
-	 * @param {...} notdoers = [] 只要不是空字符串数组，则去除数组里的用户
-	 */
 	userGetVars: async function (
-		tenant,
-		checkVisiForWhom,
-		wfid,
-		objid,
+		tenant: string | Types.ObjectId,
+		checkVisiForWhom: string,
+		wfid: string,
+		objid: string,
 		doers = [],
 		notdoers = [],
-		efficient,
+		efficient: string,
 	) {
 		if (typeof wfid !== "string") {
 			console.trace("wfid should be a string");
 		}
 		let retResult = {};
-		const mergeBase64Vars = async function (tenant, destVars, base64_string) {
+		const mergeBase64Vars = async function (
+			tenant: string | Types.ObjectId,
+			destVars: any,
+			base64_string: string,
+		) {
 			let code = Parser.base64ToCode(base64_string);
 			let jsonVars = {};
 			try {
@@ -160,7 +152,7 @@ const Parser = {
 			filter["eff"] = efficient.toLowerCase();
 		}
 		//这个 createdAt先后顺序sort非常关键，保障新的覆盖老的
-		let kvars = await KVar.find(filter).sort("createdAt");
+		let kvars = await KVar.find(filter, { __v: 0 }).sort("createdAt");
 
 		for (let i = 0; i < kvars.length; i++) {
 			let includeIt = true;
@@ -210,7 +202,7 @@ const Parser = {
 							null, //wfRoot
 							retResult, //当前的kvars
 						);
-						let visiPeople = tmp.map((x) => x.uid);
+						let visiPeople = tmp.map((x) => x.eid);
 						if (visiPeople.includes(checkVisiForWhom) === false) {
 							delete retResult[key];
 						}
@@ -271,9 +263,9 @@ const Parser = {
 		return valueDef;
 	},
 
-	sysGetTemplateVars: async function (tenant, elem) {
+	sysGetTemplateVars: async function (tenant: string | Types.ObjectId, elem: any) {
 		let ret = {};
-		const mergeTplVars = async function (elem, destVars) {
+		const mergeTplVars = async function (elem: any, destVars: any) {
 			let base64_string = elem.text();
 			let code = Parser.base64ToCode(base64_string);
 			let jsonVars = {};
@@ -297,7 +289,7 @@ const Parser = {
 		return ret;
 	},
 	//Get Team define from PDS. a Team definition starts with "T:"
-	getTeamInPDS: function (pds) {
+	getTeamInPDS: function (pds: string) {
 		let ret = null;
 		if (Tools.isEmpty(pds)) {
 			return ret;
@@ -310,35 +302,31 @@ const Parser = {
 		}
 		return ret;
 	},
-	/**
-	 * Get specified positions (normally, leaders) at the upper or the same org level
-	 *
-	 * @param {...} tenant -
-	 * @param {...} uid -
-	 * @param {...} rdsPart -
-	 *
-	 * @return {...} An array of {uid, cn}
-	 */
-	__getLeaderByPosition: async function (tenant, uid, rdsPart) {
+
+	__getLeaderByPosition: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		rdsPart: string,
+	) {
 		let positions = rdsPart.startsWith("L:") ? rdsPart.substring(2) : rdsPart;
-		let leaders = await OrgChartHelper.getUpperOrPeerByPosition(tenant, uid, positions);
+		let leaders = await OrgChartHelper.getUpperOrPeerByPosition(tenant, eid, positions);
 		let ret = leaders.map((x) => {
-			return { uid: x.uid, cn: x.cn };
+			return { eid: x.eid, cn: x.cn };
 		});
 		return ret;
 	},
-	/**
-	 * Get peer of positions in the same org level
-	 *
-	 * @param {...} tenant -
-	 * @param {...} uid - current user
-	 * @param {...} rdsPart - PDS part
-	 *
-	 * @return {...} An array of {uid, cn}
-	 */
-	__getPeerByPosition: async function (tenant, uid, rdsPart) {
-		const getPeerByPositionFromOrgChart = async function (tenant, uid, positions) {
-			let filter: any = { tenant: tenant, uid: uid };
+
+	__getPeerByPosition: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		rdsPart: string,
+	) {
+		const getPeerByPositionFromOrgChart = async function (
+			tenant: string | Types.ObjectId,
+			eid: string,
+			positions: string,
+		) {
+			let filter: any = { tenant: tenant, eid: eid };
 			//找到用户
 			let person = await OrgChart.findOne(filter, { ou: 1 });
 			let posArr = positions
@@ -351,53 +339,44 @@ const Parser = {
 				filter = {
 					tenant: tenant,
 					ou: person.ou,
-					uid: { $ne: "OU---" },
+					eid: { $ne: "OU---" },
 					position: { $in: posArr },
 				};
 				if (posArr.includes("all")) {
 					delete filter["position"];
 				}
-				ret = await OrgChart.find(filter);
+				ret = await OrgChart.find(filter, { __v: 0 });
 			}
 			return ret;
 		};
 		let positions = rdsPart.startsWith("P:") ? rdsPart.substring(2) : rdsPart;
-		let leaders = await getPeerByPositionFromOrgChart(tenant, uid, positions);
+		let leaders = await getPeerByPositionFromOrgChart(tenant, eid, positions);
 		let ret = leaders.map((x) => {
-			return { uid: x.uid, cn: x.cn };
-		});
-		return ret;
-	},
-	/**
-	 * Get staff from a Orgchart Query PDS Part
-	 *
-	 * @param {...} tenant -
-	 * @param {...} rdsPart -
-	 * @param {...} starter -
-	 *
-	 * @return {...} An array of {uid, cn}
-	 */
-	__getStaffByQuery: async function (tenant, uid, rdsPart) {
-		let positions = rdsPart.startsWith("Q:") ? rdsPart.substring(2) : rdsPart;
-		let staffs = await OrgChartHelper.getOrgStaff(tenant, uid, positions);
-		let ret = staffs.map((x) => {
-			return { uid: x.uid, cn: x.cn };
+			return { eid: x.eid, cn: x.cn };
 		});
 		return ret;
 	},
 
-	/**
-	 * Get rdspart Doer by team。 rdsPart may includes many roles separated ':'
-	 *
-	 * @param {...} tenant -
-	 * @param {...} teamid -
-	 * @param {...} rdsPart - 用冒号:分割的rdspart， 每一部分为一个独立的role
-	 * @param {...} starter -
-	 * @param {...} wfRoot = null - only meaningful when analyze wfRoot innerTeam
-	 *
-	 * @return {...}
-	 */
-	__getDoerByTeam: async function (tenant, teamid, rdsPart, starter, wfRoot = null) {
+	__getStaffByQuery: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		rdsPart: string,
+	) {
+		let positions = rdsPart.startsWith("Q:") ? rdsPart.substring(2) : rdsPart;
+		let staffs = await OrgChartHelper.getOrgStaff(tenant, eid, positions);
+		let ret = staffs.map((x) => {
+			return { eid: x.eid, cn: x.cn };
+		});
+		return ret;
+	},
+
+	__getDoerByTeam: async function (
+		tenant: string | Types.ObjectId,
+		teamid: string,
+		rdsPart: string,
+		starter: string,
+		wfRoot = null,
+	) {
 		let ret = [];
 		let roles = rdsPart
 			.split(":")
@@ -414,25 +393,26 @@ const Parser = {
 	/**
 	 * Get doer of a single role by team
 	 *
-	 * @param {...} tenant -
-	 * @param {...} teamid -
-	 * @param {...} aRole -
-	 * @param {...} starter -
-	 * @param {...} wfRoot = null - 仅在需要解析innerTeam时需要。 一般情况下，是在流程运行过程中使用，比如在SCRIPT节点中设置了innerTeam， 工作流引擎需要解析wfRoot里面的.innerTeam, 并尝试在innerTeam中寻找aRole， 如果找到，直接返回innerTeam的aRole定义，也就是说，innerTeam中的角色定义的优先级是高于teamid中的角色定义的。
+	仅在需要解析innerTeam时需要。 一般情况下，是在流程运行过程中使用，比如在SCRIPT节点中设置了innerTeam， 工作流引擎需要解析wfRoot里面的.innerTeam, 并尝试在innerTeam中寻找aRole， 如果找到，直接返回innerTeam的aRole定义，也就是说，innerTeam中的角色定义的优先级是高于teamid中的角色定义的。
 	 *
-	 * @return {...}
 	 */
-	getSingleRoleDoerByTeam: async function (tenant, teamid, aRole, starter, wfRoot = null) {
+	getSingleRoleDoerByTeam: async function (
+		tenant: string | Types.ObjectId,
+		teamid: string,
+		aRole: string,
+		starter: string,
+		wfRoot = null,
+	) {
 		let ret = [];
 		aRole = aRole.trim();
 		let doer = starter;
 		if (aRole === "STARTER")
-			return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+			return [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
 
 		//没有设Team或者没有设Role，就用starter
 		//因为这是从Team中取数据，所以，当Teamid等于NOTSET或者DEFAULT的时候，直接返回stater是合理的
 		if (Tools.isEmpty(aRole) || aRole === "DEFAULT") {
-			ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+			ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
 			return ret;
 		}
 		if (wfRoot) {
@@ -464,12 +444,12 @@ const Parser = {
 			teamid === "NOTSET" ||
 			aRole === "DEFAULT"
 		) {
-			return [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+			return [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
 		}
 		try {
 			//找出团队 team
 			let filter = { tenant: tenant, teamid: teamid };
-			let team = await Team.findOne(filter);
+			let team = await Team.findOne(filter, { __v: 0 });
 			//找出team定义中，角色aRole对应的人
 			if (team) {
 				let roleParticipant = team.tmap[aRole];
@@ -494,7 +474,7 @@ const Parser = {
 			console.debug(err);
 		}
 		if (typeof doer === "string") {
-			ret = [{ uid: doer, cn: await Cache.getUserName(tenant, doer) }];
+			ret = [{ eid: doer, cn: await Cache.getUserName(tenant, doer) }];
 		} else if (Array.isArray(doer)) {
 			ret = doer;
 		} else {
@@ -504,17 +484,17 @@ const Parser = {
 	},
 
 	copyVars: async function (
-		tenant,
-		fromWfid,
-		fromNodeid,
-		fromObjid,
-		toWfid,
-		toNodeid,
-		toObjid,
+		tenant: string | Types.ObjectId,
+		fromWfid: string,
+		fromNodeid: string,
+		fromObjid: string,
+		toWfid: string,
+		toNodeid: string,
+		toObjid: string,
 		newRound = -1,
 	) {
 		let filter = { tenant: tenant, wfid: fromWfid, objid: fromObjid };
-		let kvar = await KVar.findOne(filter);
+		let kvar = await KVar.findOne(filter, { __v: 0 });
 		if (!kvar) {
 			console.warn("COPY_VARS_FAILED", "can't find old vars");
 			return null;
@@ -533,7 +513,16 @@ const Parser = {
 		return newKvar;
 	},
 
-	setVars: async function (tenant, round, wfid, nodeid, objid, newvars, doer, efficient) {
+	setVars: async function (
+		tenant: string | Types.ObjectId,
+		round: number,
+		wfid: string,
+		nodeid: string,
+		objid: string,
+		newvars: any,
+		doer: string,
+		efficient: string,
+	) {
 		if (JSON.stringify(newvars) === "{}") return;
 		let oldVars = await Parser.userGetVars(
 			tenant,
@@ -544,46 +533,55 @@ const Parser = {
 			[],
 			Const.VAR_IS_EFFICIENT,
 		);
-		let names = Object.keys(newvars);
-		for (let k = 0; k < names.length; k++) {
-			let name = names[k];
-			let valueDef = newvars[name];
-			if (typeof valueDef.value === "string") {
-				while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
-				while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+		if (newvars === undefined || newvars === null) {
+			return oldVars;
+		} else {
+			let names = Object.keys(newvars);
+			for (let k = 0; k < names.length; k++) {
+				let name = names[k];
+				let valueDef = newvars[name];
+				if (typeof valueDef.value === "string") {
+					while (valueDef.value.indexOf("[") >= 0) valueDef.value = valueDef.value.replace("[", "");
+					while (valueDef.value.indexOf("]") >= 0) valueDef.value = valueDef.value.replace("]", "");
+				}
 			}
+
+			let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
+			let mergedVars_base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
+			let filter = { tenant: tenant, wfid: wfid, objid: objid, doer: doer };
+			doer = lodash.isEmpty(doer) ? "EMP" : doer;
+			await KVar.deleteMany(filter);
+			let kvar = new KVar({
+				tenant: tenant,
+				round: round,
+				wfid: wfid,
+				nodeid: nodeid,
+				objid: objid,
+				doer: doer,
+				content: mergedVars_base64_vars_string,
+				eff: efficient.toLowerCase(),
+			});
+			kvar = await kvar.save();
+
+			return mergedVars;
 		}
-
-		let mergedVars = await Parser.mergeVars(tenant, oldVars, newvars);
-		let mergedVars_base64_vars_string = Parser.codeToBase64(JSON.stringify(mergedVars));
-		let filter = { tenant: tenant, wfid: wfid, objid: objid, doer: doer };
-		doer = lodash.isEmpty(doer) ? "EMP" : doer;
-		await KVar.deleteMany(filter);
-		let kvar = new KVar({
-			tenant: tenant,
-			round: round,
-			wfid: wfid,
-			nodeid: nodeid,
-			objid: objid,
-			doer: doer,
-			content: mergedVars_base64_vars_string,
-			eff: efficient.toLowerCase(),
-		});
-		kvar = await kvar.save();
-
-		return mergedVars;
 	},
 
 	/**
 	 * Replace string with kvar value
 	 *
-	 * @param {...} Parser.theString - string with [kvar_name]
-	 * @param {...} kvarString - key1=value1;key2=value2;...
-	 * @param {...} wfRoot - if not null, use workflow context value
+	 * Parser.theString - string with [kvar_name]
+	 * kvarString - key1=value1;key2=value2;...
+	 * wfRoot - if not null, use workflow context value
 	 *
-	 * @return {...}
+	 *
 	 */
-	replaceStringWithKVar: async function (tenant, theString, kvars, withInternals) {
+	replaceStringWithKVar: async function (
+		tenant: string | Types.ObjectId,
+		theString: string,
+		kvars: any,
+		withInternals: boolean,
+	) {
 		if (!kvars) {
 			throw new EmpError(
 				"NO_KVARS",
@@ -594,7 +592,7 @@ const Parser = {
 			kvars = Parser.injectInternalVars(kvars);
 		}
 
-		let m = false;
+		let m = null;
 		do {
 			m = theString.match(/\[([^\]]+)\]/);
 
@@ -610,7 +608,7 @@ const Parser = {
 		return theString;
 	},
 
-	injectInternalVars: (kvars) => {
+	injectInternalVars: (kvars: any) => {
 		let internalVars = {};
 		let now = Moment(new Date());
 		internalVars["$$date"] = { label: "Date", value: now.format("YYYY-MM-DD") };
@@ -634,8 +632,7 @@ const Parser = {
 		return lodash.merge(kvars, internalVars);
 	},
 
-	injectCells: async (tenant, kvars) => {
-		let cellVars = {};
+	injectCells: async (tenant: string | Types.ObjectId, kvars: any) => {
 		let names = Object.keys(kvars);
 		for (let k = 0; k < names.length; k++) {
 			let name = names[k];
@@ -653,42 +650,50 @@ const Parser = {
 		}
 	},
 
-	__removeOneUserToRoleResolver: async (tenant, arr, user) => {
+	__removeOneUserToRoleResolver: async (
+		tenant: string | Types.ObjectId,
+		arr: DoersArray,
+		user: any,
+	) => {
 		try {
 			if (!user) return;
-			let uid = null;
+			let eid = null;
 			//找到用户的UID
-			if (typeof user === "object" && user.uid) {
-				uid = user.uid;
+			if (typeof user === "object" && user.eid) {
+				eid = user.eid;
 			} else if (typeof user === "string") {
-				uid = user;
+				eid = user;
 			}
-			arr = arr.filter((x) => x.uid !== uid);
+			arr = arr.filter((x) => x.eid !== eid);
 			return arr;
 		} catch (err) {
 			return arr;
 		}
 	},
 
-	__addOneUserToRoleResolver: async (tenant, arr, user) => {
+	__addOneUserToRoleResolver: async (
+		tenant: string | Types.ObjectId,
+		arr: DoersArray,
+		user: any,
+	) => {
 		try {
 			if (!user) return;
-			let uid = null;
+			let eid = null;
 			//找到用户的UID
-			if (typeof user === "object" && user.uid) {
-				uid = user.uid;
+			if (typeof user === "object" && user.eid) {
+				eid = user.eid;
 			} else if (typeof user === "string") {
-				uid = user;
+				eid = user;
 			}
 			//找到用户的邮箱, 如果已经存在了，就不再加入
-			let userEmails = arr.map((x) => x.uid);
-			if (userEmails.includes(uid)) return arr;
+			let userEmails = arr.map((x) => x.eid);
+			if (userEmails.includes(eid)) return arr;
 
-			if (typeof user === "object" && user.uid) {
+			if (typeof user === "object" && user.eid) {
 				arr.push(user);
 			} else if (typeof user === "string") {
 				let username = await Cache.getUserName(tenant, user);
-				arr.push({ uid: user, cn: username });
+				arr.push({ eid: user, cn: username });
 			}
 			return arr;
 		} catch (err) {
@@ -699,17 +704,17 @@ const Parser = {
 	/**
 	 *  Get Doer from PDS
 	 *
-	 * @param {...} tenant -
-	 * @param {...} teamid -
-	 * @param {...} pds -
-	 * @param {...} starter -
-	 * @param {...} wfRoot - can be null, only required when inteperate innerTeam of a running workflow. When getDoer is called to locate flexible team role or ortchart memebers, wfRoot can be ignored
-	 * @param {...} kvarString - Normally, used for testing purpose, in format of "pos=who;pos=who;..."
+	 *  tenant -
+	 *  teamid -
+	 *  pds -
+	 *  starter -
+	 *  wfRoot - can be null, only required when inteperate innerTeam of a running workflow. When getDoer is called to locate flexible team role or ortchart memebers, wfRoot can be ignored
+	 *  kvarString - Normally, used for testing purpose, in format of "pos=who;pos=who;..."
 	 *
-	 * @return {...}
+	 *
 	 */
 	getDoer: async function (
-		tenant: string,
+		tenant: string | Types.ObjectId,
 		teamid: string,
 		pds: string,
 		starter: string,
@@ -724,7 +729,7 @@ const Parser = {
 		let ret = [] as unknown as DoersArray;
 		if (Tools.isEmpty(pds)) {
 			if (insertDefaultStarter)
-				ret = [{ uid: starter, cn: await Cache.getUserName(tenant, starter) }];
+				ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
 			else ret = [] as unknown as DoersArray;
 		} else {
 			if (pds.match(/\[(.+)\]/)) {
@@ -764,7 +769,7 @@ const Parser = {
 					email = Tools.makeEmailSameDomain(email, starter);
 					let cn = await Cache.getUserName(tenant, email);
 					if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
-					else tmp = [{ uid: `${email}`, cn: cn }];
+					else tmp = [{ eid: `${email}`, cn: cn }];
 				} else if (rdsPart.startsWith("L:")) {
 					tmp = await Parser.__getLeaderByPosition(tenant, starter, rdsPart);
 				} else if (rdsPart.startsWith("P:")) {
@@ -776,7 +781,7 @@ const Parser = {
 					let email = Tools.makeEmailSameDomain(tmpEmail, starter);
 					let cn = await Cache.getUserName(tenant, email);
 					if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
-					else tmp = [{ uid: `${email}`, cn: cn }];
+					else tmp = [{ eid: `${email}`, cn: cn }];
 				} else if (rdsPart.startsWith("T:")) {
 					tmp = []; //Bypass Team Difinition
 				} else {
@@ -807,25 +812,25 @@ const Parser = {
 		}
 		//检查是否已离职。
 		//先取到所有已离职用户信息
-		let nonActives = await User.find(
+		let nonActives = await Employee.find(
 			{ tenant: tenant, active: false },
 			{ _id: 0, email: 1, succeed: 1, succeedname: 1 },
 		).lean();
 		//单独取出已离职用户的邮箱地址
-		let nonActiveEmails = nonActives.map((x) => x.email);
+		let nonActiveEmails = nonActives.map((x) => x.eid);
 		for (let i = 0; i < ret.length; i++) {
 			//这个用户是否已离职
-			let foundNonActiveIndex = nonActiveEmails.indexOf(ret[i].uid);
+			let foundNonActiveIndex = nonActiveEmails.indexOf(ret[i].eid);
 			if (foundNonActiveIndex >= 0) {
 				//替换为接替人的邮箱和名称
-				ret[i].uid = nonActives[foundNonActiveIndex].succeed;
+				ret[i].eid = nonActives[foundNonActiveIndex].succeed;
 				ret[i].cn = nonActives[foundNonActiveIndex].succeedname;
 			}
 		}
 		return ret;
 	},
 
-	getVarType: function (varName, varValue) {
+	getVarType: function (varName: string, varValue: any) {
 		let retType = "plaintext";
 		let matchResult = varName.match(
 			"^(email|password|url|range|number|dt|datetime|date|time|color|search|select|sl|sel|textarea|ta|file|csv|radio|checkbox|cb|ou|usr|user|tbl)_",
@@ -860,7 +865,7 @@ const Parser = {
 		return retType;
 	},
 
-	kvarsToArray: function (kvars) {
+	kvarsToArray: function (kvars: object) {
 		let kvarsArr = [];
 		let names = Object.keys(kvars);
 		for (let k = 0; k < names.length; k++) {
@@ -911,7 +916,7 @@ const Parser = {
 		return kvarsArr;
 	},
 
-	splitStringToArray: function (str, deli = null) {
+	splitStringToArray: function (str: string, deli = null) {
 		if (typeof str !== "string") str = "";
 		else str = str.trim();
 		if (str === "") return [];
@@ -920,7 +925,7 @@ const Parser = {
 		return tmp;
 	},
 
-	codeToBase64: function (code) {
+	codeToBase64: function (code: string) {
 		if (Tools.isEmpty(code)) return code;
 		try {
 			return Buffer.from(code).toString("base64");
@@ -931,11 +936,11 @@ const Parser = {
 		}
 	},
 
-	base64ToCode: function (base64) {
+	base64ToCode: function (base64: string) {
 		return Buffer.from(base64, "base64").toString("utf-8");
 	},
 
-	addUserTag: function (str) {
+	addUserTag: function (str: string) {
 		let m = str.match(/(@\S+)/g);
 		if (!m) return str;
 		for (let i = 0; i < m.length; i++) {
@@ -948,60 +953,50 @@ const Parser = {
 	/**
 	 *  检查orgchart admin授权，如没必要授权，则丢出EmpError异常
 	 */
-	checkOrgChartAdminAuthorization: async function (tenant, me) {
-		let isTenantOwner = me.email === me.tenant.owner && me.tenant.orgmode === true;
+	checkOrgChartAdminAuthorization: async function (cred: any) {
+		let isTenantOwner = cred.user.account === cred.tenant.owner && cred.tenant.orgmode === true;
 		if (isTenantOwner) return true;
-		let myGroup = await Cache.getMyGroup(me.email);
-		let isAdminGroup = myGroup === "ADMIN" && me.tenant.orgmode === true;
+		let myGroup = cred.employee.group;
+		let isAdminGroup = myGroup === "ADMIN" && cred.tenant.orgmode === true;
 		if (isAdminGroup) return true;
-		if (Parser.canManageOrgChart(tenant, me.email)) return true;
+		if (Parser.canManageOrgChart(cred)) return true;
 		throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
 	},
 
-	canManageOrgChart: async (tenant: string, email: string) => {
+	canManageOrgChart: async (cred: any) => {
 		return (
-			(await Cache.getMyGroup(email)) === "ADMIN" ||
+			(await cred.employee.group) === "ADMIN" ||
 			(await OrgChartAdmin.findOne(
-				{ tenant: tenant, admins: Tools.getEmailPrefix(email) },
+				{ tenant: cred.tenant._id, admins: cred.employee.eid },
 				{ _id: 0, admins: 1 },
 			)) !== null
 		);
 	},
 
-	isAdmin: async function (me) {
-		let isTenantOwner = me.email === me.tenant.owner && me.tenant.orgmode === true;
-		let myGroup = await Cache.getMyGroup(me.email);
-		let isAdminGroup = myGroup === "ADMIN" && me.tenant.orgmode === true;
-		if ((isTenantOwner || isAdminGroup) === false) {
-			throw new EmpError("NOT_AUTHORIZED", "Not authorized for this operation");
-		}
-		return true;
-	},
-
-	getUserCells: function (cells, user) {
+	getUserCells: function (cells: any[], eid: string) {
 		for (let r = 1; r < cells.length; r++) {
-			if (cells[r][0].trim() === user) {
+			if (cells[r][0].trim() === eid) {
 				return cells[r];
 			}
 		}
 		return [];
 	},
 
-	getUserCellsTableAsHTMLByUser: function (cells, user) {
+	getUserCellsTableAsHTMLByUser: function (cells: any[], eid: string) {
 		let userIndex = -1;
 		for (let r = 1; r < cells.length; r++) {
-			if (cells[r][0].trim() === Tools.getEmailPrefix(user)) {
+			if (cells[r][0].trim() === eid) {
 				userIndex = r;
 				break;
 			}
 		}
 		if (userIndex < 0) {
-			return `user [${user}] not found in cells`;
+			return `user [${eid}] not found in cells`;
 		}
 		return Parser.getUserCellsTableAsHTMLByUserIndex(cells, userIndex);
 	},
 
-	getUserCellsTableAsHTMLByUserIndex: function (cells, userIndex) {
+	getUserCellsTableAsHTMLByUserIndex: function (cells: any[], userIndex: number) {
 		let tblHtml = `<table style="font-family: Arial, Helvetica, sans-serif; border-collapse: collapse; width: 100%;">`;
 		tblHtml += `<thead><tr>`;
 		for (let cj = 0; cj < cells[0].length; cj++) {
@@ -1018,7 +1013,7 @@ const Parser = {
 		return tblHtml;
 	},
 
-	tidyKVars: function (kvars) {
+	tidyKVars: function (kvars: object) {
 		for (const [key, def] of Object.entries(kvars)) {
 			delete def["ui"];
 			delete def["breakrow"];
@@ -1031,7 +1026,7 @@ const Parser = {
 		return kvars;
 	},
 
-	getNodeType: function (jq) {
+	getNodeType: function (jq: any) {
 		for (let i = 0; i < Const.supportedClasses.length; i++) {
 			if (jq.hasClass(Const.supportedClasses[i])) {
 				return Const.supportedClasses[i];
@@ -1040,13 +1035,13 @@ const Parser = {
 		return "UNKNOWN";
 	},
 
-	removeSTClasses: function (jq, classesToRemove) {
-		classesToRemove.map((x) => {
+	removeSTClasses: function (jq: any, classesToRemove: string[]) {
+		classesToRemove.map((x: string) => {
 			jq.removeClass(x);
 		});
 	},
 
-	clearSTClass: function (jq) {
+	clearSTClass: function (jq: any) {
 		Parser.removeSTClasses(jq, Const.supportedSTStatus);
 	},
 };
