@@ -18,6 +18,7 @@ const schema = new Schema(
 			wfid: String,
 			workid: String,
 			todoid: String,
+			biztitle: String,
 		},
 	},
 	{ timestamps: true },

@@ -289,15 +289,15 @@ const Tools = {
 		for (var i = length; i > 0; --i) result += chars[Math.floor(Math.random() * chars.length)];
 		return result;
 	},
-	getUidsFromText: function (content: string) {
+	getEidsFromText: function (content: string) {
 		let people = [];
 		let m = content.match(/@([\w]+)/g);
 		if (m) {
 			for (let i = 0; i < m.length; i++) {
-				let anUid = m[i].substring(1);
-				anUid = Tools.qtb(anUid);
-				anUid = lodash.trimEnd(anUid, ".,? ");
-				people.push(anUid);
+				let anEid = m[i].substring(1);
+				anEid = Tools.qtb(anEid);
+				anEid = lodash.trimEnd(anEid, ".,? ");
+				people.push(anEid);
 			}
 		}
 		return people;
@@ -305,8 +305,11 @@ const Tools = {
 	getDefaultAvatarPath: function () {
 		return path.join(process.env.EMP_STATIC_FOLDER, "default_avatar.png");
 	},
-	getUserAvatarPath: function (tenant: string, email: string) {
-		return path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar", "avatar_" + email);
+	getEmployeeAvatarPath: function (tenant: string, eid: string) {
+		return path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar", "avatar_" + eid);
+	},
+	getEmployeeSignaturePath: function (tenant: string, eid: string) {
+		return path.join(process.env.EMP_STATIC_FOLDER, tenant, "signature", "sig_" + eid);
 	},
 	getTemplateCoverPath: function (tenant: string, tplid: string) {
 		return path.join(this.getTenantFolders(tenant).cover, `${tplid}.png`);
@@ -316,6 +319,7 @@ const Tools = {
 		return {
 			runtime: path.join(process.env.EMP_RUNTIME_FOLDER, tenant),
 			avatar: path.join(process.env.EMP_STATIC_FOLDER, tenant, "avatar"),
+			signature: path.join(process.env.EMP_STATIC_FOLDER, tenant, "signature"),
 			cover: path.join(process.env.EMP_STATIC_FOLDER, tenant, "cover"),
 			attachment: path.join(process.env.EMP_ATTACHMENT_FOLDER, tenant),
 		};

@@ -30,7 +30,7 @@ const schema = new Schema({
 	group: {
 		type: String,
 		enum: ["DOER", "OBSERVER", "ADMIN", "SALES", "BD", "BA", "CS", "LEADER", "NOQUOTA", "NONE"],
-		default: "ADMIN",
+		default: "DOER",
 	},
 	// 用户上传的头像，相对路径
 	// 注意历史遗留未澄清：

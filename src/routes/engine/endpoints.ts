@@ -3172,8 +3172,8 @@ const internals = {
 
 		{
 			method: "POST",
-			path: "/replace/user/succeed",
-			handler: Handlers.ReplaceUserSucceed,
+			path: "/replace/employee/succeed",
+			handler: Handlers.ReplaceEmployeeSucceed,
 			config: {
 				description: "Set succeed for an USER",
 				tags: ["api"],

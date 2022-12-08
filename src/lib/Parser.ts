@@ -83,12 +83,12 @@ const Parser = {
 					vars[name]["display"] = await OrgChartHelper.getOuFullCN(tenant, valueDef.value);
 				} else if (name.startsWith("usr_") || name.startsWith("user_")) {
 					if (valueDef.value) {
-						let theCN = await Cache.getUserName(tenant, valueDef.value);
+						let theCN = await Cache.getEmployeeName(tenant, valueDef.value);
 						vars["cn_" + name] = { ui: [], value: theCN, label: vars[name]["label"] + "CN" };
 						//插入display
 						vars[name]["display"] = theCN;
 						//插入OU
-						let userOU = await Cache.getUserOU(tenant, valueDef.value);
+						let userOU = await Cache.getEmployeeOU(tenant, valueDef.value);
 						vars["ou_" + name] = {
 							ui: ["context"],
 							value: userOU,
@@ -407,12 +407,12 @@ const Parser = {
 		aRole = aRole.trim();
 		let doer = starter;
 		if (aRole === "STARTER")
-			return [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
+			return [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
 
 		//没有设Team或者没有设Role，就用starter
 		//因为这是从Team中取数据，所以，当Teamid等于NOTSET或者DEFAULT的时候，直接返回stater是合理的
 		if (Tools.isEmpty(aRole) || aRole === "DEFAULT") {
-			ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
+			ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
 			return ret;
 		}
 		if (wfRoot) {
@@ -444,7 +444,7 @@ const Parser = {
 			teamid === "NOTSET" ||
 			aRole === "DEFAULT"
 		) {
-			return [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
+			return [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
 		}
 		try {
 			//找出团队 team
@@ -474,7 +474,7 @@ const Parser = {
 			console.debug(err);
 		}
 		if (typeof doer === "string") {
-			ret = [{ eid: doer, cn: await Cache.getUserName(tenant, doer) }];
+			ret = [{ eid: doer, cn: await Cache.getEmployeeName(tenant, doer) }];
 		} else if (Array.isArray(doer)) {
 			ret = doer;
 		} else {
@@ -686,13 +686,13 @@ const Parser = {
 				eid = user;
 			}
 			//找到用户的邮箱, 如果已经存在了，就不再加入
-			let userEmails = arr.map((x) => x.eid);
-			if (userEmails.includes(eid)) return arr;
+			let userEids = arr.map((x) => x.eid);
+			if (userEids.includes(eid)) return arr;
 
 			if (typeof user === "object" && user.eid) {
 				arr.push(user);
 			} else if (typeof user === "string") {
-				let username = await Cache.getUserName(tenant, user);
+				let username = await Cache.getEmployeeName(tenant, user);
 				arr.push({ eid: user, cn: username });
 			}
 			return arr;
@@ -729,7 +729,7 @@ const Parser = {
 		let ret = [] as unknown as DoersArray;
 		if (Tools.isEmpty(pds)) {
 			if (insertDefaultStarter)
-				ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter) }];
+				ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
 			else ret = [] as unknown as DoersArray;
 		} else {
 			if (pds.match(/\[(.+)\]/)) {
@@ -745,9 +745,6 @@ const Parser = {
 			//Use PDS-level team if it exists, use process-level team if not
 			teamid = teamInPDS ? teamInPDS : teamid;
 
-			let starterEmailDomain = starter.substring(starter.indexOf("@"));
-			//与Starter的邮箱域名同样的，是TenantAccount
-			let tenantAccountPattern = new RegExp("^(.+)" + starterEmailDomain);
 			let arr = Parser.splitStringToArray(pds);
 			let tmp = [];
 
@@ -762,26 +759,17 @@ const Parser = {
 					rdsPart = rdsPart.substring(1).trim();
 				}
 				tmp = [];
-				if (rdsPart.match(tenantAccountPattern)) {
-					//如果是邮箱地址，则直接取用户名字即可
-					let email = rdsPart;
-					if (email[0] === "@") email = email.substring(1).trim().toLowerCase();
-					email = Tools.makeEmailSameDomain(email, starter);
-					let cn = await Cache.getUserName(tenant, email);
-					if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
-					else tmp = [{ eid: `${email}`, cn: cn }];
-				} else if (rdsPart.startsWith("L:")) {
+				if (rdsPart.startsWith("L:")) {
 					tmp = await Parser.__getLeaderByPosition(tenant, starter, rdsPart);
 				} else if (rdsPart.startsWith("P:")) {
 					tmp = await Parser.__getPeerByPosition(tenant, starter, rdsPart);
 				} else if (rdsPart.startsWith("Q:")) {
 					tmp = await Parser.__getStaffByQuery(tenant, starter, rdsPart);
 				} else if (rdsPart.startsWith("@")) {
-					let tmpEmail = rdsPart.substring(1).toLowerCase();
-					let email = Tools.makeEmailSameDomain(tmpEmail, starter);
-					let cn = await Cache.getUserName(tenant, email);
+					let tmpEid = rdsPart.substring(1).toLowerCase();
+					let cn = await Cache.getEmployeeName(tenant, tmpEid);
 					if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
-					else tmp = [{ eid: `${email}`, cn: cn }];
+					else tmp = [{ eid: `${tmpEid}`, cn: cn }];
 				} else if (rdsPart.startsWith("T:")) {
 					tmp = []; //Bypass Team Difinition
 				} else {
@@ -814,13 +802,13 @@ const Parser = {
 		//先取到所有已离职用户信息
 		let nonActives = await Employee.find(
 			{ tenant: tenant, active: false },
-			{ _id: 0, email: 1, succeed: 1, succeedname: 1 },
+			{ _id: 0, eid: 1, succeed: 1, succeedname: 1 },
 		).lean();
 		//单独取出已离职用户的邮箱地址
-		let nonActiveEmails = nonActives.map((x) => x.eid);
+		let nonActiveEids = nonActives.map((x) => x.eid);
 		for (let i = 0; i < ret.length; i++) {
 			//这个用户是否已离职
-			let foundNonActiveIndex = nonActiveEmails.indexOf(ret[i].eid);
+			let foundNonActiveIndex = nonActiveEids.indexOf(ret[i].eid);
 			if (foundNonActiveIndex >= 0) {
 				//替换为接替人的邮箱和名称
 				ret[i].eid = nonActives[foundNonActiveIndex].succeed;

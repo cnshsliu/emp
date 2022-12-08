@@ -82,7 +82,17 @@ export type ErrorReturn = {
 	message: string;
 };
 
-export type histroyTodoEntry = {
+export interface DoerEntryType {
+	eid: string;
+	cn: string;
+	signature: string;
+	todoid: string;
+	doneat: string;
+	status: string;
+	decision: string;
+}
+
+export interface HistoryTodoEntryType {
 	workid: string;
 	todoid: string;
 	nodeid: string;
@@ -94,7 +104,21 @@ export type histroyTodoEntry = {
 	doneat: string;
 	decision: string;
 	kvarsArr: any[];
-};
+	doers: DoerEntryType[];
+	workDecision: string;
+	comment: string[];
+	isCurrent?: boolean;
+	classname?: string;
+}
+
+export interface DelegationType {
+	_id: string;
+	delegator: string;
+	delegatee: string;
+	begindate: string;
+	enddate: string;
+}
+
 export type ActionDef = {
 	nodeid: string;
 	workid: string;
@@ -104,6 +128,7 @@ export type ActionDef = {
 	status?: string;
 	work?: any;
 };
+
 export type workflowInfo = {
 	endpoint: string;
 	endpointmode: string;

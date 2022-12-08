@@ -32,10 +32,14 @@ import Engine from "../../lib/Engine";
 import Cache from "../../lib/Cache";
 import { getOpenId } from "./api";
 import { exit, listenerCount } from "process";
-import { Employee } from "../../database/models/Employee";
+import { Employee, EmployeeType } from "../../database/models/Employee";
 import * as tencentcloud from "tencentcloud-sdk-nodejs";
 
-const buildSessionResponse = async (user: UserType) => {
+const buildSessionResponse = async (
+	user: UserType,
+	employee: EmployeeType = undefined,
+	tenant: TenantType = undefined,
+) => {
 	let token = JwtAuth.createToken({ id: user._id });
 	console.log("Build Session Token for ", JSON.stringify(user));
 	const userId = user._id;
@@ -46,9 +50,20 @@ const buildSessionResponse = async (user: UserType) => {
 	if (user.tenant) {
 		matchObj.tenant = user.tenant;
 	}
-	const employee = await Employee.findOne(matchObj, { _id: 0 }).populate("tenant").lean();
-	const tenant = employee?.tenant as unknown as TenantType;
-	if (employee === null) debugger;
+	if (!employee) {
+		employee = await Employee.findOne(matchObj, { _id: 0 }).lean();
+	}
+	if (!tenant) {
+		if (
+			user.tenant.hasOwnProperty("_id") &&
+			user.tenant.hasOwnProperty("site") &&
+			user.tenant.hasOwnProperty("owner")
+		) {
+			tenant = user.tenant as unknown as TenantType;
+		} else {
+			tenant = await Tenant.findOne({ _id: user.tenant });
+		}
+	}
 
 	return {
 		objectId: user._id,
@@ -115,6 +130,7 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 			let employee = new Employee({
 				tenant: personalTenant._id,
 				userid: user._id,
+				group: "ADMIN",
 				account: user.account,
 				nickname: PLD.username,
 				eid: user.account,
@@ -126,6 +142,23 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 				},
 			});
 			employee = await employee.save({ session });
+
+			const folders = Tools.getTenantFolders(personalTenant._id);
+			try {
+				fs.mkdirSync(folders.runtime, { mode: 0o700, recursive: true });
+			} catch (err) {}
+			try {
+				fs.mkdirSync(folders.avatar, { mode: 0o700, recursive: true });
+			} catch (err) {}
+			try {
+				fs.mkdirSync(folders.signature, { mode: 0o700, recursive: true });
+			} catch (err) {}
+			try {
+				fs.mkdirSync(folders.cover, { mode: 0o700, recursive: true });
+			} catch (err) {}
+			try {
+				fs.mkdirSync(folders.attachment, { mode: 0o700, recursive: true });
+			} catch (err) {}
 			return user;
 		}),
 	);
@@ -173,7 +206,7 @@ async function CheckAccountAvailability(req: Request, h: ResponseToolkit) {
 	);
 }
 
-async function SetMyUserName(req: Request, h: ResponseToolkit) {
+async function SetUserName(req: Request, h: ResponseToolkit) {
 	return h.response(
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
@@ -183,21 +216,84 @@ async function SetMyUserName(req: Request, h: ResponseToolkit) {
 			if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
 				throw new EmpError("NO_BRUTE", "Please wait a moment");
 			}
-			let user = await User.findOneAndUpdate(
-				{ account: CRED.user.account },
-				{ $set: { username: PLD.username } },
-				{ new: true },
-			);
-			return {
-				objectId: CRED._id,
-				username: user.username, //the changed one
-				account: user.account,
-				sessionToken: req.headers.authorization,
-			};
+			if (PLD.account && PLD.account !== CRED.user.account) {
+				if (CRED.employee.group !== "ADMIN") {
+					throw new EmpError("NOT_ADMIN", "You are not admin");
+				}
+				let user: UserType = (await User.findOneAndUpdate(
+					{ account: PLD.account },
+					{ $set: { username: PLD.username } },
+					{ new: true },
+				)) as UserType;
+				return { account: PLD.account, username: user.username };
+			} else {
+				let user: UserType = (await User.findOneAndUpdate(
+					{ account: CRED.user.account },
+					{ $set: { username: PLD.username } },
+					{ new: true },
+				)) as UserType;
+				await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid);
+				return await buildSessionResponse(user);
+			}
 		}),
 	);
 }
 
+async function SetNickName(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+
+			if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
+				throw new EmpError("NO_BRUTE", "Please wait a moment");
+			}
+
+			if (PLD.eid && PLD.eid !== CRED.employee.eid) {
+				if (CRED.employee.group !== "ADMIN") {
+					throw new EmpError("NOT_ADMIN", "You are not admin");
+				}
+				let employee: EmployeeType = (await Employee.findOneAndUpdate(
+					{ tenant: tenant_id, eid: PLD.eid },
+					{ $set: { nickname: PLD.nickname } },
+					{ upsert: false, new: true },
+				)) as EmployeeType;
+				await Cache.removeKeyByEid(CRED.tenant._id, PLD.eid);
+				return { eid: PLD.eid, nickname: employee.nickname };
+			} else {
+				let employee: EmployeeType = (await Employee.findOneAndUpdate(
+					{ tenant: tenant_id, eid: CRED.employee.eid },
+					{ $set: { nickname: PLD.nickname } },
+					{ upsert: false, new: true },
+				)) as EmployeeType;
+				await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid);
+				return await buildSessionResponse(CRED.user, employee, CRED.tenant);
+			}
+		}),
+	);
+}
+
+async function SetNotify(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+
+			if ((await Cache.setOnNonExist("admin_" + CRED.user.account, "a", 10)) === false) {
+				throw new EmpError("NO_BRUTE", "Please wait a moment");
+			}
+			let employee: EmployeeType = (await Employee.findOneAndUpdate(
+				{ tenant: tenant_id, eid: CRED.employee.eid },
+				{ $set: { notify: PLD.notify } },
+				{ upsert: false, new: true },
+			)) as EmployeeType;
+			await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid);
+			return await buildSessionResponse(CRED.user, employee, CRED.tenant);
+		}),
+	);
+}
 async function SetMyPassword(req: Request, h: ResponseToolkit) {
 	return h.response(
 		await MongoSession.noTransaction(async () => {
@@ -216,12 +312,8 @@ async function SetMyPassword(req: Request, h: ResponseToolkit) {
 				{ $set: { password: Crypto.encrypt(PLD.password) } },
 				{ new: true },
 			);
-			return {
-				objectId: CRED._id,
-				username: user.username, //the changed one
-				account: user.account,
-				sessionToken: req.headers.authorization,
-			};
+			await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid);
+			return await buildSessionResponse(user as UserType, CRED.employee, CRED.tenant);
 		}),
 	);
 }
@@ -596,65 +688,6 @@ async function VerifyEmail(req: Request, h: ResponseToolkit) {
 		user = await user.save();
 		*/
 		return h.response("EMAIL_VERIFIED");
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
-}
-
-async function AdminSetEmailVerified(req: Request, h: ResponseToolkit) {
-	const PLD = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	// 开启事务
-	try {
-		const tenant = CRED.tenant._id;
-		const myEmail = CRED.email;
-		const myGroup = CRED.employee.group;
-		if (myGroup !== "ADMIN") {
-			throw new EmpError("NOT_ADMIN", "You are not admin");
-		}
-		const userIds = PLD.userids;
-		const ret = { found: 0 };
-		for (let i = 0; i < userIds.length; i++) {
-			let emailOfSameDomain = Tools.makeEmailSameDomain(userIds[i], myEmail);
-			let found = await User.findOneAndUpdate(
-				{
-					tenant: tenant,
-					email: emailOfSameDomain,
-				},
-				{
-					$set: { emailVerified: true },
-				},
-				{ upsert: false, new: true },
-			);
-			ret.found += found ? 1 : 0;
-		}
-		return h.response(ret);
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(500);
-	}
-}
-
-async function MySetEmailVerified(req: Request, h: ResponseToolkit) {
-	const PLD = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	// 开启事务
-	try {
-		const tenant = CRED.tenant._id;
-		const myEmail = CRED.email;
-		let found = await User.findOneAndUpdate(
-			{
-				tenant: tenant,
-				email: myEmail,
-			},
-			{
-				$set: { emailVerified: true },
-			},
-			{ upsert: false, new: true },
-		);
-		//return h.response(found?.emailVerified);
-		return h.response("Deprecated");
 	} catch (err) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
@@ -1152,12 +1185,20 @@ async function OrgChartAdminAdd(req: Request, h: ResponseToolkit) {
 			expect(CRED.employee.group).to.equal("ADMIN");
 			let tenant_id = CRED.tenant._id.toString();
 
-			const ret = await OrgChartAdmin.findOneAndUpdate(
-				{ tenant: tenant_id },
-				{ $addToSet: { admins: PLD.eid } },
-				{ upsert: true, new: true },
-			);
-			return await addCNtoUserIds(tenant_id, ret.admins);
+			const existingEmployee = await Employee.findOne({
+				tenant: tenant_id,
+				eid: PLD.eid,
+			}).lean();
+			if (existingEmployee) {
+				const ret = await OrgChartAdmin.findOneAndUpdate(
+					{ tenant: tenant_id },
+					{ $addToSet: { admins: PLD.eid } },
+					{ upsert: true, new: true },
+				);
+				return await addCNtoUserIds(tenant_id, ret.admins);
+			} else {
+				throw new EmpError("EMPLOYEE_NOT_FOUND", `${PLD.eid} not exist`);
+			}
 		}),
 	);
 }
@@ -1185,7 +1226,7 @@ const addCNtoUserIds = async (tenant: string, eids: string[]) => {
 	for (let i = 0; i < eids.length; i++) {
 		retArray.push({
 			eid: eids[i],
-			cn: await Cache.getUserName(tenant, eids[i]),
+			cn: await Cache.getEmployeeName(tenant, eids[i]),
 		});
 	}
 	return retArray;
@@ -1367,7 +1408,7 @@ async function SetEmployeeGroup(req: Request, h: ResponseToolkit) {
 						},
 						{
 							new: true,
-							upsert: true,
+							upsert: false,
 						},
 					);
 				}
@@ -1435,6 +1476,7 @@ async function RemoveEmployees(req: Request, h: ResponseToolkit) {
 			}
 			await OrgChart.deleteMany({ tenant: CRED.tenant._id, eid: { $in: eids } });
 			return { ret: "done" };
+			//TODO: remove employee's folders
 		}),
 	);
 }
@@ -1467,29 +1509,24 @@ async function GetOrgEmployees(req: Request, h: ResponseToolkit) {
 			let tenant_id = CRED.tenant._id.toString();
 
 			const adminorg = await Parser.checkOrgChartAdminAuthorization(CRED);
-			let filter = { tenant: tenant_id, active: PLD.active };
+			let filter = { tenant: tenant_id, active: true };
+			switch (PLD.active) {
+				case 1:
+					filter.active = true;
+					break;
+				case 2:
+					filter.active = false;
+					break;
+				case 3:
+					delete filter.active;
+					break;
+				default:
+					filter.active = true;
+			}
 			if (PLD.eids) filter["eid"] = { $in: PLD.eids };
-			return await Employee.find(filter, { _id: 0, eid: 1, nickname: 1, group: 1 });
+			return await Employee.find(filter, { _id: 0, eid: 1, nickname: 1, group: 1, account: 1 });
 		}),
 	);
-}
-
-async function Avatar(req: Request, h: ResponseToolkit) {
-	const PLD = req.payload as any;
-	const CRED = req.auth.credentials as any;
-	let tenant = req.params.tenant;
-	let user_eid = req.params.eid;
-	if (tenant === undefined || tenant === "undefined") {
-		tenant = CRED.tenant._id;
-	}
-
-	let avatarinfo = await Cache.getUserAvatarInfo(tenant, user_eid);
-	return h
-		.response(fs.createReadStream(avatarinfo.path))
-		.header("Content-Type", avatarinfo.media)
-		.header("X-Content-Type-Options", "nosniff")
-		.header("Cache-Control", "max-age=600, private")
-		.header("ETag", avatarinfo.etag);
 }
 
 async function UploadAvatar(req: Request, h: ResponseToolkit) {
@@ -1504,46 +1541,44 @@ async function UploadAvatar(req: Request, h: ResponseToolkit) {
 
 			await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
 			let media = payload.avatar.headers["content-type"];
-			let avatarFilePath = path.join(Tools.getTenantFolders(payload.tenant).avatar, payload.eid);
+			const avatarFolder = Tools.getTenantFolders(payload.tenant._id).avatar;
+			let avatarFilePath = path.join(avatarFolder, payload.eid);
+			if (!fs.existsSync(avatarFolder))
+				fs.mkdirSync(avatarFolder, { mode: 0o700, recursive: true });
 			fs.renameSync(payload.avatar.path, avatarFilePath);
 			let avatarinfo = {
 				path: avatarFilePath,
 				media: media,
 				etag: new Date().getTime().toString(),
 			};
-			await Employee.findOneAndUpdate(
+			const employee: EmployeeType = (await Employee.findOneAndUpdate(
 				{ tenant: payload.tenant, eid: payload.eid },
 				{ $set: { avatarinfo: avatarinfo } },
 				{ new: true },
-			);
+			)) as EmployeeType;
 			await Cache.removeKeyByEid(payload.tenant, payload.eid, "AVATAR");
-			return { result: "Upload Avatar OK" };
+			return await buildSessionResponse(CRED.user, employee, CRED.tenant);
 		}),
 	);
 }
 
 async function AvatarViewer(req: Request, h: ResponseToolkit) {
 	try {
-		const PLD = req.payload as any;
+		const PARAMS = req.params as any;
 		const CRED = req.auth.credentials as any;
 		let tenant_id = CRED.tenant._id.toString();
 
-		let employee = await Employee.findOne({ tenant: tenant_id, eid: req.params.eid });
-
-		let contentType = employee.avatarinfo.media;
-
-		//let filepondfile = Tools.getPondServerFile(tenant_id, employee.eid, serverId);
-		//var readStream = fs.createReadStream(filepondfile.fullPath);
-		var readStream = fs.createReadStream(employee.avatarinfo.path);
+		const avatarInfo = await Cache.getEmployeeAvatarInfo(CRED.tenant._id, CRED.employee.eid);
 		return h
-			.response(readStream)
-			.header("cache-control", "no-cache")
-			.header("Pragma", "no-cache")
+			.response(fs.createReadStream(avatarInfo.path))
+			.header("Cache-Control", "max-age=600, private")
+			.header("X-Content-Type-Options", "nosniff")
+			.header("ETag", avatarInfo.etag)
 			.header("Access-Control-Allow-Origin", "*")
-			.header("Content-Type", contentType)
+			.header("Content-Type", avatarInfo.media)
 			.header(
 				"Content-Disposition",
-				`attachment;filename="${encodeURIComponent(path.basename(employee.avatarinfo.path))}"`,
+				`attachment;filename="${encodeURIComponent(path.basename(avatarInfo.path))}"`,
 			);
 	} catch (err) {
 		console.error(err);
@@ -1586,25 +1621,40 @@ async function SendInvitation(req: Request, h: ResponseToolkit) {
 	}
 }
 
-async function SetSignatureFile(req: Request, h: ResponseToolkit) {
+async function SignatureUpload(req: Request, h: ResponseToolkit) {
 	return h.response(
 		await MongoSession.noTransaction(async () => {
+			console.log("Entering SignatureUpload");
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
 			let tenant_id = CRED.tenant._id.toString();
-			let pondfiles = PLD.pondfiles;
+
+			await Tools.resizeImage([PLD.signature.path], 200, Jimp.AUTO, 90);
+			let media = PLD.signature.headers["content-type"];
+
+			const signatureFolder = Tools.getTenantFolders(CRED.tenant._id).signature;
+			let signatureFilePath = path.join(signatureFolder, CRED.employee.eid);
+			if (!fs.existsSync(signatureFolder))
+				fs.mkdirSync(signatureFolder, { mode: 0o700, recursive: true });
+
+			fs.renameSync(
+				PLD.signature.path,
+
+				Tools.getEmployeeSignaturePath(CRED.tenant._id.toString(), CRED.employee.eid),
+			);
+
 			let employee = await Employee.findOneAndUpdate(
 				{ tenant: tenant_id, eid: CRED.employee.eid },
-				{ $set: { signature: pondfiles[0].serverId + "|" + pondfiles[0].contentType } },
+				{ $set: { signature: "PIC:" + media } },
 				{ upsert: false, new: true },
 			);
 
-			return employee.signature;
+			return await buildSessionResponse(CRED.user, employee as EmployeeType, CRED.tenant);
 		}),
 	);
 }
 
-async function removeSignatureFile(req: Request, h: ResponseToolkit) {
+async function SignatureRemove(req: Request, h: ResponseToolkit) {
 	return h.response(
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
@@ -1622,35 +1672,86 @@ async function removeSignatureFile(req: Request, h: ResponseToolkit) {
 				{ upsert: false, new: true },
 			);
 
-			return employee.signature;
+			if (eid && eid !== CRED.employee.eid) {
+				return { eid: eid, code: "success" };
+			} else {
+				return await buildSessionResponse(CRED.user, employee as EmployeeType, CRED.tenant);
+			}
 		}),
 	);
 }
 
+async function SignatureSetText(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+			let eid = PLD.eid;
+
+			if (eid && eid !== CRED.employee.eid) {
+				expect(CRED.employee.group).to.equal("ADMIN");
+			}
+
+			if (!eid) eid = CRED.employee.eid;
+
+			let employee = await Employee.findOneAndUpdate(
+				{ tenant: tenant_id, eid: eid },
+				{ $set: { signature: PLD.signature } },
+				{ upsert: false, new: true },
+			);
+
+			if (eid && eid !== CRED.employee.eid) {
+				return { eid: eid, code: "success" };
+			} else {
+				return await buildSessionResponse(CRED.user, employee as EmployeeType, CRED.tenant);
+			}
+		}),
+	);
+}
+async function SignatureGetText(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let tenant_id = CRED.tenant._id.toString();
+			let eid = PLD.eid ?? CRED.employee.eid;
+
+			let employee = await Employee.findOne(
+				{ tenant: tenant_id, eid: eid },
+				{ signature: 1, _id: 0, __v: 0 },
+			).lean();
+			return employee.signature;
+		}),
+	);
+}
 async function SignatureViewer(req: Request, h: ResponseToolkit) {
-	const PLD = req.payload as any;
-	const CRED = req.auth.credentials as any;
 	try {
+		const PARAMS = req.params as any;
+		const CRED = req.auth.credentials as any;
 		let tenant_id = CRED.tenant._id.toString();
 
-		let eid = PLD.eid;
-		let employee = await Employee.findOne({ tenant: tenant_id, eid: eid });
+		let employee = await Employee.findOne({ tenant: tenant_id, eid: req.params.eid });
 
-		let tmp = employee.signature.split("|");
-		if (tmp.length < 2) {
-			return h.response("not found");
-		} else {
-			let serverId = tmp[0];
-			let contentType = tmp[1];
+		let contentType = employee.signature;
 
-			let filepondfile = Tools.getPondServerFile(tenant_id, eid, serverId);
-			var readStream = fs.createReadStream(filepondfile.fullPath);
+		//let filepondfile = Tools.getPondServerFile(tenant_id, employee.eid, serverId);
+		//var readStream = fs.createReadStream(filepondfile.fullPath);
+		const filePath = Tools.getEmployeeSignaturePath(CRED.tenant._id.toString(), PARAMS.eid);
+		if (contentType.trim() && fs.existsSync(filePath)) {
+			var readStream = fs.createReadStream(filePath);
 			return h
 				.response(readStream)
 				.header("cache-control", "no-cache")
 				.header("Pragma", "no-cache")
 				.header("Access-Control-Allow-Origin", "*")
-				.header("Content-Type", contentType);
+				.header("Content-Type", contentType)
+				.header(
+					"Content-Disposition",
+					`attachment;filename="${encodeURIComponent(path.basename(filePath))}"`,
+				);
+		} else {
+			return h.response("");
 		}
 	} catch (err) {
 		console.error(err);
@@ -1955,8 +2056,10 @@ export default {
 	RegisterUser,
 	CheckFreeReg,
 	CheckAccountAvailability,
-	SetMyUserName,
+	SetUserName,
+	SetNickName,
 	SetMyPassword,
+	SetNotify,
 	Evc,
 	LoginUser,
 	ScanLogin,
@@ -1964,8 +2067,6 @@ export default {
 	RefreshUserSession,
 	LogoutUser,
 	VerifyEmail,
-	AdminSetEmailVerified,
-	MySetEmailVerified,
 	ResetPasswordRequest,
 	ResetPassword,
 	GetMyProfile,
@@ -1992,12 +2093,13 @@ export default {
 	RemoveEmployees,
 	QuitOrg,
 	GetOrgEmployees,
-	Avatar,
 	UploadAvatar,
 	AvatarViewer,
 	SendInvitation,
-	SetSignatureFile,
-	removeSignatureFile,
+	SignatureUpload,
+	SignatureRemove,
+	SignatureSetText,
+	SignatureGetText,
 	SignatureViewer,
 	OrgChartAdminAdd,
 	OrgChartAdminDel,

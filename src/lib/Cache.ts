@@ -20,49 +20,52 @@ const PERM_EXPIRE_SECONDS = 60;
 
 const internals = {
 	/**
-	 * 设置 eid -> username 映射缓存
+	 * 设置 eid -> nickname 映射缓存
 	 */
-	setUserName: async function (
+	setEmployeeName: async function (
 		tenant: string | Types.ObjectId,
 		eid: string,
-		username: string = null,
+		nickname: string = null,
 		expire: number = 60,
 	): Promise<string> {
-		const lruKey = `USERNAME:${tenant}:${eid}`;
-		if (!username) {
-			let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { nickname: 1, ew: 1 });
+		const lruKey = `NICKNAME:${tenant}:${eid}`;
+		if (!nickname) {
+			let employee = await Employee.findOne(
+				{ tenant: tenant, eid: eid },
+				{ nickname: 1, notify: 1 },
+			);
 			if (employee) {
-				username = employee.nickname;
+				nickname = employee.nickname;
 				{
-					lruCache.set(`EW:${tenant}:{eid}`, employee.notify);
+					lruCache.set(`NOTIFY:${tenant}:{eid}`, employee.notify);
 				}
 			}
 		}
-		if (username) {
-			lruCache.set(lruKey, username);
+		if (nickname) {
+			lruCache.set(lruKey, nickname);
 		}
-		return username;
+		return nickname;
 	},
 
 	/* 根据eid从缓存去的用户名称 */
-	getUserName: async function (
+	getEmployeeName: async function (
 		tenant: string | Types.ObjectId,
 		eid: string,
 		where: string = "unknown",
 	): Promise<string> {
-		assert(eid, "getUserName should be passed an non-empty email string");
+		assert(eid, "getEmployeeName should be passed an non-empty email string");
 		expect(eid).to.not.include("@");
-		let lruKey = `USERNAME:${tenant}:${eid}`;
+		let lruKey = `NICKNAME:${tenant}:${eid}`;
 		let ret = lruCache.get(lruKey) as string;
 		if (!ret) {
 			let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { nickname: 1 });
 			if (employee) {
-				await internals.setUserName(tenant, eid, employee.nickname, 60);
-				console.log(`[Cache 3️⃣ ] 👤 getUserName ${eid}  ${employee.nickname} in ${where}`);
+				await internals.setEmployeeName(tenant, eid, employee.nickname, 60);
+				console.log(`[Cache 3️⃣ ] 👤 getEmployeeName ${eid}  ${employee.nickname} in ${where}`);
 				ret = employee.nickname;
 			} else {
 				console.warn(
-					isMainThread ? "MainThread:" : "\tChildThread:" + "Cache.getUserName, Email:",
+					isMainThread ? "MainThread:" : "\tChildThread:" + "Cache.getEmployeeName, Eid:",
 					eid,
 					" not found",
 				);
@@ -72,22 +75,33 @@ const internals = {
 		return ret;
 	},
 
+	shouldNotifyViaEmail: async function (tenant: string | Types.ObjectId, doer: string) {
+		let ew = await internals.getEmployeeNotifyConfig(tenant, doer);
+		return ew.indexOf("e") >= 0;
+	},
+
 	/* 根据eid去的用户的提醒发送设置 */
-	getUserEw: async function (tenant: string | Types.ObjectId, eid: string): Promise<any> {
-		const key = `EW:${tenant}:${eid}`;
+	getEmployeeNotifyConfig: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+	): Promise<any> {
+		const key = `NOTIFY:${tenant}:${eid}`;
 		let ew = lruCache.get(key);
 		if (ew) {
-			//console.log(`[Cache 1️⃣ ] ✉️  getUserEw ${email}  ${ew}`);
+			//console.log(`[Cache 1️⃣ ] ✉️  getEmployeeNotifyConfig ${eid}  ${ew}`);
 			return ew;
 		} else {
-			await internals.setUserName(tenant, eid, null, 60);
+			await internals.setEmployeeName(tenant, eid, null, 60);
 			ew = lruCache.get(key);
 			return ew;
 		}
 	},
 
 	/* 从缓存去的用户的签名档 */
-	getUserSignature: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
+	getEmployeeSignature: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+	): Promise<string> {
 		let key = `SIGNATURE:${tenant}:${eid}`;
 		let signature = lruCache.get(key) as string;
 		if (signature) {
@@ -172,7 +186,7 @@ const internals = {
 		lruCache.delete(key);
 	},
 
-	getUserAvatarInfo: async function (
+	getEmployeeAvatarInfo: async function (
 		tenant: string | Types.ObjectId,
 		eid: string,
 	): Promise<AvatarInfo> {
@@ -209,7 +223,7 @@ const internals = {
 	 * @param {string} eid
 	 * @returns {Promise<string>}
 	 */
-	getUserOU: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
+	getEmployeeOU: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
 		//TODO: where is the updateing?
 		let key = `OU:${tenant}:${eid}`;
 		let ouCode = lruCache.get(key) as string;
@@ -222,7 +236,7 @@ const internals = {
 				lruCache.set(key, theStaff.ou);
 				return theStaff.ou;
 			} else {
-				console.warn("Cache.getUserOU from orgchart, Email:", eid, " not found");
+				console.warn("Cache.getEmployeeOU from orgchart, Eid:", eid, " not found");
 				return "USER_NOT_FOUND_OC";
 			}
 		}
@@ -355,8 +369,8 @@ const internals = {
 		} else {
 			lruCache.delete("USRGRP:" + eidKey);
 			lruCache.delete("PERM:" + eidKey);
-			lruCache.delete("USERNAME:" + eidKey);
-			lruCache.delete("EW:" + eidKey);
+			lruCache.delete("NICKNAME:" + eidKey);
+			lruCache.delete("NOTIFY:" + eidKey);
 			lruCache.delete("OU:" + eidKey);
 			lruCache.delete("AVATAR:" + eidKey);
 			lruCache.delete("SIGNATURE:" + eidKey);

@@ -55,7 +55,7 @@ import type {
 	MailNextDef,
 	ProcNextParams,
 	ErrorReturn,
-	histroyTodoEntry,
+	HistoryTodoEntryType,
 	workFullInfo,
 	workflowInfo,
 	ActionDef,
@@ -373,7 +373,7 @@ const startBatchWorkflow = async (
 		null, //kvarString
 		false,
 	); //
-	let directorCN = await Cache.getUserName(tenant, directorEid, "startBatchWorkflow");
+	let directorCN = await Cache.getEmployeeName(tenant, directorEid, "startBatchWorkflow");
 	console.log(directorCN, " start Workflow for ", doers.length, " people");
 	let eids = doers.map((x) => x.eid);
 	await __batchStartWorkflow(tenant, tplid, eids, directorCN);
@@ -386,7 +386,7 @@ const __batchStartWorkflow = async (
 ) => {
 	for (let i = 0; i < eids.length; i++) {
 		let processTitle =
-			(await Cache.getUserName(tenant, eids[i], "__batchStartWorkflow")) + ": " + tplid;
+			(await Cache.getEmployeeName(tenant, eids[i], "__batchStartWorkflow")) + ": " + tplid;
 		let msgToSend = {
 			CMD: "CMD_startWorkflow",
 			rehearsal: false,
@@ -1103,13 +1103,13 @@ const __doneTodo = async function (
 		sendCCMessage(
 			tenant,
 			cced,
-			`[MTC cc]: Task ${todo.title} done by ${await Cache.getUserName(
+			`[MTC cc]: Task ${todo.title} done by ${await Cache.getEmployeeName(
 				todo.tenant.toString(),
 				todo.doer,
 			)}.`,
 			`Task </BR><B><a href="${frontendUrl}/work/${todo.todoid}">${
 				todo.title
-			}</a></B></BR> was done by ${await Cache.getUserName(
+			}</a></B></BR> was done by ${await Cache.getEmployeeName(
 				todo.tenant.toString(),
 				todo.doer,
 			)}  </BR>
@@ -1206,9 +1206,9 @@ const __doneTodo = async function (
 	}
 	let recipients = [];
 	for (let i = 0; i < someone.length; i++) {
-		const email = Tools.makeEmailSameDomain(someone[i], todo.doer);
-		const userName = await Cache.getUserName(tenant, email, "__doneTodo");
-		if (userName !== "USER_NOT_FOUND") recipients.push(email);
+		const eid = someone[i].substring(1);
+		const userName = await Cache.getEmployeeName(tenant, eid, "__doneTodo");
+		if (userName !== "USER_NOT_FOUND") recipients.push(eid);
 	}
 	if (recipients.length > 0) {
 		recipients = [...new Set(recipients)];
@@ -1353,7 +1353,7 @@ const buildWorkDoneMarkdownMessage = async function (
 		msgtype: "markdown",
 		markdown: {
 			content: `# ${theWork.title} 已完成
-Last done by ${await Cache.getUserName(tenant, doer, "buildWorkDoneMarkdownMessage")}
+Last done by ${await Cache.getEmployeeName(tenant, doer, "buildWorkDoneMarkdownMessage")}
 # 节点决策: ${workDecision}
 ${comment ? comment : ""}
 # 工作项：
@@ -1370,19 +1370,18 @@ ${kvarsMD}
 };
 
 const setPeopleFromContent = async function (
-	tenant,
-	emailDomainReferenceUser,
-	content,
-	people,
-	eids,
+	tenant: Types.ObjectId | string,
+	content: string,
+	people: string[],
+	eids: string[],
 ) {
-	let tmp = Tools.getUidsFromText(content);
+	let tmp = Tools.getEidsFromText(content);
 	for (let i = 0; i < tmp.length; i++) {
-		let toWhomEmail = Tools.makeEmailSameDomain(tmp[i], emailDomainReferenceUser);
-		let receiverCN = await Cache.getUserName(tenant, toWhomEmail, "setPeopleFromContent");
+		let toWhomEid = tmp[i];
+		let receiverCN = await Cache.getEmployeeName(tenant, toWhomEid, "setPeopleFromContent");
 		if (receiverCN !== "USER_NOT_FOUND") {
 			people.push(tmp[i]);
-			eids.push(toWhomEmail);
+			eids.push(toWhomEid);
 		}
 	}
 	eids = [...new Set(eids)];
@@ -1396,8 +1395,8 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 	if (content.trim().length === 0) return;
 	let eids = [todo.wfstarter];
 	let people = [Tools.getEmailPrefix(todo.wfstarter)];
-	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForTodo");
-	[people, eids] = await setPeopleFromContent(tenant, doer, content, people, eids);
+	let doerCN = await Cache.getEmployeeName(tenant, doer, "postCommentForTodo");
+	[people, eids] = await setPeopleFromContent(tenant, content, people, eids);
 	let msg = {
 		tenant: todo.tenant,
 		doer: doer,
@@ -1414,7 +1413,13 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
         Process: <a href="${frontendUrl}/workflow/${todo.wfid}">${todo.wftitle}</a><br/>
         <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
 	};
-	let context = { wfid: todo.wfid, workid: todo.workid, todoid: todo.todoid };
+	let theWf = await Workflow.findOne({ tenant: tenant, wfid: todo.wfid }, { wftitle: 1 });
+	let context = {
+		wfid: todo.wfid,
+		workid: todo.workid,
+		todoid: todo.todoid,
+		biztitle: theWf.wftitle,
+	};
 	let ret = await __postComment(
 		tenant,
 		doer,
@@ -1430,7 +1435,7 @@ const postCommentForTodo = async function (tenant, doer, todo, content) {
 	);
 	ret.todoTitle = todo.title;
 	ret.todoDoer = todo.doer;
-	ret.todoDoerCN = await Cache.getUserName(tenant, todo.doer, "postCommentForTodo");
+	ret.todoDoerCN = await Cache.getEmployeeName(tenant, todo.doer, "postCommentForTodo");
 	return ret;
 };
 
@@ -1442,10 +1447,10 @@ const postCommentForComment = async function (tenant, doer, cmtid, content, thre
 		{ __v: 0 },
 	).lean();
 	let people = cmt.people;
-	people.push(Tools.getEmailPrefix(cmt.who));
-	let eids = people.map((eid) => Tools.makeEmailSameDomain(eid, doer));
-	let doerCN = await Cache.getUserName(tenant, doer, "postCommentForComment");
-	[people, eids] = await setPeopleFromContent(tenant, doer, content, people, eids);
+	people.push(cmt.who);
+	let eids: string[] = people;
+	let doerCN = await Cache.getEmployeeName(tenant, doer, "postCommentForComment");
+	[people, eids] = await setPeopleFromContent(tenant, content, people, eids);
 	let msg = {
 		tenant: tenant,
 		doer: doer,
@@ -1530,7 +1535,7 @@ const __postComment = async function (
 							console.log("Bypass: comment's author email to him/herself");
 							continue;
 						}
-						let receiverCN = await Cache.getUserName(tenant, eids[i], "__postComment");
+						let receiverCN = await Cache.getEmployeeName(tenant, eids[i], "__postComment");
 						if (receiverCN === "USER_NOT_FOUND") continue;
 						let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
 						let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
@@ -1559,21 +1564,15 @@ const __postComment = async function (
 			//}, 1000);
 		}
 		comment = JSON.parse(JSON.stringify(comment)) as CommentType;
-		comment.whoCN = await Cache.getUserName(tenant, comment.who, "__postComment");
-		comment.towhomCN = await Cache.getUserName(tenant, toWhom, "__postComment");
+		comment.whoCN = await Cache.getEmployeeName(tenant, comment.who, "__postComment");
+		comment.towhomCN = await Cache.getEmployeeName(tenant, toWhom, "__postComment");
 		comment.splitted = splitComment(comment.content);
 		let tmpret = await splitMarked(tenant, comment);
 		comment.mdcontent = tmpret.mdcontent;
 		comment.mdcontent2 = tmpret.mdcontent2;
 		let people = [];
 		let eids = [];
-		[people, eids] = await setPeopleFromContent(
-			tenant,
-			comment.who, //Email domain reference user
-			comment.content,
-			people,
-			eids,
-		);
+		[people, eids] = await setPeopleFromContent(tenant, comment.content, people, eids);
 		comment.people = people;
 		comment.transition = true;
 		comment.children = [];
@@ -2329,7 +2328,7 @@ const replaceUser_child = async function (msg) {
 						cursor = Todo.find(
 							{
 								tenant: msg.tenant,
-								doer: msg.from + msg.domain,
+								doer: msg.from,
 								status: { $in: ["ST_RUN", "ST_PAUSE"] },
 							},
 							{ _id: 0, todoid: 1, title: 1 },
@@ -2499,10 +2498,9 @@ const replaceUser_child = async function (msg) {
 					(await Todo.updateMany(
 						{
 							//tenant: msg.tenant,
-							//doer: tempsubset.todo.from + msg.domain,
 							todoid: { $in: msg.todo },
 						},
-						{ $set: { doer: tempsubset.todo.to + msg.domain } },
+						{ $set: { doer: tempsubset.todo.to } },
 					));
 				/*
 				if (tempsubset.wf && msg.wf.length > 0) {
@@ -2660,7 +2658,6 @@ const yarkNode_internal = async function (obj: NextDef) {
 			}
 			let mail_subject = "Message from Metatocome";
 			let mail_body = "Message from Metatocome";
-			//let recipients = getEmailRecipientsFromDoers(doers);
 
 			let KVARS_WITHOUT_VISIBILITY = await Parser.userGetVars(
 				obj.tenant,
@@ -2699,8 +2696,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 				if (cells && Array.isArray(cells) && cells.length > 0) {
 					for (let ri = 1; ri < cells.length; ri++) {
 						let recipient = cells[ri][0];
-						recipient = Tools.makeEmailSameDomain(recipient, obj.starter);
-						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
+						let doerCN = await Cache.getEmployeeName(tenant, recipient, "yarkNode_internal");
 						try {
 							KVARS_WITHOUT_VISIBILITY["doerCN"] = { name: "doerCN", value: doerCN };
 							let tmp_subject = tpNode.find("subject").first().text();
@@ -2759,7 +2755,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 				try {
 					for (let i = 0; i < doers.length; i++) {
 						let recipient = doers[i].eid;
-						let doerCN = await Cache.getUserName(tenant, recipient, "yarkNode_internal");
+						let doerCN = await Cache.getEmployeeName(tenant, recipient, "yarkNode_internal");
 						try {
 							let tmp_subject = tpNode.find("subject").first().text();
 							let tmp_body = tpNode.find("content").first().text();
@@ -3311,10 +3307,9 @@ const yarkNode_internal = async function (obj: NextDef) {
 		}
 		log(tenant, obj.wfid, "End");
 		let sendEmailTo = obj.starter;
-		let ew = await Cache.getUserEw(obj.tenant, sendEmailTo);
-		let withEmail = ew && ew.email;
+		let withEmail = await Cache.shouldNotifyViaEmail(obj.tenant, sendEmailTo);
 		if (withEmail) {
-			let cn = await Cache.getUserName(tenant, sendEmailTo, "yarkNode_internal");
+			let cn = await Cache.getEmployeeName(tenant, sendEmailTo, "yarkNode_internal");
 			let mail_body = `Hello, ${cn}, <br/>
           <br/>
           The workflow you started as <br/>
@@ -3389,7 +3384,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 				for (let ri = 1; ri < cells.length; ri++) {
 					doerOrDoers.push({
 						eid: cells[ri][0],
-						cn: await Cache.getUserName(tenant, cells[ri][0], "yarkNode_internal"),
+						cn: await Cache.getEmployeeName(tenant, cells[ri][0], "yarkNode_internal"),
 					});
 				}
 			}
@@ -3697,7 +3692,7 @@ const createTodo = async function (obj) {
 		else {
 			if (typeof obj.doer[i] === "string") doerEid = obj.doer[i];
 		}
-		let doerName = await Cache.getUserName(obj.tenant, doerEid, "createTodo");
+		let doerName = await Cache.getEmployeeName(obj.tenant, doerEid, "createTodo");
 
 		//在新建单人TODO时替换doerCN
 		let nodeTitleForPerson = obj.tpNodeTitle.replace(/doerCN/, doerName);
@@ -4011,14 +4006,13 @@ const transferWork = async function (
 	);
 
 	let newDoer = whomEmployee.eid;
-	let ew = await Cache.getUserEw(tenant, newDoer);
-	if (ew === false) {
+	if ((await Cache.shouldNotifyViaEmail(tenant, newDoer)) === false) {
 		console.log(newDoer, " does not receive email on new task");
 		return whomEmployee;
 	}
 
-	let fromCN = await Cache.getUserName(tenant, myEid, "transferWork");
-	let newCN = await Cache.getUserName(tenant, newDoer, "transferWork");
+	let fromCN = await Cache.getEmployeeName(tenant, myEid, "transferWork");
+	let newCN = await Cache.getEmployeeName(tenant, newDoer, "transferWork");
 	await informUserOnNewTodo({
 		tenant: tenant,
 		doer: newDoer,
@@ -4108,14 +4102,8 @@ const informUserOnNewTodo = async function (inform) {
 	try {
 		let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
 		console.log("\t==>sendEmailTo", sendEmailTo);
-		let ew = await Cache.getUserEw(inform.tenant, sendEmailTo);
-		let withEmail = true;
-		if (typeof ew === "boolean" && ew === false) {
-			console.log(inform.doer, " does not receive email on new task");
-			withEmail = false;
-		}
-		withEmail = ew && ew.email;
-		let cn = await Cache.getUserName(inform.tenant, inform.doer, "informUserOnNewTodo");
+		let withEmail = await Cache.shouldNotifyViaEmail(inform.tenant, sendEmailTo);
+		let cn = await Cache.getEmployeeName(inform.tenant, inform.doer, "informUserOnNewTodo");
 		let mail_body = `Hello, ${cn}, new task is comming in:
 <br/><a href="${frontendUrl}/work/${inform.todoid}">${inform.title} </a><br/>
 in Workflow: <br/>
@@ -5048,7 +5036,7 @@ const workflowGetList = async function (
 	//TODO: this is not findOne, but find, should we keep it in mongoose?
 	let wfs = (await Workflow.find(filter, { doc: 0 }, option).lean()) as WorkflowType[];
 	for (let i = 0; i < wfs.length; i++) {
-		wfs[i].starterCN = await Cache.getUserName(tenant, wfs[i].starter, "workflowGetList");
+		wfs[i].starterCN = await Cache.getEmployeeName(tenant, wfs[i].starter, "workflowGetList");
 	}
 	return wfs;
 };
@@ -5165,17 +5153,11 @@ const splitMarked = async function (tenant: string | Types.ObjectId, cmt: Commen
 	let splittedMd = splitComment(mdcontent);
 	let people = [];
 	let eids = [];
-	[people, eids] = await setPeopleFromContent(
-		tenant,
-		cmt.who, //Email domain reference user
-		cmt.content,
-		people,
-		eids,
-	);
+	[people, eids] = await setPeopleFromContent(tenant, cmt.content, people, eids);
 	for (let c = 0; c < splittedMd.length; c++) {
 		if (splittedMd[c].startsWith("@")) {
 			if (people.includes(splittedMd[c].substring(1))) {
-				splittedMd[c] = `<span class="comment_uid">${await Cache.getUserName(
+				splittedMd[c] = `<span class="comment_uid">${await Cache.getEmployeeName(
 					tenant,
 					splittedMd[c].substring(1),
 					"splitMarked",
@@ -5242,8 +5224,8 @@ const getComments = async function (tenant, objtype, objid, depth = -1, skip = -
 	}
 	if (cmts) {
 		for (let i = 0; i < cmts.length; i++) {
-			cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who, "getComments");
-			cmts[i].towhomCN = await Cache.getUserName(tenant, cmts[i].towhom, "getComments");
+			cmts[i].whoCN = await Cache.getEmployeeName(tenant, cmts[i].who, "getComments");
+			cmts[i].towhomCN = await Cache.getEmployeeName(tenant, cmts[i].towhom, "getComments");
 			cmts[i].splitted = splitComment(cmts[i].content);
 			let tmpret = await splitMarked(tenant, cmts[i]);
 			cmts[i].mdcontent = tmpret.mdcontent;
@@ -5302,7 +5284,7 @@ const loadWorkflowComments = async function (tenant, wfid) {
 		if (todo) {
 			workComments[i].todoTitle = todo.title;
 			workComments[i].todoDoer = todo.doer;
-			workComments[i].todoDoerCN = await Cache.getUserName(
+			workComments[i].todoDoerCN = await Cache.getEmployeeName(
 				tenant,
 				todo.doer,
 				"loadWorkflowComments",
@@ -5323,20 +5305,14 @@ const loadWorkflowComments = async function (tenant, wfid) {
 	cmts = workComments;
 
 	for (let i = 0; i < cmts.length; i++) {
-		cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who, "loadWorkflowComments");
+		cmts[i].whoCN = await Cache.getEmployeeName(tenant, cmts[i].who, "loadWorkflowComments");
 		cmts[i].splitted = splitComment(cmts[i].content);
 		let tmpret = await splitMarked(tenant, cmts[i]);
 		cmts[i].mdcontent = tmpret.mdcontent;
 		cmts[i].mdcontent2 = tmpret.mdcontent2;
 		let people = [];
 		let eids = [];
-		[people, eids] = await setPeopleFromContent(
-			tenant,
-			cmts[i].who, //Email domain reference user
-			cmts[i].content,
-			people,
-			eids,
-		);
+		[people, eids] = await setPeopleFromContent(tenant, cmts[i].content, people, eids);
 		cmts[i].people = people;
 		//每个 comment 自身还会有被评价
 		let children = await getComments(tenant, "COMMENT", cmts[i]._id);
@@ -5466,7 +5442,7 @@ const __getWorkFullInfo = async function (
 	ret.todoid = todo.todoid;
 	ret.tenant = todo.tenant;
 	ret.doer = todo.doer;
-	ret.doerCN = await Cache.getUserName(tenant, todo.doer, "__getWorkFullInfo");
+	ret.doerCN = await Cache.getEmployeeName(tenant, todo.doer, "__getWorkFullInfo");
 	ret.wfid = todo.wfid;
 	ret.nodeid = todo.nodeid;
 	ret.byroute = todo.byroute;
@@ -5510,7 +5486,7 @@ const __getWorkFullInfo = async function (
 					{
 						doer: todo.doer,
 						comment: todo.comment.trim(),
-						cn: await Cache.getUserName(tenant, todo.doer, "__getWorkFullInfo"),
+						cn: await Cache.getEmployeeName(tenant, todo.doer, "__getWorkFullInfo"),
 						splitted: splitComment(todo.comment.trim()),
 					},
 			  ];
@@ -5599,8 +5575,8 @@ const __getWorkflowWorksHistory = async function (
 	wfRoot: any,
 	wfid: string,
 ): Promise<any[]> {
-	let ret = [];
-	let tmpRet = [];
+	let ret: HistoryTodoEntryType[] = [];
+	let tmpRet: HistoryTodoEntryType[] = [];
 	//let todo_filter = { tenant: tenant, wfid: wfid, status: /ST_DONE|ST_RETURNED|ST_REVOKED/ };
 	//let todo_filter = { tenant: tenant, wfid: wfid, status: { $ne: "ST_RUN" } };
 	let todo_filter = { tenant: tenant, wfid: wfid };
@@ -5612,8 +5588,8 @@ const __getWorkflowWorksHistory = async function (
 			hasPersonCNInTitle = true;
 		}
 
-		let todoEntry: histroyTodoEntry = {} as histroyTodoEntry;
-		let doerCN = await Cache.getUserName(tenant, todos[i].doer, "__getWorkflowWorksHistory");
+		let todoEntry: HistoryTodoEntryType = {} as HistoryTodoEntryType;
+		let doerCN = await Cache.getEmployeeName(tenant, todos[i].doer, "__getWorkflowWorksHistory");
 		todoEntry.workid = todos[i].workid;
 		todoEntry.todoid = todos[i].todoid;
 		todoEntry.nodeid = todos[i].nodeid;
@@ -5650,8 +5626,8 @@ const __getWorkflowWorksHistory = async function (
 			tmpRet[i].doers = [];
 			tmpRet[i].doers.push({
 				eid: tmpRet[i].doer,
-				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
-				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
+				cn: await Cache.getEmployeeName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
+				signature: await Cache.getEmployeeSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
 				doneat: tmpRet[i].doneat,
 				status: tmpRet[i].status,
@@ -5671,8 +5647,8 @@ const __getWorkflowWorksHistory = async function (
       */
 			ret[existing_index].doers.push({
 				eid: tmpRet[i].doer,
-				cn: await Cache.getUserName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
-				signature: await Cache.getUserSignature(tenant, tmpRet[i].doer),
+				cn: await Cache.getEmployeeName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
+				signature: await Cache.getEmployeeSignature(tenant, tmpRet[i].doer),
 				todoid: tmpRet[i].todoid,
 				doneat: tmpRet[i].doneat,
 				status: tmpRet[i].status,
@@ -5704,7 +5680,7 @@ const getTodosByWorkid = async function (
 			.sort("-updatedAt")
 			.lean();
 	for (let i = 0; i < todos.length; i++) {
-		todos[i].cn = await Cache.getUserName(tenant, todos[i].doer, "getTodosByWorkid");
+		todos[i].cn = await Cache.getEmployeeName(tenant, todos[i].doer, "getTodosByWorkid");
 	}
 	return todos;
 };
@@ -7588,7 +7564,7 @@ const getDoer = async function (
 ) {
 	let ret = [];
 	if (!pds || (pds && pds === "DEFAULT")) {
-		return [{ eid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
+		return [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter, "getDoer") }];
 	}
 	//先吧kvarString变为kvar对象
 	let kvars = {};
@@ -7629,7 +7605,7 @@ const getDoer = async function (
 	);
 	//如果返回为空，并且需要插入缺省starter，则返回缺省starter
 	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length === 0))) {
-		ret = [{ eid: starter, cn: await Cache.getUserName(tenant, starter, "getDoer") }];
+		ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter, "getDoer") }];
 	}
 	return ret;
 };

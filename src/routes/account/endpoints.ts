@@ -4,7 +4,9 @@ import Joi from "joi";
 const validation = {
 	account: /^[a-zA-Z][a-zA-Z0-9_]{3,20}$/,
 	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]{3,40}$/,
+	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]{3,40}$/,
 	password: /^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{6,20}$/,
+	notify: /[esw]{0,3}/,
 };
 
 const internals = {
@@ -152,12 +154,12 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/upload/avatar",
+			path: "/employee/upload/avatar",
 			handler: Handlers.UploadAvatar,
 			config: {
 				auth: "token",
-				description: "Send the avatar image",
-				tags: ["api"],
+				description: "Uplaod an avatar image with file input field 'avatar'",
+				tags: ["api", "employee"],
 				payload: {
 					maxBytes: 1024 * 1024 * 5,
 					output: "file",
@@ -168,23 +170,6 @@ const internals = {
 			},
 		},
 
-		{
-			method: "GET",
-			path: "/account/avatar/{tenant}/{email}",
-			handler: Handlers.Avatar,
-			config: {
-				auth: "token",
-				description: "Get the avatar image",
-				tags: ["api"],
-				validate: {
-					params: {
-						tenant: Joi.string().required(),
-						email: Joi.string().required(),
-					},
-					validator: Joi,
-				},
-			},
-		},
 		{
 			method: "GET",
 			path: "/account/verifyEmail/{token}",
@@ -212,21 +197,6 @@ const internals = {
 				validate: {
 					payload: {
 						token: Joi.string().required(),
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/admin/set/emailVerified",
-			handler: Handlers.AdminSetEmailVerified,
-			config: {
-				tags: ["api"],
-				notes: "Admin set emailVerified for same domain users",
-				validate: {
-					payload: {
-						userids: Joi.array().items(Joi.string()).required(),
 					},
 					validator: Joi,
 				},
@@ -300,18 +270,33 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/set/signature",
-			handler: Handlers.SetSignatureFile,
+			path: "/employee/signature/upload",
+			handler: Handlers.SignatureUpload,
 			config: {
-				tags: ["api"],
-				description: "set signature file",
 				auth: "token",
+				description: "Upload a signature image with file input field 'signature'",
+				tags: ["api", "employee"],
+				payload: {
+					maxBytes: 1024 * 1024 * 5,
+					output: "file",
+					parse: true,
+					allow: ["multipart/form-data"],
+					multipart: true,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/employee/signature/set/text",
+			handler: Handlers.SignatureSetText,
+			config: {
+				auth: "token",
+				tags: ["api", "employee"],
+				description: "Set signature string",
 				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
 					payload: {
-						pondfiles: Joi.array().items(Joi.any()),
+						eid: Joi.string().optional(),
+						signature: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -319,11 +304,11 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/remove/signature",
-			handler: Handlers.removeSignatureFile,
+			path: "/employee/signature/remove",
+			handler: Handlers.SignatureRemove,
 			config: {
-				tags: ["api"],
-				description: "remove signature file",
+				tags: ["api", "employee"],
+				description: "remove signature ",
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -338,17 +323,68 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/set/username",
-			handler: Handlers.SetMyUserName,
+			path: "/employee/signature/get/text",
+			handler: Handlers.SignatureGetText,
+			config: {
+				auth: "token",
+				tags: ["api", "employee"],
+				description:
+					"Get signature defitition string, if start with 'PIC:', the signature is a picture, frontend should use  img.src='../signagure/eid' to display the signature, or else, the employee's signature is a text string, frontend should display this string directly",
+				validate: {
+					payload: {
+						eid: Joi.string().optional(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "GET",
+			path: "/signature/{eid}",
+			handler: Handlers.SignatureViewer,
 			config: {
 				auth: "token",
 				tags: ["api"],
+				description: "View an employee's signature",
+			},
+		},
+		{
+			method: "POST",
+			path: "/account/set/username",
+			handler: Handlers.SetUserName,
+			config: {
+				auth: "token",
+				tags: ["api"],
+				description:
+					"修改当前登录用户的account下的username , 并返回于登录时相同的session数据; 如当前用户是ADMIN,可以使用修改 其他用户的username, 此时需要指定account, 返回{account, username}",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
 						username: Joi.string().regex(validation.username).required(),
+						account: Joi.string().optional(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/employee/set/nickname",
+			handler: Handlers.SetNickName,
+			config: {
+				auth: "token",
+				tags: ["api", "employee"],
+				description:
+					"如果不指定eid, 则修改当前登录用户的当下tenant中employee的nickname, 并返回于登录时相同的session数据, 如果指定eid, 当eid不是当前用户时,要求当前用户必须是ADMIN, 如果是修改当前用户自己的nickname, 则返回session数据, 如果是ADMIN修改其他用户的nickname,则返回{eid, nickname}",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						nickname: Joi.string().regex(validation.nickname).required(),
+						eid: Joi.string().optional(),
 					},
 					validator: Joi,
 				},
@@ -368,6 +404,26 @@ const internals = {
 					payload: {
 						oldpassword: Joi.string().required(),
 						password: Joi.string().min(6).required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/employee/set/notify",
+			handler: Handlers.SetNotify,
+			config: {
+				auth: "token",
+				tags: ["api", "employee"],
+				description:
+					"Set notify setting string for the current employee, any combination of 'e|s|w' is allowed",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						notify: Joi.string().regex(validation.notify).required().allow(""),
 					},
 					validator: Joi,
 				},
@@ -668,9 +724,8 @@ const internals = {
 				description: "Delete orgchart amdinistrator",
 				auth: "token",
 				validate: {
-					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
-						userid: Joi.string().required(),
+						eid: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -757,8 +812,11 @@ const internals = {
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
-						eids: Joi.array().items(Joi.string()).required(),
-						group: Joi.string().required(),
+						eids: Joi.array().items(Joi.string()).required().description("Array of eids"),
+						group: Joi.string()
+							.required()
+							.valid("ADMIN", "OBSERVER", "DOER")
+							.description("group to set"),
 					},
 					validator: Joi,
 				},
@@ -788,13 +846,16 @@ const internals = {
 			handler: Handlers.GetOrgEmployees,
 			config: {
 				tags: ["api"],
-				description: "Get orgnization members",
+				description: "Get orgnization employees, {eid, nickname, group}",
 				auth: "token",
 				validate: {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
-						eids: Joi.array().items(Joi.string()).optional(),
-						active: Joi.boolean().optional().default(true),
+						eids: Joi.array()
+							.items(Joi.string())
+							.optional()
+							.description("不带eids返回全部, 带了eids,eids是一个eid数组,仅返回这部分员工信息"),
+						active: Joi.number().optional().default(1).description("1: 在职, 2: 离职, 3:全部"),
 					},
 					validator: Joi,
 				},
@@ -833,23 +894,12 @@ const internals = {
 		},
 		{
 			method: "GET",
-			path: "/avatar/{email}",
+			path: "/avatar/{eid}",
 			handler: Handlers.AvatarViewer,
 			config: {
 				auth: "token",
-			},
-		},
-		{
-			method: "POST",
-			path: "/signature",
-			handler: Handlers.SignatureViewer,
-			config: {
-				auth: "token",
-				validate: {
-					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { eid: Joi.string() },
-					validator: Joi,
-				},
+				tags: ["api"],
+				description: "View an employee's avatar",
 			},
 		},
 		{

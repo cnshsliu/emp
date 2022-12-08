@@ -199,7 +199,11 @@ async function SeeItWork(req: Request, h: ResponseToolkit) {
 				update = {
 					$set: {
 						author: CRED.employee.eid,
-						authorName: await Cache.getUserName(CRED.tenant._id, CRED.employee.eid, "SeeItWork"),
+						authorName: await Cache.getEmployeeName(
+							CRED.tenant._id,
+							CRED.employee.eid,
+							"SeeItWork",
+						),
 						doc: doc,
 						ins: false,
 					},
@@ -446,7 +450,7 @@ async function TemplateRename(req: Request, h: ResponseToolkit) {
 				throw new EmpError("NO_PERM", "You don't have permission to rename this template");
 			tpl.tplid = PLD.tplid;
 			if (Tools.isEmpty(tpl.authorName)) {
-				tpl.authorName = await Cache.getUserName(CRED.tenant._id, tpl.author, "TemplateRename");
+				tpl.authorName = await Cache.getEmployeeName(CRED.tenant._id, tpl.author, "TemplateRename");
 			}
 			let oldTplId = PLD.fromid;
 			let newTplId = PLD.tplid;
@@ -658,7 +662,7 @@ async function WorkflowRead(req: Request, h: ResponseToolkit) {
 				retWf.history = await Engine.getWfHistory(tenant, myEid, PLD.wfid, wf);
 				if (withDoc === false) delete retWf.doc;
 				if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
-				retWf.starterCN = await Cache.getUserName(tenant, wf.starter, "WorkflowRead");
+				retWf.starterCN = await Cache.getEmployeeName(tenant, wf.starter, "WorkflowRead");
 				let pboStatusValueDef = await Parser.getVar(
 					tenant,
 					retWf.wfid,
@@ -1608,7 +1612,7 @@ async function WorkflowSearch(req: Request, h: ResponseToolkit) {
 				.lean()) as unknown as any;
 
 			for (let i = 0; i < retObjs.length; i++) {
-				retObjs[i].starterCN = await Cache.getUserName(
+				retObjs[i].starterCN = await Cache.getEmployeeName(
 					tenant,
 					retObjs[i].starter,
 					"WorkflowSearch",
@@ -1776,7 +1780,7 @@ async function Mining_Workflow(req: Request, h: ResponseToolkit) {
 			let retObjs = (await Workflow.find(filter, fields).lean()) as any[];
 
 			for (let i = 0; i < retObjs.length; i++) {
-				retObjs[i].starterCN = await Cache.getUserName(
+				retObjs[i].starterCN = await Cache.getEmployeeName(
 					tenant,
 					retObjs[i].starter,
 					"WorkflowSearch",
@@ -2064,7 +2068,7 @@ async function CheckCoworker(req: Request, h: ResponseToolkit) {
 			let whom = PLD.whom;
 			let employee = await Employee.findOne(
 				{ tenant: tenant, eid: whom },
-				{ eid: 1, nickname: 1, _id: 0 },
+				{ eid: 1, nickname: 1, _id: 0, group: 1 },
 			);
 			if (!employee) {
 				throw new EmpError("USER_NOT_FOUND", `${whom} not exist`);
@@ -2089,7 +2093,7 @@ async function CheckCoworkers(req: Request, h: ResponseToolkit) {
 			let ret = "";
 			for (let i = 0; i < eids.length; i++) {
 				let eid = eids[i][0] === "@" ? eids[i].substring(1) : eids[i];
-				let cn = await Cache.getUserName(tenant, eid, "CheckCoworkers");
+				let cn = await Cache.getEmployeeName(tenant, eid, "CheckCoworkers");
 				if (cn === "USER_NOT_FOUND") {
 					ret += "<span class='text-danger'>" + eids[i] + "</span> ";
 				} else {
@@ -2606,7 +2610,7 @@ async function TemplateSearch(req: Request, h: ResponseToolkit) {
 			}
 
 			if (PLD.author) {
-				filter["author"] = Tools.makeEmailSameDomain(PLD.author, myEid);
+				filter["author"] = PLD.author;
 			}
 
 			//let tspan = PLD.tspan;
@@ -2708,7 +2712,7 @@ async function TemplateImport(req: Request, h: ResponseToolkit) {
 				update = {
 					$set: {
 						author: author,
-						authorName: await Cache.getUserName(tenant, author, "TemplateImport"),
+						authorName: await Cache.getEmployeeName(tenant, author, "TemplateImport"),
 						ins: false,
 						doc: doc,
 					},
@@ -3562,6 +3566,8 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 			//filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
 			let csv = fs.readFileSync(filePath, "utf8");
 
+			const COL = { OU: 0, ACCOUNT: 1, EID: 2, POSITION: 3 };
+
 			let orgChartArr = [];
 			let currentOU = "";
 			let currentPOU = "";
@@ -3586,34 +3592,42 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 					}
 				});
 
-				if (rowSize < 2) {
+				if (rowSize == 0) {
 					errors.push(`line ${rowIndex + 1}: should be at least 2 columns`);
 					return;
+				} else if (rowSize === 1 && cols[COL.OU].length % 5 === 0) {
+					cols.push("OU---");
 				}
 
-				if (rowIndex === 0 && cols[0] === "OU") return;
+				if (rowIndex === 0 && cols[COL.OU] === "OU") return;
 
-				if (cols[0].length > 0 && cols[0] != "root" && cols[0].length % 5 !== 0) {
-					errors.push(`line ${rowIndex + 1}: ou id ${cols[0]} format is wrong`);
+				if (cols[COL.OU].length > 0 && cols[COL.OU] != "root" && cols[COL.OU].length % 5 !== 0) {
+					errors.push(`line ${rowIndex + 1}: ou id ${cols[COL.OU]} format is wrong`);
 					return;
 				}
 
-				currentOU = cols[0];
-				if (cols[2].trim().length > 0) {
-					isOU = false;
+				currentOU = cols[COL.OU];
+
+				if (cols[COL.EID] && cols[COL.EID].text) {
+					cols[COL.EID] = cols[COL.EID].text;
+				}
+				if (cols[COL.EID]) {
+					if (cols[COL.EID].trim().length > 0) {
+						if (cols[COL.EID].trim() === "OU---") isOU = true;
+						else isOU = false; // eid
+					}
 				} else {
 					isOU = true;
 				}
-				currentCN = cols[1];
 				orgChartArr.push({
 					tenant: tenant,
 					ou: currentOU,
-					cn: currentCN,
-					//如果不是OU， 则cols[2]为邮箱名
-					eid: isOU ? "OU---" : cols[2],
+					account: cols[COL.ACCOUNT],
+					//如果不是OU， 则cols[COL.EID]为邮箱名
+					eid: isOU ? "OU---" : cols[COL.EID],
 					//如果isOU，则position为空[]即可
-					//如果是用户，则position为第4列（cols[3]）所定义的内容用：分割的字符串数组
-					position: isOU ? [] : cols[3] ? cols[3].split(":") : ["staff"],
+					//如果是用户，则position为第4列（cols[COL.POSITION]）所定义的内容用：分割的字符串数组
+					position: isOU ? [] : cols[COL.POSITION] ? cols[COL.POSITION].split(":") : ["staff"],
 					line: rowIndex + 1,
 				});
 			}); //eachRow;
@@ -3623,9 +3637,52 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 			//再把所有用户重新插入Orgchart
 			//console.log(JSON.stringify(orgChartArr));
 			//await OrgChart.insertMany(orgChartArr);
+			let rootExist = false;
+			for (let i = 0; i < orgChartArr.length; i++) {
+				if (orgChartArr[i].ou === "root" && orgChartArr[i].eid === "OU---") {
+					rootExist = true;
+					break;
+				}
+			}
+			if (!rootExist) {
+				orgChartArr.unshift({
+					tenant: tenant,
+					ou: "root",
+					eid: "OU---",
+					position: "",
+					line: 0,
+				});
+			}
 			for (let i = 0; i < orgChartArr.length; i++) {
 				try {
 					await OrgChart.insertMany([orgChartArr[i]]);
+					if (orgChartArr[i].eid !== "OU---") {
+						const existingEmployee = await Employee.findOne({
+							tenant: tenant,
+							account: orgChartArr[i].account,
+						});
+						if (!existingEmployee) {
+							const existingUser = await User.findOne({ account: orgChartArr[i].account });
+							if (existingUser) {
+								let employee = new Employee({
+									tenant: tenant,
+									userid: existingUser._id,
+									account: orgChartArr[i].account,
+									group: "DOER",
+									nickname: existingUser.username,
+									eid: orgChartArr[i].eid,
+									domain: CRED.tenant.domain,
+									avatarinfo: {
+										path: Tools.getDefaultAvatarPath(),
+										media: "image/png",
+										tag: "nochange",
+									},
+								});
+
+								employee = await employee.save();
+							}
+						}
+					}
 				} catch (err) {
 					errors.push(
 						`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].eid}`,
@@ -3683,7 +3740,7 @@ async function OrgChartExport(req: Request, h: ResponseToolkit) {
 				let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
 				let entry = await OrgChart.findOne(filter, { __v: 0 });
 				if (entry) {
-					entries.push({ ou: entry.ou, cn: entry.cn, email: "", pos: "" });
+					entries.push({ ou: entry.ou, eid: "", pos: "" });
 
 					filter = { tenant: tenant, ou: ou, eid: { $ne: "OU---" } };
 					let users = await OrgChart.find(filter, { __v: 0 });
@@ -3691,8 +3748,7 @@ async function OrgChartExport(req: Request, h: ResponseToolkit) {
 						let usrPos = users[i].position.filter((x: string) => x !== "staff");
 						entries.push({
 							ou: users[i].ou,
-							cn: users[i].cn,
-							email: users[i].eid,
+							eid: users[i].eid,
 							pos: usrPos.join(":"),
 						});
 					}
@@ -3761,7 +3817,7 @@ async function OrgChartGetAllOUs(req: Request, h: ResponseToolkit) {
 				let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
 				let entry = await OrgChart.findOne(filter, { __v: 0 });
 				if (entry) {
-					entries.push({ ou: entry.ou, cn: entry.cn, email: "", pos: "", level: level });
+					entries.push({ ou: entry.ou, eid: "", pos: "", level: level });
 					let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
 					filter = { tenant: tenant, ou: ouFilter, eid: "OU---" };
 					let ous = await OrgChart.find(filter, { __v: 0 });
@@ -3806,7 +3862,6 @@ async function OrgChartCopyOrMoveStaff(req: Request, h: ResponseToolkit) {
 				let newEntry = new OrgChart({
 					tenant: tenant,
 					ou: to,
-					cn: existingEntry.cn,
 					eid: eid,
 					position: [],
 				});
@@ -4055,7 +4110,6 @@ async function OrgChartExpand(req: Request, h: ResponseToolkit) {
 				let employee = await Employee.findOne({ tenant: tenant, eid: tmp[i].eid }, { __v: 0 });
 				if (employee && employee.active === false) {
 					tmp[i].eid = employee.succeed;
-					tmp[i].cn = await Cache.getUserName(tenant, tmp[i].eid, "OrgChartExpand");
 				}
 			}
 			ret = ret.concat(tmp);
@@ -4707,7 +4761,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			}
 
 			for (let i = 0; i < cmts.length; i++) {
-				cmts[i].whoCN = await Cache.getUserName(tenant, cmts[i].who, "CommentSearch");
+				cmts[i].whoCN = await Cache.getEmployeeName(tenant, cmts[i].who, "CommentSearch");
 				if (cmts[i].context) {
 					let todo = await Todo.findOne(
 						{
@@ -4720,7 +4774,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 					if (todo) {
 						cmts[i].todoTitle = todo.title;
 						cmts[i].todoDoer = todo.doer;
-						cmts[i].todoDoerCN = await Cache.getUserName(tenant, todo.doer, "CommentSearch");
+						cmts[i].todoDoerCN = await Cache.getEmployeeName(tenant, todo.doer, "CommentSearch");
 					}
 				}
 				cmts[i].upnum = await Thumb.countDocuments({
@@ -4750,7 +4804,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 						.limit(1)
 						.lean();
 					for (let r = 0; r < cmts[i].latestReply.length; r++) {
-						cmts[i].latestReply[r].whoCN = await Cache.getUserName(
+						cmts[i].latestReply[r].whoCN = await Cache.getEmployeeName(
 							tenant,
 							cmts[i].latestReply[r].who,
 							"commentSearch",
@@ -5106,10 +5160,10 @@ async function TodoSetDoer(req: Request, h: ResponseToolkit) {
 			let forAll = PLD.forall;
 			if (newDoer[0] === "@") newDoer = newDoer.substring(1);
 			if (newDoer.indexOf("@") > 0) newDoer = newDoer.substring(0, newDoer.indexOf("@"));
-			let newDoerEmail = Tools.makeEmailSameDomain(newDoer, myEid);
-			let newDoerObj = await User.findOne({ tenant: tenant, email: newDoerEmail }, { __v: 0 });
+			let newDoerEid = newDoer;
+			let newDoerObj = await Employee.findOne({ tenant: tenant, eid: newDoerEid }, { __v: 0 });
 			if (!newDoerObj) {
-				throw new EmpError("NO_USER", `User ${newDoerEmail} not found`);
+				throw new EmpError("NO_EMPLOYEE", `Employee ${newDoerEid} not found`);
 			}
 
 			let filter: any = { tenant: tenant, todoid: todoid, doer: doer, status: "ST_RUN" };
@@ -5117,11 +5171,11 @@ async function TodoSetDoer(req: Request, h: ResponseToolkit) {
 				filter = { tenant: tenant, doer: doer, status: "ST_RUN" };
 			}
 
-			await Todo.updateMany(filter, { $set: { doer: newDoerEmail } });
+			await Todo.updateMany(filter, { $set: { doer: newDoerEid } });
 
 			return {
-				newdoer: newDoerEmail,
-				newcn: await Cache.getUserName(tenant, newDoerEmail, "TodoSetDoer"),
+				newdoer: newDoerEid,
+				newcn: await Cache.getEmployeeName(tenant, newDoerEid, "TodoSetDoer"),
 			};
 		}),
 	);
@@ -5583,7 +5637,15 @@ async function TemplateGetCover(req: Request, h: ResponseToolkit) {
 
 			let coverInfo = await Cache.getTplCoverInfo(tenant, tplid);
 			if (fs.existsSync(coverInfo.path)) {
-				return replyHelper.buildReturnWithEtag(fs.createReadStream(coverInfo.path), coverInfo.etag);
+				return replyHelper.buildReturn(
+					fs.createReadStream(coverInfo.path),
+					{
+						"Access-Control-Allow-Origin": "*",
+						"Content-Type": "image/png",
+						"Content-Disposition": `attachment;filename="${tplid}.png"`,
+					},
+					coverInfo.etag,
+				);
 			} else {
 				throw new EmpError("COVER_FILE_LOST", "Cover file does not exist");
 			}
@@ -5657,10 +5719,10 @@ async function CellsRead(req: Request, h: ResponseToolkit) {
 						//firstRow后，都是数据行。数据行要检查第一列的用户ID是否存在
 						if (rowIndex > firstRow) {
 							if (
-								!(await User.findOne(
+								!(await Employee.findOne(
 									{
 										tenant: tenant,
-										email: Tools.makeEmailSameDomain(cols[0], myEid),
+										eid: cols[0],
 									},
 									{ __v: 0 },
 								))
@@ -5707,7 +5769,10 @@ async function ListUsersNotStaff(req: Request, h: ResponseToolkit) {
 			if (myGroup !== "ADMIN") {
 				throw new EmpError("NOT_ADMIN", "You are not admin");
 			}
-			let employees = await Employee.find({ tenant: tenant }, { __v: 0 }).lean();
+			let employees = await Employee.find(
+				{ tenant: tenant },
+				{ __v: 0, _id: 0, eid: 1, nickname: 1 },
+			).lean();
 			let orgChartEntries = await OrgChart.find({ tenant: tenant }, { _id: 0, eid: 1 }).lean();
 			const tmp: string[] = orgChartEntries.map((x: any) => x.eid);
 			employees = employees.filter((x) => tmp.includes(x.eid) === false);
@@ -5716,7 +5781,7 @@ async function ListUsersNotStaff(req: Request, h: ResponseToolkit) {
 	);
 }
 
-async function ReplaceUserSucceed(req: Request, h: ResponseToolkit) {
+async function ReplaceEmployeeSucceed(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
@@ -5727,31 +5792,35 @@ async function ReplaceUserSucceed(req: Request, h: ResponseToolkit) {
 			let myGroup = CRED.employee.group;
 			assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
 
-			let fromEmail = Tools.makeEmailSameDomain(PLD.from, myEid);
-			let toEmail = Tools.makeEmailSameDomain(PLD.to, myEid);
-			let toUser = await User.findOne(
+			let fromEid = PLD.from;
+			let toEid = PLD.to;
+			let toEmployee = await Employee.findOne(
 				{
 					tenant: tenant,
-					email: toEmail,
+					eid: toEid,
 				},
 				{ __v: 0 },
 			);
-			assert.notEqual(toUser, null, new EmpError("USER_NOT_FOUND", "TO user must exists"));
-			let aUser = await User.findOneAndUpdate(
-				{ tenant: tenant, email: fromEmail },
-				{ $set: { active: false, succeed: toEmail, succeedname: toUser.username } },
+			assert.notEqual(
+				toEmployee,
+				null,
+				new EmpError("EMPLOYEE_NOT_FOUND", "TO employee must exists"),
+			);
+			let fromEmployee = await Employee.findOneAndUpdate(
+				{ tenant: tenant, eid: fromEid },
+				{ $set: { active: false, succeed: toEid, succeedname: toEmployee.nickname } },
 				{ upsert: false, new: true },
 			);
 
 			// If reassigned user has ever been set as any other reassigned users' succeed, change the succeed to the new user as well.
-			await User.updateMany(
-				{ tenant: tenant, succeed: fromEmail },
-				{ $set: { succeed: toEmail, succeedname: toUser.username } },
+			await Employee.updateMany(
+				{ tenant: tenant, succeed: fromEid },
+				{ $set: { succeed: toEid, succeedname: toEmployee.nickname } },
 			);
 			//Delete cache of reassigned user's credential cache from Redis,
 			//THis cause credential verifcation failed: no cache, EMP get user info
 			//from database and required the user's active value must be true.
-			if (aUser) await Cache.removeKey(`cred_${aUser._id}`);
+			if (fromEmployee) await Cache.removeKey(`cred_${fromEmployee._id}`);
 
 			return "Done";
 		}),
@@ -5777,16 +5846,18 @@ async function ReplaceUserPrepare(req: Request, h: ResponseToolkit) {
 					$lte: new Date(new Date().getTime() - 10 * 60 * 1000).toISOString(),
 				},
 			});
-			PLD.from = Tools.getEmailPrefix(PLD.from);
-			PLD.to = Tools.getEmailPrefix(PLD.to);
-			let toUser = await User.findOne(
+			let toEmployee = await Employee.findOne(
 				{
 					tenant: tenant,
-					email: Tools.makeEmailSameDomain(PLD.to, myEid),
+					eid: PLD.to,
 				},
 				{ __v: 0 },
 			);
-			assert.notEqual(toUser, null, new EmpError("USER_NOT_FOUND", "TO user must exists"));
+			assert.notEqual(
+				toEmployee,
+				null,
+				new EmpError("EMPLOYEE_NOT_FOUND", "TO Employee must exists"),
+			);
 			//TODO: replaceUser
 			Engine.replaceUser({
 				tenant,
@@ -6270,7 +6341,7 @@ async function KsTplPickOne(req: Request, h: ResponseToolkit) {
 				tenant: tenant,
 				tplid: tplid,
 				author: author,
-				authorName: await Cache.getUserName(tenant, author, "TemplateImport"),
+				authorName: await Cache.getEmployeeName(tenant, author, "TemplateImport"),
 				ins: false,
 				doc: (await KsTpl.findOne({ ksid: ksid }, { doc: 1 }))["doc"],
 				ksid: ksid,
@@ -6392,7 +6463,7 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 				);
 			}
 			for (let i = 0; i < ret.length; i++) {
-				ret[i].starterCN = await Cache.getUserName(tenant, ret[i].starter);
+				ret[i].starterCN = await Cache.getEmployeeName(tenant, ret[i].starter);
 				ret[i].works = await Work.find(
 					{ tenant: tenant, wfid: ret[i].wfid },
 					{
@@ -6431,7 +6502,7 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 					},
 				).lean();
 				for (let t = 0; t < ret[i].todos.length; t++) {
-					ret[i].todos[t].doerCN = await Cache.getUserName(tenant, ret[i].todos[t].doer);
+					ret[i].todos[t].doerCN = await Cache.getEmployeeName(tenant, ret[i].todos[t].doer);
 				}
 			}
 			return ret;
@@ -6701,7 +6772,7 @@ export default {
 	DemoPostContext,
 	ListUsersNotStaff,
 	Fix,
-	ReplaceUserSucceed,
+	ReplaceEmployeeSucceed,
 	ReplaceUserPrepare,
 	ReplaceUserPrepareResult,
 	ReplaceUserExecute,
