@@ -3,8 +3,8 @@ import Handlers from "./handlers";
 import Joi from "joi";
 const validation = {
 	account: /^[a-zA-Z][a-zA-Z0-9_]{3,20}$/,
-	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]{3,40}$/,
-	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9_\u4e00-\u9fa5]{3,40}$/,
+	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9 \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
+	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9 \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
 	password: /^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{6,20}$/,
 	notify: /[esw]{0,3}/,
 };
