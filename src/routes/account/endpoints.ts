@@ -2,9 +2,9 @@
 import Handlers from "./handlers";
 import Joi from "joi";
 const validation = {
-	account: /^[a-zA-Z][a-zA-Z0-9_]{3,20}$/,
-	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9 \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
-	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9 \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
+	account: /^[a-zA-Z][a-zA-Z0-9_]{2,18}[a-zA-Z0-9]$/,
+	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9. \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
+	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9. \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
 	password: /^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{6,20}$/,
 	notify: /[esw]{0,3}/,
 };
@@ -362,7 +362,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						username: Joi.string().regex(validation.username).required(),
+						username: Joi.string().trim().regex(validation.username).required(),
 						account: Joi.string().optional(),
 					},
 					validator: Joi,
@@ -383,7 +383,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						nickname: Joi.string().regex(validation.nickname).required(),
+						nickname: Joi.string().trim().regex(validation.nickname).required(),
 						eid: Joi.string().optional(),
 					},
 					validator: Joi,
