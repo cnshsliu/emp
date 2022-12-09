@@ -3566,7 +3566,7 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 			//filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
 			let csv = fs.readFileSync(filePath, "utf8");
 
-			const COL = { OU: 0, ACCOUNT: 1, EID: 2, POSITION: 3 };
+			const COL = { OU: 0, ACCOUNT: 1, OUCN: 1, EID: 2, POSITION: 3 };
 
 			let orgChartArr = [];
 			let currentOU = "";
@@ -3606,18 +3606,26 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 					return;
 				}
 
+				//当栏位添加了连接时, cols数据是一个对象，只要把它的text取出来即可.
+				for (let i = 0; i < cols.length; i++) {
+					if (cols[i] && cols[i].text) {
+						cols[i] = cols[i].text;
+					}
+				}
+
 				currentOU = cols[COL.OU];
 
-				if (cols[COL.EID] && cols[COL.EID].text) {
-					cols[COL.EID] = cols[COL.EID].text;
-				}
+				let ouCN = "";
 				if (cols[COL.EID]) {
 					if (cols[COL.EID].trim().length > 0) {
-						if (cols[COL.EID].trim() === "OU---") isOU = true;
-						else isOU = false; // eid
+						if (cols[COL.EID].trim() === "OU---") {
+							isOU = true;
+							ouCN = cols[COL.OUCN].trim();
+						} else isOU = false; // eid
 					}
 				} else {
 					isOU = true;
+					ouCN = cols[COL.OUCN].trim();
 				}
 				orgChartArr.push({
 					tenant: tenant,
@@ -3628,6 +3636,7 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 					//如果isOU，则position为空[]即可
 					//如果是用户，则position为第4列（cols[COL.POSITION]）所定义的内容用：分割的字符串数组
 					position: isOU ? [] : cols[COL.POSITION] ? cols[COL.POSITION].split(":") : ["staff"],
+					cn: isOU ? ouCN : "toBeGottenFromEmployee",
 					line: rowIndex + 1,
 				});
 			}); //eachRow;
@@ -3649,19 +3658,21 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 					tenant: tenant,
 					ou: "root",
 					eid: "OU---",
+					cn: "组织顶层",
 					position: "",
 					line: 0,
 				});
 			}
 			for (let i = 0; i < orgChartArr.length; i++) {
 				try {
-					await OrgChart.insertMany([orgChartArr[i]]);
 					if (orgChartArr[i].eid !== "OU---") {
 						const existingEmployee = await Employee.findOne({
 							tenant: tenant,
 							account: orgChartArr[i].account,
 						});
-						if (!existingEmployee) {
+						if (existingEmployee) {
+							orgChartArr[i].cn = existingEmployee.nickname;
+						} else {
 							const existingUser = await User.findOne({ account: orgChartArr[i].account });
 							if (existingUser) {
 								let employee = new Employee({
@@ -3680,24 +3691,17 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 								});
 
 								employee = await employee.save();
+								orgChartArr[i].cn = employee.nickname;
 							}
 						}
 					}
+					await OrgChart.insertMany([orgChartArr[i]]);
 				} catch (err) {
 					errors.push(
 						`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].eid}`,
 					);
 				}
 			}
-			let uniqued_orgchart_staffs = [];
-			let uniqued_eids = [];
-			for (let i = 0; i < orgChartArr.length; i++) {
-				if (orgChartArr[i].eid.startsWith("OU-") || uniqued_eids.indexOf(orgChartArr[i].eid) > -1)
-					continue;
-				uniqued_eids.push(orgChartArr[i].eid);
-				uniqued_orgchart_staffs.push({ eid: orgChartArr[i].eid, cn: orgChartArr[i].cn });
-			}
-			//Next funciton use tenant of the first argu: admin,
 			return { ret: "ok", logs: errors };
 		}),
 	);
