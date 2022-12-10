@@ -55,6 +55,8 @@ import Mongoose from "mongoose";
 import RCL from "../../lib/RedisCacheLayer";
 import { redisClient } from "../../database/redis";
 
+const OUEID: string = "OU---";
+
 const EmailSchema = Joi.string().email();
 /* const asyncFilter = async (arr: Array<any>, predicate: any) => {
 	const results = await Promise.all(arr.map(predicate));
@@ -577,17 +579,17 @@ async function TemplateDelete(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant, _id: PLD._id };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id, _id: PLD._id };
 			const theTpl = await Template.findOne(filter, { doc: 0 });
 			let oldTplId = theTpl.tplid;
 			if (!(await SPC.hasPerm(CRED.employee, "template", theTpl, "delete")))
 				throw new EmpError("NO_PERM", "You don't have permission to delete this template");
 			let deletedRet = await Template.deleteOne(filter);
 			try {
-				fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
+				fs.rmSync(path.join(Tools.getTenantFolders(tenant_id).cover, oldTplId + ".png"));
 			} catch (err) {}
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 			return deletedRet;
 		}),
 	);
@@ -599,8 +601,8 @@ async function TemplateDeleteByTplid(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant, tplid: PLD.tplid };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id, tplid: PLD.tplid };
 
 			let oldTplId = PLD.tplid;
 			const theTpl = await Template.findOne(filter, { doc: 0 });
@@ -608,9 +610,9 @@ async function TemplateDeleteByTplid(req: Request, h: ResponseToolkit) {
 				throw new EmpError("NO_PERM", "You don't have permission to delete this template");
 			const delRet = await Template.deleteOne(filter);
 			try {
-				fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, oldTplId + ".png"));
+				fs.rmSync(path.join(Tools.getTenantFolders(tenant_id).cover, oldTplId + ".png"));
 			} catch (err) {}
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 			return delRet;
 		}),
 	);
@@ -622,7 +624,7 @@ async function TemplateDeleteMulti(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			assert.equal(
 				CRED.employee.group,
@@ -630,15 +632,15 @@ async function TemplateDeleteMulti(req: Request, h: ResponseToolkit) {
 				new EmpError("NOT_ADMIN", "Only ADMIN can delete templates in batch"),
 			);
 
-			let filter: any = { tenant: tenant, tplid: { $in: PLD.tplids } };
+			let filter: any = { tenant: tenant_id, tplid: { $in: PLD.tplids } };
 			await Template.deleteMany(filter);
 			for (let i = 0; i < PLD.tplids.length; i++) {
 				try {
-					fs.rmSync(path.join(Tools.getTenantFolders(tenant).cover, PLD.tplids[i] + ".png"));
+					fs.rmSync(path.join(Tools.getTenantFolders(tenant_id).cover, PLD.tplids[i] + ".png"));
 				} catch (err) {}
 			}
 
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 			return "Deleted";
 		}),
 	);
@@ -650,21 +652,24 @@ async function WorkflowRead(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let withDoc = PLD.withdoc;
-			let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowRead");
+			let wf = await RCL.getWorkflow(
+				{ tenant: tenant_id, wfid: PLD.wfid },
+				"engine/handler.WorkflowRead",
+			);
 			if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this template");
 			if (wf) {
 				let retWf = JSON.parse(JSON.stringify(wf));
 				retWf.beginat = retWf.createdAt;
-				retWf.history = await Engine.getWfHistory(tenant, myEid, PLD.wfid, wf);
+				retWf.history = await Engine.getWfHistory(tenant_id, myEid, PLD.wfid, wf);
 				if (withDoc === false) delete retWf.doc;
 				if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
-				retWf.starterCN = await Cache.getEmployeeName(tenant, wf.starter, "WorkflowRead");
+				retWf.starterCN = await Cache.getEmployeeName(tenant_id, wf.starter, "WorkflowRead");
 				let pboStatusValueDef = await Parser.getVar(
-					tenant,
+					tenant_id,
 					retWf.wfid,
 					Const.FOR_WHOLE_PROCESS,
 					Const.VAR_IS_EFFICIENT,
@@ -686,8 +691,11 @@ async function WorkflowGetAttachments(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowRead");
+			const tenant_id = CRED.tenant._id;
+			let wf = await RCL.getWorkflow(
+				{ tenant: tenant_id, wfid: PLD.wfid },
+				"engine/handler.WorkflowRead",
+			);
 			if (wf) {
 				if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 					throw new EmpError("NO_PERM", "You don't have permission to read this template");
@@ -705,9 +713,12 @@ async function WorkflowGetPbo(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let pboType = PLD.pbotype;
-			let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowRead");
+			let wf = await RCL.getWorkflow(
+				{ tenant: tenant_id, wfid: PLD.wfid },
+				"engine/handler.WorkflowRead",
+			);
 			if (wf) {
 				if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "read")))
 					throw new EmpError("NO_PERM", "You don't have permission to read this template");
@@ -741,7 +752,7 @@ async function WorkflowSetPbo(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let newPbo = PLD.pbo;
 			let pbotype = PLD.pbotype;
 			if (pbotype !== "text") {
@@ -750,7 +761,10 @@ async function WorkflowSetPbo(req: Request, h: ResponseToolkit) {
 			if (!Array.isArray(newPbo)) {
 				newPbo = [newPbo];
 			}
-			let wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowSetPbo");
+			let wf = await RCL.getWorkflow(
+				{ tenant: tenant_id, wfid: PLD.wfid },
+				"engine/handler.WorkflowSetPbo",
+			);
 			if (wf) {
 				if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "update")))
 					throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
@@ -762,16 +776,19 @@ async function WorkflowSetPbo(req: Request, h: ResponseToolkit) {
 				//将新的text类型attachments放到最前面;
 				wf.attachments.unshift(...newPbo);
 				await Workflow.findOneAndUpdate(
-					{ tenant, wfid: PLD.wfid },
+					{ tenant_id, wfid: PLD.wfid },
 					{ $set: { attachments: wf.attachments } },
 					{ upsert: false, new: true },
 				);
 				await RCL.resetCache(
-					{ tenant, wfid: PLD.wfid },
+					{ tenant: tenant_id, wfid: PLD.wfid },
 					"engine/handler.WorkflowSetPbo",
 					RCL.CACHE_ELEVEL_REDIS,
 				);
-				wf = await RCL.getWorkflow({ tenant, wfid: PLD.wfid }, "engine/handler.WorkflowSetPbo");
+				wf = await RCL.getWorkflow(
+					{ tenant: tenant_id, wfid: PLD.wfid },
+					"engine/handler.WorkflowSetPbo",
+				);
 				return wf.attachments;
 			} else {
 				throw new EmpError("NOT_FOUND", "Workflow not found");
@@ -834,7 +851,7 @@ async function WorkflowDumpInstemplate(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wf = await RCL.getWorkflow(
 				{
 					tenant: CRED.tenant._id,
@@ -851,12 +868,12 @@ async function WorkflowDumpInstemplate(req: Request, h: ResponseToolkit) {
 
 			let obj = await Template.findOneAndUpdate(
 				{
-					tenant: tenant,
+					tenant: tenant_id,
 					tplid: tplid,
 				},
 				{
 					$set: {
-						tenant: tenant,
+						tenant: tenant_id,
 						tplid: tplid,
 						author: CRED.employee.eid,
 						authorName: CRED.employee.nickname,
@@ -878,7 +895,7 @@ async function WorkflowStart(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let starter = CRED.employee;
 			let tplid = PLD.tplid;
 			let wfid = PLD.wfid;
@@ -903,7 +920,7 @@ async function WorkflowStart(req: Request, h: ResponseToolkit) {
 			}
 			let wfDoc = await Engine.startWorkflow(
 				rehearsal,
-				tenant,
+				tenant_id,
 				tplid,
 				starter,
 				textPbo,
@@ -916,8 +933,8 @@ async function WorkflowStart(req: Request, h: ResponseToolkit) {
 				"standalone",
 				uploadedFiles,
 			);
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return wfDoc;
 		}),
 	);
@@ -929,7 +946,7 @@ async function WorkflowAddFile(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
 			let pondfiles = PLD.pondfiles;
 			let attachFiles = [];
@@ -946,7 +963,7 @@ async function WorkflowAddFile(req: Request, h: ResponseToolkit) {
 				//csv_开头的文件，单独处理
 				if (attachFiles.length > 0) {
 					let workflow = await RCL.updateWorkflow(
-						{ tenant, wfid },
+						{ tenant: tenant_id, wfid },
 						{
 							$addToSet: { attachments: { $each: attachFiles } },
 						},
@@ -956,7 +973,7 @@ async function WorkflowAddFile(req: Request, h: ResponseToolkit) {
 				}
 
 				if (csvFiles.length > 0) {
-					let csvSaveResult = await __saveCSVAsCells(tenant, wfid, csvFiles);
+					let csvSaveResult = await __saveCSVAsCells(tenant_id, wfid, csvFiles);
 					return csvSaveResult;
 				}
 			}
@@ -1034,13 +1051,13 @@ async function __getExcelCells(pondServerFile: PondFileInfoOnServerType) {
 }
 
 async function __saveCSVAsCells(
-	tenant: string,
+	tenant_id: string,
 	wfid: string,
 	csvPondFiles: PondFileInfoFromPayloadType[],
 ) {
 	const __doConvert = async (pondFile: PondFileInfoFromPayloadType) => {
 		let pondServerFile: PondFileInfoOnServerType = Tools.getPondServerFile(
-			tenant,
+			tenant_id,
 			pondFile.author,
 			pondFile.serverId,
 		);
@@ -1052,7 +1069,7 @@ async function __saveCSVAsCells(
 		let cells = await __getCells(pondFile, pondServerFile);
 
 		/*let cell =*/ await Cell.findOneAndUpdate(
-			{ tenant: tenant, wfid: wfid, stepid: pondFile.stepid, forKey: pondFile.forKey },
+			{ tenant: tenant_id, wfid: wfid, stepid: pondFile.stepid, forKey: pondFile.forKey },
 			{
 				$set: {
 					author: pondFile.author,
@@ -1069,7 +1086,7 @@ async function __saveCSVAsCells(
 			if (
 				!(await Employee.findOne(
 					{
-						tenant: tenant,
+						tenant: tenant_id,
 						eid: cells[i][0],
 					},
 					{ __v: 0 },
@@ -1093,14 +1110,14 @@ async function WorkflowRemoveAttachment(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let wfid = PLD.wfid;
 			let attachmentsToDelete = PLD.attachments;
 			if (attachmentsToDelete.length <= 0) return "Done";
 
 			let wf = await RCL.getWorkflow(
-				{ tenant: tenant, wfid: wfid },
+				{ tenant: tenant_id, wfid: wfid },
 				"engine/handler.WorkflowRemoveAttachment",
 			);
 
@@ -1125,7 +1142,7 @@ async function WorkflowRemoveAttachment(req: Request, h: ResponseToolkit) {
 						) {
 							try {
 								let fileInfo = Tools.getPondServerFile(
-									tenant,
+									tenant_id,
 									wfAttachments[i].author,
 									wfAttachments[i].serverId,
 								);
@@ -1142,7 +1159,7 @@ async function WorkflowRemoveAttachment(req: Request, h: ResponseToolkit) {
 			}
 
 			wf = await RCL.updateWorkflow(
-				{ tenant, wfid },
+				{ tenant: tenant_id, wfid },
 				{ $set: { attachments: wfAttachments } },
 				"engine/handler.WorkflowRemoveAttachment",
 			);
@@ -1158,11 +1175,11 @@ async function WorkflowPause(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			let status = await Engine.pauseWorkflow(tenant, CRED.employee, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			let status = await Engine.pauseWorkflow(tenant_id, CRED.employee, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return { wfid: wfid, status: status };
 		}),
 	);
@@ -1174,11 +1191,11 @@ async function WorkflowResume(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			let status = await Engine.resumeWorkflow(tenant, CRED.employee, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			let status = await Engine.resumeWorkflow(tenant_id, CRED.employee, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return { wfid: wfid, status: status };
 		}),
 	);
@@ -1190,11 +1207,11 @@ async function WorkflowStop(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			let status = await Engine.stopWorkflow(tenant, CRED.employee, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			let status = await Engine.stopWorkflow(tenant_id, CRED.employee, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return { wfid: wfid, status: status };
 		}),
 	);
@@ -1206,11 +1223,11 @@ async function WorkflowRestart(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			let status = await Engine.restartWorkflow(tenant, CRED.employee, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			let status = await Engine.restartWorkflow(tenant_id, CRED.employee, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return { wfid: wfid, status: status };
 		}),
 	);
@@ -1222,11 +1239,11 @@ async function WorkflowDestroy(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			let ret = await Engine.destroyWorkflow(tenant, CRED.employee, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			let ret = await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return { wfid: wfid, status: ret };
 		}),
 	);
@@ -1238,7 +1255,7 @@ async function WorkflowDestroyMulti(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			assert.equal(
 				CRED.employee.group,
 				"ADMIN",
@@ -1246,10 +1263,10 @@ async function WorkflowDestroyMulti(req: Request, h: ResponseToolkit) {
 			);
 			for (let i = 0; i < PLD.wfids.length; i++) {
 				const wfid = PLD.wfids[i];
-				await Engine.resetTodosETagByWfId(tenant, wfid);
-				await Engine.destroyWorkflow(tenant, CRED.employee, wfid);
+				await Engine.resetTodosETagByWfId(tenant_id, wfid);
+				await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid);
 			}
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return "Deleted";
 		}),
 	);
@@ -1261,17 +1278,17 @@ async function WorkflowDestroyByTitle(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wftitle = PLD.wftitle;
 			let wfs = await Workflow.find(
-				{ tenant: tenant, wftitle: wftitle },
+				{ tenant: tenant_id, wftitle: wftitle },
 				{ _id: 0, wfid: 1 },
 			).lean();
 			for (let i = 0; i < wfs.length; i++) {
-				await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
-				await Engine.destroyWorkflow(tenant, CRED.employee, wfs[i].wfid);
+				await Engine.resetTodosETagByWfId(tenant_id, wfs[i].wfid);
+				await Engine.destroyWorkflow(tenant_id, CRED.employee, wfs[i].wfid);
 			}
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return "Done";
 		}),
 	);
@@ -1283,14 +1300,17 @@ async function WorkflowDestroyByTplid(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let tplid = PLD.tplid;
-			let wfs = await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean();
+			let wfs = await Workflow.find(
+				{ tenant: tenant_id, tplid: tplid },
+				{ _id: 0, wfid: 1 },
+			).lean();
 			for (let i = 0; i < wfs.length; i++) {
-				await Engine.resetTodosETagByWfId(tenant, wfs[i].wfid);
-				await Engine.destroyWorkflow(tenant, CRED.employee, wfs[i].wfid);
+				await Engine.resetTodosETagByWfId(tenant_id, wfs[i].wfid);
+				await Engine.destroyWorkflow(tenant_id, CRED.employee, wfs[i].wfid);
 			}
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return "Done";
 		}),
 	);
@@ -1302,13 +1322,13 @@ async function WorkflowRestartThenDestroy(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
-			await Engine.resetTodosETagByWfId(tenant, wfid);
-			let newWf = await Engine.restartWorkflow(tenant, CRED.employee, wfid);
-			await Engine.resetTodosETagByWfId(tenant, newWf.wfid);
-			await Engine.destroyWorkflow(tenant, CRED.employee, wfid);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Engine.resetTodosETagByWfId(tenant_id, wfid);
+			let newWf = await Engine.restartWorkflow(tenant_id, CRED.employee, wfid);
+			await Engine.resetTodosETagByWfId(tenant_id, newWf.wfid);
+			await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return newWf;
 		}),
 	);
@@ -1320,7 +1340,7 @@ async function WorkflowOP(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
 			console.log(`[Workflow OP] ${CRED.employee.eid} [${PLD.op}] ${wfid}`);
 			let ret = {};
@@ -1328,36 +1348,36 @@ async function WorkflowOP(req: Request, h: ResponseToolkit) {
 				case "pause":
 					ret = {
 						wfid: wfid,
-						status: await Engine.pauseWorkflow(tenant, CRED.employee, wfid),
+						status: await Engine.pauseWorkflow(tenant_id, CRED.employee, wfid),
 					};
 					break;
 				case "resume":
 					ret = {
 						wfid: wfid,
-						status: await Engine.resumeWorkflow(tenant, CRED.employee, wfid),
+						status: await Engine.resumeWorkflow(tenant_id, CRED.employee, wfid),
 					};
 					break;
 				case "stop":
 					ret = {
 						wfid: wfid,
-						status: await Engine.stopWorkflow(tenant, CRED.employee, wfid),
+						status: await Engine.stopWorkflow(tenant_id, CRED.employee, wfid),
 					};
 					break;
 				case "restart":
 					ret = {
 						wfid: wfid,
-						status: await Engine.restartWorkflow(tenant, CRED.employee, wfid),
+						status: await Engine.restartWorkflow(tenant_id, CRED.employee, wfid),
 					};
 					break;
 				case "destroy":
 					ret = {
 						wfid: wfid,
-						status: await Engine.destroyWorkflow(tenant, CRED.employee, wfid),
+						status: await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid),
 					};
 					break;
 				case "restartthendestroy":
-					ret = await Engine.restartWorkflow(tenant, CRED.employee, wfid);
-					await Engine.destroyWorkflow(tenant, CRED.employee, wfid);
+					ret = await Engine.restartWorkflow(tenant_id, CRED.employee, wfid);
+					await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid);
 					break;
 				default:
 					throw new EmpError(
@@ -1366,7 +1386,7 @@ async function WorkflowOP(req: Request, h: ResponseToolkit) {
 						req.payload,
 					);
 			}
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return ret;
 		}),
 	);
@@ -1378,7 +1398,7 @@ async function WorkflowSetTitle(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wftitle = PLD.wftitle;
 			if (wftitle.length < 3) {
 				throw new EmpError("TOO_SHORT", "should be more than 3 chars");
@@ -1387,17 +1407,17 @@ async function WorkflowSetTitle(req: Request, h: ResponseToolkit) {
 			let wfid = PLD.wfid;
 			//TODO: should check hasPerm with new Mechanism
 			let wf = await RCL.getWorkflow(
-				{ tenant: tenant, wfid: wfid },
+				{ tenant: tenant_id, wfid: wfid },
 				"engine/handler.WorkflowSetTitle",
 			);
 			if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "update")))
 				throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
 			wf = await RCL.updateWorkflow(
-				{ tenant: tenant, wfid: wfid },
+				{ tenant: tenant_id, wfid: wfid },
 				{ $set: { wftitle: wftitle } },
 				"engine/handler.WorkflowSetTitle",
 			);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			return wf.wftitle;
 		}),
 	);
@@ -1409,10 +1429,10 @@ async function WorkflowList(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let filter = PLD.filter;
 			let sortDef = PLD.sortdef;
-			return await Engine.workflowGetList(tenant, CRED.employee, filter, sortDef);
+			return await Engine.workflowGetList(tenant_id, CRED.employee, filter, sortDef);
 		}),
 	);
 }
@@ -1468,11 +1488,11 @@ async function WorkflowSearch(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myGroup = CRED.employee.group;
 			if (PLD.debug) debugger;
 			let ifNoneMatch = req.headers["if-none-match"];
-			let latestETag = Cache.getETag(`ETAG:WORKFLOWS:${tenant}`);
+			let latestETag = Cache.getETag(`ETAG:WORKFLOWS:${tenant_id}`);
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return {
 					data: {},
@@ -1536,7 +1556,7 @@ async function WorkflowSearch(req: Request, h: ResponseToolkit) {
 			if (Tools.hasValue(PLD.calendar_begin) && Tools.hasValue(PLD.calendar_end)) {
 				let cb = PLD.calendar_begin;
 				let ce = PLD.calendar_end;
-				let tz = await Cache.getOrgTimeZone(tenant);
+				let tz = await Cache.getOrgTimeZone(tenant_id);
 				let tzdiff = TimeZone.getDiff(tz);
 				cb = `${cb}T00:00:00${tzdiff}`;
 				ce = `${ce}T00:00:00${tzdiff}`;
@@ -1591,7 +1611,7 @@ async function WorkflowSearch(req: Request, h: ResponseToolkit) {
 
 			let myBannedTemplatesIds = [];
 			if (myGroup !== "ADMIN") {
-				myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, CRED.employee.eid);
+				myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant_id, CRED.employee.eid);
 			}
 			if (filter.tplid) {
 				filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $nin: myBannedTemplatesIds } }];
@@ -1613,12 +1633,12 @@ async function WorkflowSearch(req: Request, h: ResponseToolkit) {
 
 			for (let i = 0; i < retObjs.length; i++) {
 				retObjs[i].starterCN = await Cache.getEmployeeName(
-					tenant,
+					tenant_id,
 					retObjs[i].starter,
 					"WorkflowSearch",
 				);
 				retObjs[i].commentCount = await Comment.countDocuments({
-					tenant,
+					tenant_id,
 					"context.wfid": retObjs[i].wfid,
 				});
 			}
@@ -1627,7 +1647,7 @@ async function WorkflowSearch(req: Request, h: ResponseToolkit) {
 					filter,
 				)} sortBy: ${sortBy} limit: ${limit}`,
 			);
-			Engine.clearOlderRehearsal(tenant, CRED.employee.eid, 24);
+			Engine.clearOlderRehearsal(tenant_id, CRED.employee.eid, 24);
 			return {
 				data: { total, objs: retObjs, version: Const.VERSION },
 				headers: {
@@ -1647,10 +1667,10 @@ async function Mining_Workflow(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myGroup = CRED.employee.group;
 			let ifNoneMatch = req.headers["if-none-match"];
-			let latestETag = Cache.getETag(`ETAG:MINING:${tenant}`);
+			let latestETag = Cache.getETag(`ETAG:MINING:${tenant_id}`);
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return {
 					data: {},
@@ -1708,7 +1728,7 @@ async function Mining_Workflow(req: Request, h: ResponseToolkit) {
 			if (Tools.hasValue(PLD.calendar_begin) && Tools.hasValue(PLD.calendar_end)) {
 				let cb = PLD.calendar_begin;
 				let ce = PLD.calendar_end;
-				let tz = await Cache.getOrgTimeZone(tenant);
+				let tz = await Cache.getOrgTimeZone(tenant_id);
 				let tzdiff = TimeZone.getDiff(tz);
 				cb = `${cb}T00:00:00${tzdiff}`;
 				ce = `${ce}T00:00:00${tzdiff}`;
@@ -1762,7 +1782,7 @@ async function Mining_Workflow(req: Request, h: ResponseToolkit) {
 
 			let myBannedTemplatesIds = [];
 			if (myGroup !== "ADMIN") {
-				myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, CRED.employee.eid);
+				myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant_id, CRED.employee.eid);
 			}
 			if (filter.tplid) {
 				filter["$and"] = [{ tplid: filter.tplid }, { tplid: { $nin: myBannedTemplatesIds } }];
@@ -1781,12 +1801,12 @@ async function Mining_Workflow(req: Request, h: ResponseToolkit) {
 
 			for (let i = 0; i < retObjs.length; i++) {
 				retObjs[i].starterCN = await Cache.getEmployeeName(
-					tenant,
+					tenant_id,
 					retObjs[i].starter,
 					"WorkflowSearch",
 				);
 				retObjs[i].commentCount = await Comment.countDocuments({
-					tenant,
+					tenant_id,
 					"context.wfid": retObjs[i].wfid,
 				});
 				retObjs[i].mdata = { works: [], todos: [] };
@@ -1820,10 +1840,10 @@ async function WorkflowGetLatest(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let filter = PLD.filter;
-			return await Engine.workflowGetLatest(tenant, CRED.employee, filter);
+			return await Engine.workflowGetLatest(tenant_id, CRED.employee, filter);
 		}),
 	);
 }
@@ -1840,7 +1860,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			const myEid = CRED.employee.eid;
 			const myGroup = CRED.employee.group;
 			if (PLD.debug) debugger;
@@ -1858,7 +1878,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 			}
 			//如果有wfid，则找只属于这个wfid工作流的workitems
 			/*
-			 let kicked = await Kicklist.findOne({ tenant: tenant, eid: myEid }).lean();
+			 let kicked = await Kicklist.findOne({ tenant: tenant_id, eid: myEid }).lean();
 		if (kicked) {
 			throw new EmpError("KICKOUT", "your session is kicked out");
 		}
@@ -1866,7 +1886,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 
 			let filter: any = {};
 			//filter.tenant = tenant;
-			filter.tenant = new Mongoose.Types.ObjectId(tenant);
+			filter.tenant = new Mongoose.Types.ObjectId(tenant_id);
 			let hasPermForWork = await Engine.hasPermForWork(CRED.tenant._id, myEid, doer);
 			if (hasPermForWork === false) {
 				console.log(`${PLD.doer} -> ${doer} does not has Permission for Work`);
@@ -1924,7 +1944,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 			if (Tools.hasValue(PLD.calendar_begin) && Tools.hasValue(PLD.calendar_end)) {
 				let cb = PLD.calendar_begin;
 				let ce = PLD.calendar_end;
-				let tz = await Cache.getOrgTimeZone(tenant);
+				let tz = await Cache.getOrgTimeZone(tenant_id);
 				let tzdiff = TimeZone.getDiff(tz);
 				cb = `${cb}T00:00:00${tzdiff}`;
 				ce = `${ce}T00:00:00${tzdiff}`;
@@ -2016,7 +2036,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 					const todoIds = ret.filter((x) => x.postpone > 0).map((x) => x.todoid);
 					await Todo.updateMany(
 						{
-							tenant: tenant,
+							tenant: tenant_id,
 							todoid: { $in: todoIds },
 						},
 						{ $set: { postpone: 0 } },
@@ -2024,7 +2044,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 				}
 				//使用workid，而不是todoid进行搜索comment， 同一work下，不同的todo，也需要
 				ret[i].commentCount = await Comment.countDocuments({
-					tenant,
+					tenant_id,
 					"context.workid": ret[i].workid,
 				});
 			}
@@ -2033,7 +2053,7 @@ async function WorkSearch(req: Request, h: ResponseToolkit) {
 					filter,
 				)} sortBy: ${JSON.stringify(sortByJson)} limit: ${limit}`,
 			);
-			Engine.clearOlderRehearsal(tenant, myEid, 24);
+			Engine.clearOlderRehearsal(tenant_id, myEid, 24);
 			return {
 				data: { total, objs: ret, version: Const.VERSION },
 				headers: replyHelper.headers.nocache,
@@ -2063,11 +2083,11 @@ async function CheckCoworker(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let whom = PLD.whom;
 			let employee = await Employee.findOne(
-				{ tenant: tenant, eid: whom },
+				{ tenant: tenant_id, eid: whom },
 				{ eid: 1, nickname: 1, _id: 0, group: 1 },
 			);
 			if (!employee) {
@@ -2085,7 +2105,7 @@ async function CheckCoworkers(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let eids = PLD.eids;
 			eids = [...new Set(eids)];
@@ -2093,7 +2113,7 @@ async function CheckCoworkers(req: Request, h: ResponseToolkit) {
 			let ret = "";
 			for (let i = 0; i < eids.length; i++) {
 				let eid = eids[i][0] === "@" ? eids[i].substring(1) : eids[i];
-				let cn = await Cache.getEmployeeName(tenant, eid, "CheckCoworkers");
+				let cn = await Cache.getEmployeeName(tenant_id, eid, "CheckCoworkers");
 				if (cn === "USER_NOT_FOUND") {
 					ret += "<span class='text-danger'>" + eids[i] + "</span> ";
 				} else {
@@ -2112,12 +2132,12 @@ async function TransferWork(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let whom = PLD.whom;
 			let todoid = PLD.todoid;
 
-			return Engine.transferWork(tenant, whom, myEid, todoid);
+			return Engine.transferWork(tenant_id, whom, myEid, todoid);
 		}),
 	);
 }
@@ -2205,11 +2225,11 @@ async function WorkPostpone(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			const { todoid, days } = PLD;
 			await Todo.findOneAndUpdate(
-				{ tenant: tenant, todoid: todoid },
+				{ tenant: tenant_id, todoid: todoid },
 				{
 					$set: {
 						postpone: days,
@@ -2293,7 +2313,7 @@ async function WorkReset(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			if (myGroup !== "ADMIN") {
@@ -2302,9 +2322,9 @@ async function WorkReset(req: Request, h: ResponseToolkit) {
 
 			let wfid = PLD.wfid;
 			let workid = PLD.workid;
-			let workFilter = { tenant: tenant, wfid: wfid, workid: workid };
+			let workFilter = { tenant: tenant_id, wfid: wfid, workid: workid };
 			let theWork = await Work.findOne(workFilter, { __v: 0 });
-			let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "engine/handler.WorkReset");
+			let wf = await RCL.getWorkflow({ tenant: tenant_id, wfid: wfid }, "engine/handler.WorkReset");
 			let wfIO = await Parser.parse(wf.doc);
 			//let tpRoot = wfIO(".template");
 			let wfRoot = wfIO(".workflow");
@@ -2316,7 +2336,7 @@ async function WorkReset(req: Request, h: ResponseToolkit) {
 			workNode.addClass("ST_RUN");
 			workNode.attr("decision", "");
 			wf = await RCL.updateWorkflow(
-				{ tenant: tenant, wfid: wfid },
+				{ tenant: tenant_id, wfid: wfid },
 				{ $set: { doc: wfIO.html() } },
 				"engine/handler.WorkReset",
 			);
@@ -2334,7 +2354,7 @@ async function WorkReset(req: Request, h: ResponseToolkit) {
 			);
 
 			//Reset todo
-			let todoFilter = { tenant: tenant, wfid: wfid, workid: workid };
+			let todoFilter = { tenant: tenant_id, wfid: wfid, workid: workid };
 			await Todo.updateMany(todoFilter, { $set: { status: "ST_RUN" } });
 			return "Done";
 		}),
@@ -2418,13 +2438,13 @@ async function TemplateIdList(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let ifNoneMatch = req.headers["if-none-match"];
-			let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant}`);
+			let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant_id}`);
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return { data: [], code: 304, etag: latestETag, headers: replyHelper.headers.nocache };
 			}
-			let filter: any = { tenant: tenant, ins: false };
+			let filter: any = { tenant: tenant_id, ins: false };
 			let myEid = CRED.employee.eid;
 			let tagsArr = PLD.tags ? PLD.tags.split(";").filter((x: string) => x.trim().length > 0) : [];
 			if (tagsArr.length > 0) {
@@ -2456,14 +2476,14 @@ async function TemplateSearch_backup (req: Request, h:ResponseToolkit) {
 const PLD=req.payload as any;
 const CRED = req.auth.credentials as any;
   try {
-const tenant = CRED.tenant._id;
+const tenant_id = CRED.tenant._id;
     let myEid = CRED.employee.eid;
     if (!(await SPC.hasPerm(CRED.employee, "template", "", "read")))
       throw new EmpError("NO_PERM", "no permission to read template");
 
     let mappedField = PLD.sort_field === "name" ? "tplid" : PLD.sort_field;
     let sortBy = `${PLD.sort_order < 0 ? "-" : ""}${mappedField}`;
-    let filter:any = { tenant: tenant, ins: false };
+    let filter:any = { tenant: tenant_id, ins: false };
     let skip = 0;
     if (PLD.skip) skip = PLD.skip;
     let limit = 10000;
@@ -2519,16 +2539,16 @@ const tenant = CRED.tenant._id;
     //模版的搜索结果, 需要调用Engine.checkVisi检查模版是否对当前用户可见
     let allObjs = await Template.find(filter, { doc: 0 });
     allObjs = await asyncFilter(allObjs, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEid, x);
+      return await Engine.checkVisi(tenant_id, x.tplid, myEid, x);
     });
     let total = allObjs.length;
     let ret = await Template.find(filter, fields).sort(sortBy).skip(skip).limit(limit).lean();
     ret = await asyncFilter(ret, async (x) => {
-      return await Engine.checkVisi(tenant, x.tplid, myEid, x);
+      return await Engine.checkVisi(tenant_id, x.tplid, myEid, x);
     });
     for (let i = 0; i < ret.length; i++) {
       ret[i].cron = (
-        await Crontab.find({ tenant: tenant, tplid: ret[i].tplid }, { _id: 1 })
+        await Crontab.find({ tenant: tenant_id, tplid: ret[i].tplid }, { _id: 1 })
       ).length;
     }
 
@@ -2550,11 +2570,11 @@ async function TemplateSearch(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			let ifNoneMatch = req.headers["if-none-match"];
-			let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant}`);
+			let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant_id}`);
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return { data: [], code: 304, headers: replyHelper.headers.nocache, etag: latestETag };
 			}
@@ -2563,11 +2583,11 @@ async function TemplateSearch(req: Request, h: ResponseToolkit) {
 
 			let myBannedTemplatesIds = [];
 			if (myGroup !== "ADMIN") {
-				myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEid);
+				myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant_id, myEid);
 			}
 
 			let sortBy = PLD.sortby;
-			let filter: any = { tenant: tenant, ins: false };
+			let filter: any = { tenant: tenant_id, ins: false };
 			let skip = 0;
 			if (PLD.skip) skip = PLD.skip;
 			let limit = 10000;
@@ -2628,7 +2648,7 @@ async function TemplateSearch(req: Request, h: ResponseToolkit) {
 				.lean()) as TemplateType[];
 			for (let i = 0; i < ret.length; i++) {
 				ret[i].cron = (
-					await Crontab.find({ tenant: tenant, tplid: ret[i].tplid }, { _id: 1 })
+					await Crontab.find({ tenant: tenant_id, tplid: ret[i].tplid }, { _id: 1 })
 				).length;
 			}
 
@@ -2687,7 +2707,7 @@ async function TemplateImport(req: Request, h: ResponseToolkit) {
 			const CRED = req.auth.credentials as any;
 			if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 				throw new EmpError("NO_PERM", "You don't have permission to create template");
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let author = myEid;
 			let authorName = CRED.username;
@@ -2700,7 +2720,7 @@ async function TemplateImport(req: Request, h: ResponseToolkit) {
 				throw new EmpError("NO_TPLID", "Template id can not be empty");
 			}
 			let obj = new Template({
-				tenant: tenant,
+				tenant: tenant_id,
 				tplid: tplid,
 				author: author,
 				authorName: authorName,
@@ -2708,11 +2728,11 @@ async function TemplateImport(req: Request, h: ResponseToolkit) {
 				doc: doc,
 				tags: [{ owner: myEid, text: "mine", group: myGroup }],
 			});
-			let filter: any = { tenant: tenant, tplid: tplid },
+			let filter: any = { tenant: tenant_id, tplid: tplid },
 				update = {
 					$set: {
 						author: author,
-						authorName: await Cache.getEmployeeName(tenant, author, "TemplateImport"),
+						authorName: await Cache.getEmployeeName(tenant_id, author, "TemplateImport"),
 						ins: false,
 						doc: doc,
 					},
@@ -2722,7 +2742,7 @@ async function TemplateImport(req: Request, h: ResponseToolkit) {
 			fs.unlink(fileInfo.path, () => {
 				console.log("Unlinked temp file:", fileInfo.path);
 			});
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 			return obj;
 		}),
 	);
@@ -2736,20 +2756,20 @@ async function TemplateCopyFrom(req: Request, h: ResponseToolkit) {
 			const CRED = req.auth.credentials as any;
 			if (!(await SPC.hasPerm(CRED.employee, "template", "", "create")))
 				throw new EmpError("NO_PERM", "You don't have permission to create template");
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			const { fromtplid, totplid } = PLD;
 
 			let fromDoc = await Template.findOne(
-				{ tenant: tenant, tplid: fromtplid },
+				{ tenant: tenant_id, tplid: fromtplid },
 				{ _id: 0, doc: 1 },
 			);
 			assert(fromDoc && fromDoc.doc);
 			const obj = await Template.findOneAndUpdate(
-				{ tenant: tenant, tplid: totplid },
+				{ tenant: tenant_id, tplid: totplid },
 				{ $set: { doc: fromDoc.doc } },
 				{ upsert: false, new: true },
 			);
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 			return obj;
 		}),
 	);
@@ -2761,7 +2781,7 @@ async function TemplateSetAuthor(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 
 			let tplid = PLD.tplid;
@@ -2769,12 +2789,12 @@ async function TemplateSetAuthor(req: Request, h: ResponseToolkit) {
 			let newAuthorEid = PLD.author.trim();
 			if (newAuthorEid.length > 0 && newAuthorEid[0] === "@")
 				newAuthorEid = newAuthorEid.substring(1);
-			let newOwner = await Employee.findOne({ tenant: tenant, eid: newAuthorEid }, { __v: 0 });
+			let newOwner = await Employee.findOne({ tenant: tenant_id, eid: newAuthorEid }, { __v: 0 });
 			if (!newOwner) {
 				throw new EmpError("NO_USER", `Employee ${newAuthorEid} not found`);
 			}
 
-			let filter: any = { tenant: tenant, tplid: tplid };
+			let filter: any = { tenant: tenant_id, tplid: tplid };
 			let myGroup = CRED.employee.group;
 			if (myGroup !== "ADMIN") filter["author"] = myEid;
 			let tpl = await Template.findOneAndUpdate(
@@ -2785,8 +2805,8 @@ async function TemplateSetAuthor(req: Request, h: ResponseToolkit) {
 			if (!tpl) {
 				throw new EmpError("NO_TPL", `Not admin or owner`);
 			}
-			tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			tpl = await Template.findOne({ tenant: tenant_id, tplid: tplid }, { doc: 0 });
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 
 			return tpl;
 		}),
@@ -2799,12 +2819,12 @@ async function TemplateSetProp(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 
 			let tplid = PLD.tplid;
 
-			let filter: any = { tenant: tenant, tplid: tplid };
+			let filter: any = { tenant: tenant_id, tplid: tplid };
 			let myGroup = CRED.employee.group;
 			if (myGroup !== "ADMIN") filter["author"] = myEid;
 			let tpl = await Template.findOneAndUpdate(
@@ -2821,7 +2841,7 @@ async function TemplateSetProp(req: Request, h: ResponseToolkit) {
 			if (!tpl) {
 				throw new EmpError("NO_AUTH", `Not admin or owner`);
 			}
-			tpl = await Template.findOne({ tenant: tenant, tplid: tplid }, { doc: 0 });
+			tpl = await Template.findOne({ tenant: tenant_id, tplid: tplid }, { doc: 0 });
 
 			return tpl;
 		}),
@@ -2834,7 +2854,7 @@ async function WorkflowSetPboAt(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 
@@ -2842,18 +2862,18 @@ async function WorkflowSetPboAt(req: Request, h: ResponseToolkit) {
 
 			//TODO: huge change
 			let wf = await RCL.getWorkflow(
-				{ tenant: tenant, wfid: wfid },
+				{ tenant: tenant_id, wfid: wfid },
 				"engine/handler.WorkflowSetPboAt",
 			);
 			if (!wf || (myGroup !== "ADMIN" && wf.starter !== myEid)) {
 				throw new EmpError("NO_AUTH", `Not admin or owner`);
 			}
 			wf = await RCL.updateWorkflow(
-				{ tenant: tenant, wfid: wfid },
+				{ tenant: tenant_id, wfid: wfid },
 				{ $set: { pboat: PLD.pboat } },
 				"engine/handler.WorkflowSetPboAt",
 			);
-			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
+			await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 
 			return wf;
 		}),
@@ -2866,26 +2886,26 @@ async function TemplateSetVisi(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let author = myEid;
 
 			let tplid = PLD.tplid;
 			await Cache.removeVisi(tplid);
 			let tpl = await Template.findOneAndUpdate(
-				{ tenant: tenant, author: author, tplid: tplid },
+				{ tenant: tenant_id, author: author, tplid: tplid },
 				{ $set: { visi: PLD.visi } },
 				{ upsert: false, new: true },
 			);
 			if (!tpl) {
-				console.log({ tenant: tenant, author: author, tplid: tplid });
+				console.log({ tenant: tenant_id, author: author, tplid: tplid });
 				throw new EmpError("NO_TPL", "No owned template found");
 			}
-			tpl = await Template.findOne({ tenant: tenant, author: author, tplid: tplid }, { doc: 0 });
+			tpl = await Template.findOne({ tenant: tenant_id, author: author, tplid: tplid }, { doc: 0 });
 
-			await Engine.clearUserVisiedTemplate(tenant);
+			await Engine.clearUserVisiedTemplate(tenant_id);
 
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 			return tpl;
 		}),
 	);
@@ -2897,20 +2917,20 @@ async function TemplateClearVisi(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let author = myEid;
 
 			let tplid = PLD.tplid;
 			await Cache.removeVisi(tplid);
 			await Template.findOneAndUpdate(
-				{ tenant: tenant, author: author, tplid: tplid },
+				{ tenant: tenant_id, author: author, tplid: tplid },
 				{ $set: { visi: "" } },
 				{ upsert: false, new: true },
 			);
 
-			await Engine.clearUserVisiedTemplate(tenant);
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Engine.clearUserVisiedTemplate(tenant_id);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 
 			return "Done";
 		}),
@@ -3004,18 +3024,18 @@ async function TeamPutDemo(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let author = PLD.author;
 			let teamid = PLD.teamid;
 
 			let team = new Team({
-				tenant: tenant,
+				tenant: tenant_id,
 				author: author,
 				teamid: teamid,
 				tmap: { director: "steve", manager: "lucas" },
 			});
 			team = await team.save();
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team.teamid;
 		}),
 	);
@@ -3026,15 +3046,15 @@ async function TeamFullInfoGet(req: Request, h: ResponseToolkit) {
 		h,
 		await MongoSession.noTransaction(async () => {
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
-			let team = await Team.findOne({ tenant: tenant, teamid: req.params.teamid }, { __v: 0 });
+			let team = await Team.findOne({ tenant: tenant_id, teamid: req.params.teamid }, { __v: 0 });
 			if (!team) {
 				throw new EmpError("TEAM_NOT_FOUND", `Team ${req.params.teamid} not found`);
 			}
 			if (!(await SPC.hasPerm(CRED.employee, "team", team, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this team");
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 
 			return team;
 		}),
@@ -3047,13 +3067,13 @@ async function TeamRead(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
-			let team = await Team.findOne({ tenant: tenant, teamid: PLD.teamid }, { __v: 0 });
+			let team = await Team.findOne({ tenant: tenant_id, teamid: PLD.teamid }, { __v: 0 });
 			if (!(await SPC.hasPerm(CRED.employee, "team", team, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this team");
 
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 
 			return team;
 		}),
@@ -3061,15 +3081,19 @@ async function TeamRead(req: Request, h: ResponseToolkit) {
 }
 
 //TODO: cache Employee nickname
-async function setTeamMembersName(tenant: string | Mongoose.Types.ObjectId, team: TeamType) {
+async function setTeamMembersName(tenant_id: string | Mongoose.Types.ObjectId, team: TeamType) {
 	let allRoles = Object.keys(team.tmap);
 	for (let r = 0; r < allRoles.length; r++) {
 		let role = allRoles[r];
 		let members = team.tmap[role];
 		for (let i = 0; i < members.length; i++) {
 			team.tmap[role][i].cn =
-				((await Employee.findOne({ tenant, eid: members[i].eid }, { nickname: 1 })) as EmployeeType)
-					?.nickname ?? "Employee Nonexist";
+				(
+					(await Employee.findOne(
+						{ tenant: tenant_id, eid: members[i].eid },
+						{ nickname: 1 },
+					)) as EmployeeType
+				)?.nickname ?? "Employee Nonexist";
 		}
 	}
 	return team;
@@ -3081,12 +3105,12 @@ async function TeamUpload(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let author = CRED.employee.eid;
 			let teamid = PLD.teamid;
 			let tmap = PLD.tmap;
 
-			let teamFilter = { tenant: tenant, teamid: teamid };
+			let teamFilter = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(teamFilter, { __v: 0 });
 			if (team) {
 				if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
@@ -3097,10 +3121,10 @@ async function TeamUpload(req: Request, h: ResponseToolkit) {
 			}
 			team = await Team.findOneAndUpdate(
 				teamFilter,
-				{ $set: { tenant: tenant, author: author, teamid: teamid, tmap: tmap } },
+				{ $set: { tenant: tenant_id, author: author, teamid: teamid, tmap: tmap } },
 				{ upsert: true, new: true },
 			);
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3112,7 +3136,7 @@ async function TeamImport(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let author = CRED.employee.eid;
 			let fileInfo = PLD.file;
 			let csv = fs.readFileSync(fileInfo.path, "utf8");
@@ -3131,7 +3155,7 @@ async function TeamImport(req: Request, h: ResponseToolkit) {
 				}
 			}
 			let teamid = PLD.teamid;
-			let teamFilter = { tenant: tenant, teamid: teamid };
+			let teamFilter = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(teamFilter, { __v: 0 });
 			if (team) {
 				if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
@@ -3142,10 +3166,10 @@ async function TeamImport(req: Request, h: ResponseToolkit) {
 			}
 			team = await Team.findOneAndUpdate(
 				teamFilter,
-				{ $set: { tenant: tenant, author: author, teamid: teamid, tmap: tmap } },
+				{ $set: { tenant: tenant_id, author: author, teamid: teamid, tmap: tmap } },
 				{ upsert: true, new: true },
 			);
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3157,10 +3181,10 @@ async function TeamDownload(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let teamid = PLD.teamid;
 			let filename = PLD.filename;
-			let teamFilter = { tenant: tenant, teamid: teamid };
+			let teamFilter = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(teamFilter, { __v: 0 });
 			if (!(await SPC.hasPerm(CRED.employee, "team", team, "read")))
 				throw new EmpError("NO_PERM", "You don't have permission to read this team");
@@ -3197,10 +3221,10 @@ async function TeamDeleteRoleMembers(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			let teamid = PLD.teamid;
-			let filter: any = { tenant: tenant, teamid: teamid };
+			let filter: any = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(filter, { __v: 0 });
 			if (!team) {
 				throw `Team ${teamid} not found`;
@@ -3233,7 +3257,7 @@ async function TeamDeleteRoleMembers(req: Request, h: ResponseToolkit) {
 				team.markModified("tmap");
 				team = await team.save();
 			}
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3245,10 +3269,10 @@ async function TeamAddRoleMembers(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			let teamid = PLD.teamid;
-			let filter: any = { tenant: tenant, teamid: teamid };
+			let filter: any = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(filter, { __v: 0 });
 			if (!team) {
 				throw `Team ${teamid} not found`;
@@ -3290,7 +3314,7 @@ async function TeamAddRoleMembers(req: Request, h: ResponseToolkit) {
 			team.markModified(`tmap`);
 			team = await team.save();
 
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3302,10 +3326,10 @@ async function TeamCopyRole(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			let teamid = PLD.teamid;
-			let filter: any = { tenant: tenant, teamid: teamid };
+			let filter: any = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(filter, { __v: 0 });
 			if (!team) {
 				throw `Team ${teamid} not found`;
@@ -3320,7 +3344,7 @@ async function TeamCopyRole(req: Request, h: ResponseToolkit) {
 			team.markModified(`tmap`);
 			team = await team.save();
 
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3332,10 +3356,10 @@ async function TeamSetRole(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			let teamid = PLD.teamid;
-			let filter: any = { tenant: tenant, teamid: teamid };
+			let filter: any = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(filter, { __v: 0 });
 			if (!team) {
 				throw `Team ${teamid} not found`;
@@ -3350,7 +3374,7 @@ async function TeamSetRole(req: Request, h: ResponseToolkit) {
 			//基础数据类型的字段无须标注已更改
 			team.markModified("tmap");
 			team = await team.save();
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3362,10 +3386,10 @@ async function TeamDeleteRole(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			let teamid = PLD.teamid;
-			let filter: any = { tenant: tenant, teamid: teamid };
+			let filter: any = { tenant: tenant_id, teamid: teamid };
 			let team = await Team.findOne(filter, { __v: 0 });
 			if (!team) {
 				throw `Team ${teamid} not found`;
@@ -3377,7 +3401,7 @@ async function TeamDeleteRole(req: Request, h: ResponseToolkit) {
 			delete team.tmap[role];
 			team.markModified("tmap");
 			team = await team.save();
-			team = await setTeamMembersName(tenant, team);
+			team = await setTeamMembersName(tenant_id, team);
 			return team;
 		}),
 	);
@@ -3389,13 +3413,13 @@ async function TeamDelete(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let teamid = PLD.teamid;
-			let team = await Team.findOne({ tenant: tenant, teamid: teamid }, { __v: 0 });
+			let team = await Team.findOne({ tenant: tenant_id, teamid: teamid }, { __v: 0 });
 			if (!(await SPC.hasPerm(CRED.employee, "team", team, "delete")))
 				throw new EmpError("NO_PERM", "You don't have permission to delete this team");
 
-			let ret = await Team.deleteOne({ tenant: tenant, teamid: teamid });
+			let ret = await Team.deleteOne({ tenant: tenant_id, teamid: teamid });
 			return ret;
 		}),
 	);
@@ -3436,8 +3460,8 @@ async function TeamCopyto(req: Request, h: ResponseToolkit) {
 			if (!(await SPC.hasPerm(CRED.employee, "team", "", "create")))
 				throw new EmpError("NO_PERM", "You don't have permission to create team");
 
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant, teamid: PLD.fromid };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id, teamid: PLD.fromid };
 			let new_objid = PLD.teamid;
 			let oldObj = await Team.findOne(filter, { __v: 0 });
 			let newObj = new Team({
@@ -3459,8 +3483,8 @@ async function TeamRename(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant, teamid: PLD.fromid };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id, teamid: PLD.fromid };
 			let team = await Team.findOne(filter, { __v: 0 });
 			if (!(await SPC.hasPerm(CRED.employee, "team", team, "update")))
 				throw new EmpError("NO_PERM", "You don't have permission to update this team");
@@ -3501,7 +3525,7 @@ async function AutoRegisterOrgChartUser(
        Please login to Metatocome to accept <br/>
       <a href='${frontendUrl}'>${frontendUrl}</a>`;
 				Engine.sendTenantMail(
-					tenant,
+					tenant_id,
 					staff_email,
 					`[MTC] Invitation from ${administrator.username}`,
 					mailbody,
@@ -3548,7 +3572,7 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myId = CRED._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
@@ -3561,7 +3585,6 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 			}
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 			let filePath = PLD.file.path;
-			let default_user_password = PLD.default_user_password;
 
 			//filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
 			let csv = fs.readFileSync(filePath, "utf8");
@@ -3596,7 +3619,7 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 					errors.push(`line ${rowIndex + 1}: should be at least 2 columns`);
 					return;
 				} else if (rowSize === 1 && cols[COL.OU].length % 5 === 0) {
-					cols.push("OU---");
+					cols.push(OUEID);
 				}
 
 				if (rowIndex === 0 && cols[COL.OU] === "OU") return;
@@ -3618,7 +3641,7 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 				let ouCN = "";
 				if (cols[COL.EID]) {
 					if (cols[COL.EID].trim().length > 0) {
-						if (cols[COL.EID].trim() === "OU---") {
+						if (cols[COL.EID].trim() === OUEID) {
 							isOU = true;
 							ouCN = cols[COL.OUCN].trim();
 						} else isOU = false; // eid
@@ -3628,11 +3651,11 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 					ouCN = cols[COL.OUCN].trim();
 				}
 				orgChartArr.push({
-					tenant: tenant,
+					tenant: tenant_id,
 					ou: currentOU,
-					account: cols[COL.ACCOUNT],
+					account: isOU ? CRED.tenant.owner : cols[COL.ACCOUNT],
 					//如果不是OU， 则cols[COL.EID]为邮箱名
-					eid: isOU ? "OU---" : cols[COL.EID],
+					eid: isOU ? OUEID : cols[COL.EID],
 					//如果isOU，则position为空[]即可
 					//如果是用户，则position为第4列（cols[COL.POSITION]）所定义的内容用：分割的字符串数组
 					position: isOU ? [] : cols[COL.POSITION] ? cols[COL.POSITION].split(":") : ["staff"],
@@ -3642,22 +3665,23 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 			}); //eachRow;
 
 			//先清空Orgchart
-			await OrgChart.deleteMany({ tenant: tenant });
+			await OrgChart.deleteMany({ tenant: tenant_id });
 			//再把所有用户重新插入Orgchart
 			//console.log(JSON.stringify(orgChartArr));
 			//await OrgChart.insertMany(orgChartArr);
 			let rootExist = false;
 			for (let i = 0; i < orgChartArr.length; i++) {
-				if (orgChartArr[i].ou === "root" && orgChartArr[i].eid === "OU---") {
+				if (orgChartArr[i].ou === "root" && orgChartArr[i].eid === OUEID) {
 					rootExist = true;
 					break;
 				}
 			}
 			if (!rootExist) {
 				orgChartArr.unshift({
-					tenant: tenant,
+					tenant: tenant_id,
 					ou: "root",
-					eid: "OU---",
+					eid: OUEID,
+					account: CRED.tenant.owner,
 					cn: "组织顶层",
 					position: "",
 					line: 0,
@@ -3665,9 +3689,9 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 			}
 			for (let i = 0; i < orgChartArr.length; i++) {
 				try {
-					if (orgChartArr[i].eid !== "OU---") {
+					if (orgChartArr[i].eid !== OUEID) {
 						const existingEmployee = await Employee.findOne({
-							tenant: tenant,
+							tenant: tenant_id,
 							account: orgChartArr[i].account,
 						});
 						if (existingEmployee) {
@@ -3676,7 +3700,7 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 							const existingUser = await User.findOne({ account: orgChartArr[i].account });
 							if (existingUser) {
 								let employee = new Employee({
-									tenant: tenant,
+									tenant: tenant_id,
 									userid: existingUser._id,
 									account: orgChartArr[i].account,
 									group: "DOER",
@@ -3707,65 +3731,148 @@ async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 	);
 }
 
-async function OrgChartAddOrDeleteEntry(req: Request, h: ResponseToolkit) {
+async function OrgChartCreateEmployeeEntry(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 			let myEid = CRED.employee.eid;
-			let default_user_password = PLD.default_user_password;
 
-			let csv = PLD.content;
-			let lines = csv.split("\n");
-			let ret = await importOrgLines(tenant, default_user_password, lines);
-			return ret;
+			const theAccount = await User.findOne({ account: PLD.account });
+			if (!theAccount) {
+				throw new EmpError("ACCOUNT_NOT_FOUND", `Account ${PLD.account} does not exist`);
+			}
+			let theEmployee = await Employee.findOne({ tenant: tenant_id, account: PLD.account });
+			if (theEmployee && PLD.cn && PLD.cn !== theEmployee.nickname) {
+				await Employee.updateOne(
+					{ tenant: tenant_id, account: PLD.account },
+					{
+						$set: { nickname: PLD.cn },
+					},
+				);
+			}
+			if (!theEmployee) {
+				theEmployee = new Employee({
+					tenant: tenant_id,
+					userid: theAccount._id,
+					account: theAccount.account,
+					group: "DOER",
+					nickname: PLD.cn,
+					eid: PLD.eid,
+					domain: CRED.tenant.domain,
+					avatarinfo: {
+						path: Tools.getDefaultAvatarPath(),
+						media: "image/png",
+						tag: "nochange",
+					},
+				});
+				theEmployee = await theEmployee.save();
+			}
+
+			let theOU = await OrgChart.findOne({ tenant: tenant_id, ou: PLD.ou_id, eid: OUEID });
+			if (!theOU) {
+				throw new EmpError("OU_NOT_EXIST", `Department ${PLD.ou_id} does not exist`);
+			}
+			let newEntry = new OrgChart({
+				tenant: tenant_id,
+				ou: PLD.ou_id,
+				eid: PLD.eid,
+				cn: PLD.cn || theAccount.username,
+				position: [],
+			});
+			await newEntry.save();
+			await OrgChart.updateMany({ tenant: tenant_id, eid: PLD.eid }, { $set: { cn: PLD.cn } });
 		}),
 	);
 }
 
+async function OrgChartModifyEmployeeEntry(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant_id = CRED.tenant._id;
+			await Parser.checkOrgChartAdminAuthorization(CRED);
+			let myEid = CRED.employee.eid;
+
+			await Employee.updateMany(
+				{ tenant: tenant_id, eid: PLD.eid },
+				{ $set: { nickname: PLD.nickname } },
+			);
+			await OrgChart.updateMany({ tenant: tenant_id, eid: PLD.eid }, { $set: { cn: PLD.cn } });
+		}),
+	);
+}
+async function OrgChartRemoveOneEmployeeEntry(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant_id = CRED.tenant._id;
+			await Parser.checkOrgChartAdminAuthorization(CRED);
+			let myEid = CRED.employee.eid;
+
+			await OrgChart.deleteOne({ tenant: tenant_id, ou: PLD.ou_id, eid: PLD.eid });
+		}),
+	);
+}
+async function OrgChartRemoveAllEmployeeEntries(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant_id = CRED.tenant._id;
+			await Parser.checkOrgChartAdminAuthorization(CRED);
+			let myEid = CRED.employee.eid;
+
+			await OrgChart.deleteMany({ tenant: tenant_id, eid: PLD.eid });
+			return "Done";
+		}),
+	);
+}
 async function OrgChartExport(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let me = await User.findOne({ _id: CRED._id }, { __v: 0 }).populate("tenant").lean();
-			if (Crypto.decrypt(me.password) != PLD.password) {
-				throw new EmpError("wrong_password", "You are using a wrong password");
-			}
+			const tenant_id = CRED.tenant._id;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 			let entries = [];
 
-			const getEntriesUnder = async function (entries: any[], tenant: string, ou: string) {
-				let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
+			const getEntriesUnder = async function (entries: any[], tenant_id: string, ou: string) {
+				let filter: any = { tenant: tenant_id, ou: ou, eid: OUEID };
 				let entry = await OrgChart.findOne(filter, { __v: 0 });
 				if (entry) {
-					entries.push({ ou: entry.ou, eid: "", pos: "" });
+					entries.push({ ou: entry.ou, eid: OUEID, cn: entry.cn, pos: "" });
 
-					filter = { tenant: tenant, ou: ou, eid: { $ne: "OU---" } };
-					let users = await OrgChart.find(filter, { __v: 0 });
-					for (let i = 0; i < users.length; i++) {
-						let usrPos = users[i].position.filter((x: string) => x !== "staff");
+					filter = { tenant: tenant_id, ou: ou, eid: { $ne: OUEID } };
+					let staffEntries = await OrgChart.find(filter, { __v: 0 });
+					for (let i = 0; i < staffEntries.length; i++) {
+						let usrPos = staffEntries[i].position.filter((x: string) => x !== "staff");
 						entries.push({
-							ou: users[i].ou,
-							eid: users[i].eid,
+							ou: staffEntries[i].ou,
+							eid: staffEntries[i].eid,
+							cn: staffEntries[i].account,
 							pos: usrPos.join(":"),
 						});
 					}
 
 					let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
-					filter = { tenant: tenant, ou: ouFilter, eid: "OU---" };
+					filter = { tenant: tenant_id, ou: ouFilter, eid: OUEID };
 					let ous = await OrgChart.find(filter, { __v: 0 });
 					for (let i = 0; i < ous.length; i++) {
-						await getEntriesUnder(entries, tenant, ous[i].ou);
+						await getEntriesUnder(entries, tenant_id, ous[i].ou);
 					}
 				}
 			};
-			await getEntriesUnder(entries, tenant, "root");
+			await getEntriesUnder(entries, tenant_id, "root");
 
 			//return entries;
 			//// write to a file
@@ -3774,8 +3881,8 @@ async function OrgChartExport(req: Request, h: ResponseToolkit) {
 			const worksheet = workbook.addWorksheet("Orgchart");
 			worksheet.columns = [
 				{ header: "OU", key: "ou", width: 30 },
-				{ header: "Name", key: "cn", width: 30 },
-				{ header: "EID", key: "eid", width: 30 },
+				{ header: "Account", key: "cn", width: 30 },
+				{ header: "Eid", key: "eid", width: 30 },
 				{ header: "Position", key: "pos", width: 30 },
 			];
 
@@ -3784,7 +3891,7 @@ async function OrgChartExport(req: Request, h: ResponseToolkit) {
 			}
 
 			// write to a new buffer
-			//await workbook.xlsx.writeFile("/Users/lucas/tst.xlsx");
+			await workbook.xlsx.writeFile("/Users/lucas/tst.xlsx");
 			const buffer = (await workbook.xlsx.writeBuffer()) as Buffer;
 
 			return {
@@ -3794,7 +3901,7 @@ async function OrgChartExport(req: Request, h: ResponseToolkit) {
 					Pragma: "no-cache",
 					"Access-Control-Allow-Origin": "*",
 					"Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-					"Content-Disposition": `attachment;filename="orgchart.xlsx"`,
+					"Content-Disposition": `attachment;filename="orgchart_${CRED.tenant.name}.xlsx"`,
 				},
 			};
 		}),
@@ -3807,7 +3914,7 @@ async function OrgChartGetAllOUs(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
 			let entries = [];
@@ -3818,202 +3925,121 @@ async function OrgChartGetAllOUs(req: Request, h: ResponseToolkit) {
 				ou: string,
 				level: number,
 			) {
-				let filter: any = { tenant: tenant, ou: ou, eid: "OU---" };
+				let filter: any = { tenant: tenant_id, ou: ou, eid: OUEID };
 				let entry = await OrgChart.findOne(filter, { __v: 0 });
 				if (entry) {
-					entries.push({ ou: entry.ou, eid: "", pos: "", level: level });
+					entries.push({ ou: entry.ou, eid: "", cn: entry.cn, pos: "", level: level });
 					let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
-					filter = { tenant: tenant, ou: ouFilter, eid: "OU---" };
+					filter = { tenant: tenant_id, ou: ouFilter, eid: OUEID };
 					let ous = await OrgChart.find(filter, { __v: 0 });
 					for (let i = 0; i < ous.length; i++) {
-						await getEntriesUnder(entries, tenant, ous[i].ou, level + 1);
+						await getEntriesUnder(entries, tenant_id, ous[i].ou, level + 1);
 					}
 				}
 			};
-			await getEntriesUnder(entries, tenant, "root", 0);
+			await getEntriesUnder(entries, tenant_id, "root", 0);
 
 			return entries;
 		}),
 	);
 }
 
-async function OrgChartCopyOrMoveStaff(req: Request, h: ResponseToolkit) {
+async function OrgChartCopyEmployeeEntry(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
-			const { action, eid, from, to, cn } = PLD;
+			const { eid, from, to } = PLD;
 
-			if (action === "delete") {
-				let entriesNum = await OrgChart.countDocuments({ tenant: tenant, eid: eid });
-				if (entriesNum > 1) {
-					await OrgChart.deleteOne({ tenant: tenant, ou: from, eid: eid });
-				} else {
-					throw new EmpError("ORGCHART_ENTRY_KEEP_LAST_ONE", "This is the last entry");
-				}
-			} else {
-				const existingEntry = await OrgChart.findOne({ tenant, ou: from, eid: eid });
-				if (!existingEntry) {
-					throw new EmpError(
-						"ORGCHART_ENTRY_DOES_NOT_EXIST",
-						`Orgchart entry: eid ${eid} in ou ${from} does not exist`,
-					);
-				}
-				let newEntry = new OrgChart({
-					tenant: tenant,
-					ou: to,
-					eid: eid,
-					position: [],
-				});
-				await newEntry.save();
-
-				if (action === "move") {
-					await OrgChart.deleteOne({ tenant: tenant, ou: from, eid: eid });
-				}
+			const existingEntry = await OrgChart.findOne({ tenant_id, ou: from, eid: eid });
+			if (!existingEntry) {
+				throw new EmpError(
+					"ORGCHART_ENTRY_DOES_NOT_EXIST",
+					`Orgchart entry: eid ${eid} in ou ${from} does not exist`,
+				);
 			}
+			let newEntry = new OrgChart({
+				tenant: tenant_id,
+				ou: to,
+				eid: eid,
+				cn: existingEntry.cn,
+				position: existingEntry.position,
+			});
+			await newEntry.save();
 
 			return "Done";
 		}),
 	);
 }
+async function OrgChartMoveEmployeeEntry(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant_id = CRED.tenant._id;
+			await Parser.checkOrgChartAdminAuthorization(CRED);
 
-async function importOrgLines(tenant: string, default_user_password: string, lines: string[]) {
-	let orgChartArr = [];
-	let tobeDeletedArr = [];
-	let currentOU = "";
-	let currentPOU = "";
-	let currentCN = "";
-	let isOU = false;
-	let errors = [];
-	for (let i = 0; i < lines.length; i++) {
-		let fields = lines[i].split(",");
-		if (!Tools.isArray(fields)) {
-			errors.push(`line ${i + 1}: not csv`);
-			continue;
-		}
-		if (fields.length < 2) {
-			errors.push(`line ${i + 1}: should be at least 2 columns`);
-			continue;
-		}
-		if (fields[0].toLowerCase().trim() === "d") {
-			if (fields[1].trim().length > 0) tobeDeletedArr.push(fields[1].trim());
-		} else if (fields[0].toLowerCase() === "root") {
-			isOU = true;
-			currentOU = "root";
-			currentCN = fields[1];
-			orgChartArr.push({
-				tenant: tenant,
-				ou: currentOU,
-				cn: currentCN,
-				eid: "OU---",
-				position: [],
-			});
-		} else {
-			//第一列是编号
-			//编号要么为空，要么是五个的整数倍
-			if (fields[0].length > 0 && fields[0].length % 5 !== 0) {
-				errors.push(`line ${i + 1}: ou id ${fields[0]} format is wrong`);
-				continue;
-			}
-			//若果非空，是五个的整数倍,应作为OU
-			currentOU = fields[0];
-			if (fields[2].trim().length > 0) {
-				isOU = false;
-			} else {
-				isOU = true;
-			}
-			currentCN = fields[1];
-			if (currentOU.length > 0) {
-				orgChartArr.push({
-					tenant: tenant,
-					ou: currentOU,
-					cn: currentCN,
-					//如果不是OU， 则fields[2]为邮箱名
-					eid: isOU ? "OU---" : fields[2],
-					//如果isOU，则position为空[]即可
-					//如果是用户，则position为第4列（fields[3]）所定义的内容用：分割的字符串数组
-					position: isOU ? [] : fields[3] ? fields[3].split(":") : ["staff"],
-					line: i + 1,
-				});
-			} else {
-				errors.push(`line: ${i + 1} bypass current OU is unknown`);
-			}
-		}
-	}
+			const { eid, from, to } = PLD;
 
-	//先清空Orgchart
-	//await OrgChart.deleteMany({ tenant: tenant }, {session});
-	//再把所有用户重新插入Orgchart
-	//console.log(JSON.stringify(orgChartArr));
-	//await OrgChart.insertMany(orgChartArr);
-	for (let i = 0; i < orgChartArr.length; i++) {
-		try {
-			//await OrgChart.insertMany([orgChartArr[i]]);
-			let entry = await OrgChart.findOne(
-				{
-					tenant: orgChartArr[i].tenant,
-					ou: orgChartArr[i].ou,
-					eid: orgChartArr[i].eid,
-				},
-				{ __v: 0 },
+			const existingEntry = await OrgChart.findOneAndUpdate(
+				{ tenant_id, ou: from, eid: eid },
+				{ $set: { ou: to } },
+				{ upsert: false, new: true },
 			);
-			if (entry === null) {
-				await OrgChart.insertMany([orgChartArr[i]]);
-			} else {
-				await OrgChart.updateOne(
-					{
-						tenant: orgChartArr[i].tenant,
-						ou: orgChartArr[i].ou,
-						eid: orgChartArr[i].eid,
-					},
-					{
-						$set: {
-							cn: orgChartArr[i].cn,
-							position: orgChartArr[i].position,
-						},
-					},
-				);
-			}
-		} catch (err) {
-			console.error(err);
-			errors.push(
-				`Error: line: ${orgChartArr[i].line}: ${orgChartArr[i].ou}-${orgChartArr[i].eid}`,
-			);
-		}
-	}
-	let uniqued_orgchart_staffs = [];
-	let uniqued_eids = [];
-	for (let i = 0; i < orgChartArr.length; i++) {
-		if (orgChartArr[i].eid.startsWith("OU-") || uniqued_eids.indexOf(orgChartArr[i].eid) > -1)
-			continue;
-		uniqued_eids.push(orgChartArr[i].eid);
-		uniqued_orgchart_staffs.push({ eid: orgChartArr[i].eid, cn: orgChartArr[i].cn });
-	}
-	//await AutoRegisterOrgChartUser(tenant, admin, uniqued_orgchart_staffs, default_user_password);
-	for (let i = 0; i < tobeDeletedArr.length; i++) {
-		if (tobeDeletedArr[i] !== "root") {
-			await OrgChart.deleteMany({ tenant: tenant, ou: { $regex: `^${tobeDeletedArr[i]}.*` } });
-		}
-		await OrgChart.deleteMany({ tenant: tenant, eid: tobeDeletedArr[i] });
-	}
-	return { ret: "ok", logs: errors };
+		}),
+	);
 }
+async function OrgChartCreateOrModifyOuEntry(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant_id = CRED.tenant._id;
+			await Parser.checkOrgChartAdminAuthorization(CRED);
 
+			const { ou_id, cn } = PLD;
+
+			await OrgChart.findOneAndUpdate(
+				{ tenant: tenant_id, ou: ou_id, eid: OUEID },
+				{ $set: { cn: cn } },
+			);
+		}),
+	);
+}
+async function OrgChartRemoveOuEntry(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			const tenant_id = CRED.tenant._id;
+			await Parser.checkOrgChartAdminAuthorization(CRED);
+
+			const { ou_id } = PLD;
+
+			await OrgChart.deleteMany({ tenant: tenant_id, ou: ou_id });
+
+			return "Done";
+		}),
+	);
+}
 async function OrgChartGetLeader(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let eid = PLD.eid;
 			let leader = PLD.leader;
-			let ret = await OrgChartHelper.getUpperOrPeerByPosition(tenant, eid, leader);
+			let ret = await OrgChartHelper.getUpperOrPeerByPosition(tenant_id, eid, leader);
 			return ret;
 		}),
 	);
@@ -4034,10 +4060,10 @@ async function OrgChartGetStaff(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myUid = CRED.employee.eid;
 			let qstr = PLD.qstr;
-			return await OrgChartHelper.getOrgStaff(tenant, myUid, qstr);
+			return await OrgChartHelper.getOrgStaff(tenant_id, myUid, qstr);
 		}),
 	);
 }
@@ -4048,14 +4074,14 @@ async function OrgChartListOu(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let top = PLD.top;
 			let withTop = PLD.withTop === "yes";
 			let regexp = null;
 			let filter: any = {};
-			filter["tenant"] = tenant;
-			filter["eid"] = "OU---";
+			filter["tenant"] = tenant_id;
+			filter["eid"] = OUEID;
 			if (top !== "root") {
 				if (withTop) regexp = new RegExp("^" + top + ".*");
 				else regexp = new RegExp("^" + top + "(.{5})+");
@@ -4077,9 +4103,9 @@ async function OrgChartList(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
-			let ret = await OrgChart.find({ tenant: tenant }, { __v: 0 });
+			let ret = await OrgChart.find({ tenant: tenant_id }, { __v: 0 });
 			return ret;
 		}),
 	);
@@ -4091,27 +4117,27 @@ async function OrgChartExpand(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let ou = PLD.ou;
 			let include = PLD.include;
 			let ret = [];
 			let selfOu = null;
-			await OrgChart.updateMany({ tenant: tenant, ou: /root/ }, { $set: { ou: "root" } });
+			await OrgChart.updateMany({ tenant: tenant_id, ou: /root/ }, { $set: { ou: "root" } });
 			if (ou === "root")
-				selfOu = await OrgChart.findOne({ tenant: tenant, ou: /root/, eid: "OU---" }, { __v: 0 });
-			else selfOu = await OrgChart.findOne({ tenant: tenant, ou: ou, eid: "OU---" }, { __v: 0 });
+				selfOu = await OrgChart.findOne({ tenant: tenant_id, ou: /root/, eid: OUEID }, { __v: 0 });
+			else selfOu = await OrgChart.findOne({ tenant: tenant_id, ou: ou, eid: OUEID }, { __v: 0 });
 			if (include) {
 				selfOu && ret.push(selfOu);
 			}
 
 			//先放人
-			let childrenStaffFilter = { tenant: tenant };
-			childrenStaffFilter["eid"] = { $ne: "OU---" };
+			let childrenStaffFilter = { tenant: tenant_id };
+			childrenStaffFilter["eid"] = { $ne: OUEID };
 			childrenStaffFilter["ou"] = ou;
 			let tmp = await OrgChart.find(childrenStaffFilter, { __v: 0 }).lean();
 			for (let i = 0; i < tmp.length; i++) {
-				let employee = await Employee.findOne({ tenant: tenant, eid: tmp[i].eid }, { __v: 0 });
+				let employee = await Employee.findOne({ tenant: tenant_id, eid: tmp[i].eid }, { __v: 0 });
 				if (employee && employee.active === false) {
 					tmp[i].eid = employee.succeed;
 				}
@@ -4119,8 +4145,8 @@ async function OrgChartExpand(req: Request, h: ResponseToolkit) {
 			ret = ret.concat(tmp);
 
 			//再放下级组织
-			let childrenOuFilter = { tenant: tenant };
-			childrenOuFilter["eid"] = "OU---";
+			let childrenOuFilter = { tenant: tenant_id };
+			childrenOuFilter["eid"] = OUEID;
 			childrenOuFilter["ou"] =
 				ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
 
@@ -4138,7 +4164,7 @@ async function OrgChartAddPosition(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
@@ -4147,7 +4173,7 @@ async function OrgChartAddPosition(req: Request, h: ResponseToolkit) {
 			let posArr = Parser.splitStringToArray(pos);
 
 			let ret = await OrgChart.findOneAndUpdate(
-				{ tenant: tenant, _id: ocid },
+				{ tenant: tenant_id, _id: ocid },
 				{ $addToSet: { position: { $each: posArr } } },
 				{ upsert: false, new: true },
 			).lean();
@@ -4166,7 +4192,7 @@ async function OrgChartDelPosition(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let me = await User.findOne({ _id: CRED._id }, { __v: 0 }).populate("tenant").lean();
 			await Parser.checkOrgChartAdminAuthorization(CRED);
@@ -4176,7 +4202,7 @@ async function OrgChartDelPosition(req: Request, h: ResponseToolkit) {
 			let posArr = Parser.splitStringToArray(pos);
 
 			let ret = await OrgChart.findOneAndUpdate(
-				{ tenant: tenant, _id: ocid },
+				{ tenant: tenant_id, _id: ocid },
 				{ $pull: { position: { $in: posArr } } },
 				{ upsert: false, new: true },
 			).lean();
@@ -4234,8 +4260,8 @@ async function GetCallbackPoints(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id };
 			filter = lodash.merge(filter, req.payload);
 			return await CbPoint.find(filter, {
 				_id: 0,
@@ -4255,8 +4281,8 @@ async function GetLatestCallbackPoint(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id };
 			filter = lodash.merge(filter, req.payload);
 			let ret = await CbPoint.find(filter, {
 				_id: 1,
@@ -4281,8 +4307,8 @@ async function OldDoCallback(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id };
 
 			if (PLD.cbp.tplid) filter.tplid = PLD.cbp.tplid;
 			if (PLD.cbp.wfid) filter.wfid = PLD.cbp.wfid;
@@ -4299,7 +4325,7 @@ async function OldDoCallback(req: Request, h: ResponseToolkit) {
 			options.route = PLD.route ? PLD.route : "DEFAULT";
 			if (lodash.isEmpty(PLD.kvars) === false) options.kvars = PLD.kvars;
 			if (lodash.isEmpty(PLD.atts) === false) options.atts = PLD.atts;
-			let ret = await Engine.doCallback(tenant, cbp, options);
+			let ret = await Engine.doCallback(tenant_id, cbp, options);
 			return ret;
 		}),
 	);
@@ -4311,8 +4337,8 @@ async function DoCallback(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
-			let filter: any = { tenant: tenant };
+			const tenant_id = CRED.tenant._id;
+			let filter: any = { tenant: tenant_id };
 
 			if (PLD.cbpid) filter._id = PLD.cbpid;
 			let cbp = await CbPoint.findOne(filter, {
@@ -4326,7 +4352,7 @@ async function DoCallback(req: Request, h: ResponseToolkit) {
 			let options: any = {};
 			options.decision = PLD.decision ? PLD.decision : "DEFAULT";
 			if (lodash.isEmpty(PLD.kvars) === false) options.kvars = PLD.kvars;
-			let ret = await Engine.doCallback(tenant, cbp, options);
+			let ret = await Engine.doCallback(tenant_id, cbp, options);
 			return cbp._id.toString();
 		}),
 	);
@@ -4384,9 +4410,9 @@ async function MemberSystemPerm(req: Request, h: ResponseToolkit) {
 			const myGroup = CRED.employee.group;
 			let instance = null;
 			let member_eid = PLD.eid;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let member = (await Employee.findOne(
-				{ eid: member_eid, tenant: tenant },
+				{ eid: member_eid, tenant: tenant_id },
 				{ __v: 0 },
 			)) as EmployeeType;
 			if (!member) {
@@ -4430,18 +4456,18 @@ async function CommentWorkflowLoad(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let wfid = PLD.wfid;
 			let todoid = PLD.todoid;
 
 			let ifNoneMatch = req.headers["if-none-match"];
-			let latestETag = Cache.getETag(`ETAG:WF:FORUM:${tenant}:${wfid}`);
+			let latestETag = Cache.getETag(`ETAG:WF:FORUM:${tenant_id}:${wfid}`);
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return replyHelper.build304([], latestETag);
 			}
 
-			let comments = await Engine.loadWorkflowComments(tenant, wfid);
+			let comments = await Engine.loadWorkflowComments(tenant_id, wfid);
 			return replyHelper.buildReturnWithEtag(comments, latestETag);
 		}),
 	);
@@ -4454,16 +4480,16 @@ async function CommentDelete(req: Request, h: ResponseToolkit) {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
 			let deleteFollowing = async (tenant: string, objid: Mongoose.Types.ObjectId) => {
-				let filter: any = { tenant: tenant, objid: objid };
+				let filter: any = { tenant: tenant_id, objid: objid };
 				let cmts = await Comment.find(filter, { _id: 1 });
 				for (let i = 0; i < cmts.length; i++) {
-					await deleteFollowing(tenant, cmts[i]._id);
+					await deleteFollowing(tenant_id, cmts[i]._id);
 				}
 				await Comment.deleteOne(filter);
 			};
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let commentid = PLD.commentid;
-			let filter: any = { tenant: tenant, _id: commentid };
+			let filter: any = { tenant: tenant_id, _id: commentid };
 			//Find the comment to be deleted.
 			let cmt = await Comment.findOne(filter, { __v: 0 });
 			//Find the objtype and objid of it's parent
@@ -4471,12 +4497,12 @@ async function CommentDelete(req: Request, h: ResponseToolkit) {
 			let objid = cmt.objid;
 
 			//Delete childrens recursively.
-			await deleteFollowing(tenant, cmt._id);
+			await deleteFollowing(tenant_id, cmt._id);
 			//Delete this one
 			await Comment.deleteOne(filter);
 
-			await Cache.resetETag(`ETAG:FORUM:${tenant}`);
-			await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${cmt.context.wfid}`);
+			await Cache.resetETag(`ETAG:FORUM:${tenant_id}`);
+			await Cache.resetETag(`ETAG:WF:FORUM:${tenant_id}:${cmt.context.wfid}`);
 			return { thisComment: cmt };
 		}),
 	);
@@ -4488,11 +4514,11 @@ async function CommentDeleteBeforeDays(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let beforeDays = PLD.beforeDays;
 			let filter: any = {
-				tenant: tenant,
+				tenant: tenant_id,
 				toWhom: myEid,
 				createdAt: {
 					$lte: new Date(new Date().getTime() - beforeDays * 24 * 60 * 60 * 1000).toISOString(),
@@ -4503,9 +4529,9 @@ async function CommentDeleteBeforeDays(req: Request, h: ResponseToolkit) {
 
 			for (let i = 0; i < cmts.length; i++) {
 				if (cmts[i] && cmts[i].context && cmts[i].context.wfid)
-					await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${cmts[i].context.wfid}`);
+					await Cache.resetETag(`ETAG:WF:FORUM:${tenant_id}:${cmts[i].context.wfid}`);
 			}
-			await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+			await Cache.resetETag(`ETAG:FORUM:${tenant_id}`);
 
 			return "Done";
 		}),
@@ -4527,21 +4553,21 @@ async function CommentAddForBiz(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			if (PLD.objtype === "TODO") {
-				let todo = await Todo.findOne({ tenant: tenant, todoid: PLD.objid }, { __v: 0 });
+				let todo = await Todo.findOne({ tenant: tenant_id, todoid: PLD.objid }, { __v: 0 });
 				if (todo) {
-					let thisComment = await Engine.postCommentForTodo(tenant, myEid, todo, PLD.content);
+					let thisComment = await Engine.postCommentForTodo(tenant_id, myEid, todo, PLD.content);
 					let comments = await Engine.getComments(
-						tenant,
+						tenant_id,
 						"TODO",
 						PLD.objid,
 						Const.COMMENT_LOAD_NUMBER,
 					);
 
-					await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${thisComment.context.wfid}`);
-					await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+					await Cache.resetETag(`ETAG:WF:FORUM:${tenant_id}:${thisComment.context.wfid}`);
+					await Cache.resetETag(`ETAG:FORUM:${tenant_id}`);
 					return { comments, thisComment };
 				}
 			}
@@ -4557,24 +4583,24 @@ async function CommentAddForComment(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let thisComment = await Engine.postCommentForComment(
-				tenant,
+				tenant_id,
 				myEid,
 				PLD.cmtid, //被该条评论所评论的评论ID
 				PLD.content,
 				PLD.threadid,
 			);
 			let comments = await Engine.getComments(
-				tenant,
+				tenant_id,
 				"COMMENT",
 				PLD.cmtid,
 				Const.COMMENT_LOAD_NUMBER,
 			);
 
-			await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${thisComment.context.wfid}`);
-			await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+			await Cache.resetETag(`ETAG:WF:FORUM:${tenant_id}:${thisComment.context.wfid}`);
+			await Cache.resetETag(`ETAG:FORUM:${tenant_id}`);
 
 			return { comments, thisComment };
 		}),
@@ -4590,14 +4616,14 @@ async function CommentLoadMorePeers(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let currentlength = PLD.currentlength;
 			//找到当前comment
-			let thisCmt = await Comment.findOne({ tenant: tenant, _id: PLD.cmtid }, { __v: 0 });
+			let thisCmt = await Comment.findOne({ tenant: tenant_id, _id: PLD.cmtid }, { __v: 0 });
 			if (thisCmt) {
 				//寻找当前Comment的父对象更多的comment
 				let comments = await Engine.getComments(
-					tenant,
+					tenant_id,
 					thisCmt.objtype,
 					thisCmt.objid,
 					//如果小于0，则不限制加载个数，否则，多加载三个即可
@@ -4617,25 +4643,25 @@ async function CommentThumb(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let upOrDown = PLD.thumb;
 			let cmtid = PLD.cmtid;
 			//找到当前comment
-			let thisComment = await Comment.findOne({ tenant: tenant, _id: cmtid }, { context: 1 });
+			let thisComment = await Comment.findOne({ tenant: tenant_id, _id: cmtid }, { context: 1 });
 			if (thisComment) {
-				await Thumb.deleteMany({ tennant: tenant, cmtid: cmtid, who: myEid });
-				let tmp = new Thumb({ tenant: tenant, cmtid: cmtid, who: myEid, upordown: upOrDown });
+				await Thumb.deleteMany({ tennant: tenant_id, cmtid: cmtid, who: myEid });
+				let tmp = new Thumb({ tenant: tenant_id, cmtid: cmtid, who: myEid, upordown: upOrDown });
 				tmp = await tmp.save();
-				let upnum = await Thumb.countDocuments({ tenant: tenant, cmtid: cmtid, upordown: "UP" });
+				let upnum = await Thumb.countDocuments({ tenant: tenant_id, cmtid: cmtid, upordown: "UP" });
 				let downnum = await Thumb.countDocuments({
-					tenant: tenant,
+					tenant: tenant_id,
 					cmtid: cmtid,
 					upordown: "DOWN",
 				});
 
-				await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${thisComment.context.wfid}`);
-				await Cache.resetETag(`ETAG:FORUM:${tenant}`);
+				await Cache.resetETag(`ETAG:WF:FORUM:${tenant_id}:${thisComment.context.wfid}`);
+				await Cache.resetETag(`ETAG:FORUM:${tenant_id}`);
 				return { upnum, downnum };
 			} else {
 				throw new EmpError("CMT_NOT_FOUND", "Comment not found");
@@ -4650,7 +4676,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let pageSer = PLD.pageSer;
 			let pageSize = PLD.pageSize;
@@ -4658,7 +4684,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			let q = PLD.q;
 
 			let ifNoneMatch = req.headers["if-none-match"];
-			let latestETag = Cache.getETag(`ETAG:FORUM:${tenant}`);
+			let latestETag = Cache.getETag(`ETAG:FORUM:${tenant_id}`);
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return replyHelper.build304({}, latestETag);
 			}
@@ -4675,7 +4701,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			let cmts = [];
 			let total = 0;
 
-			let filter: any = { tenant: tenant };
+			let filter: any = { tenant: tenant_id };
 
 			//I_AM_IN 包含 I_STARTED
 			if (category.includes("I_AM_IN")) {
@@ -4690,9 +4716,9 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			}
 			if (category.includes("ALL_VISIED")) {
 				if (!iamAdmin) {
-					let myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant, myEid);
+					let myBannedTemplatesIds = await Engine.getUserBannedTemplate(tenant_id, myEid);
 					wfIamVisied = await Workflow.find(
-						{ tenant: tenant, tplid: { $nin: myBannedTemplatesIds } },
+						{ tenant: tenant_id, tplid: { $nin: myBannedTemplatesIds } },
 						{ _id: 0, wfid: 1 },
 					).lean();
 					wfIamVisied = wfIamVisied.map((x) => x.wfid);
@@ -4700,7 +4726,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			}
 			if (category.includes("I_STARTED")) {
 				wfIStarted = await Workflow.find(
-					{ tenant: tenant, starter: myEid },
+					{ tenant: tenant_id, starter: myEid },
 					{ _id: 0, wfid: 1 },
 				).lean();
 
@@ -4727,12 +4753,12 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			if (iamAdmin && category.length === 1 && category[0] === "ALL_VISIED") {
 				let filter_all = q
 					? {
-							tenant: tenant,
+							tenant: tenant_id,
 							objtype: "TODO",
 							content: new RegExp(`.*${q}.*`),
 					  }
 					: {
-							tenant: tenant,
+							tenant: tenant_id,
 							objtype: "TODO",
 					  };
 				total = await Comment.countDocuments(filter_all);
@@ -4746,13 +4772,13 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 				wfIds = [...new Set(wfIds)];
 				let filter_wfid = q
 					? {
-							tenant: tenant,
+							tenant: tenant_id,
 							objtype: "TODO",
 							"context.wfid": { $in: wfIds },
 							content: new RegExp(`.*${q}.*`),
 					  }
 					: {
-							tenant: tenant,
+							tenant: tenant_id,
 							objtype: "TODO",
 							"context.wfid": { $in: wfIds },
 					  };
@@ -4765,11 +4791,11 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			}
 
 			for (let i = 0; i < cmts.length; i++) {
-				cmts[i].whoCN = await Cache.getEmployeeName(tenant, cmts[i].who, "CommentSearch");
+				cmts[i].whoCN = await Cache.getEmployeeName(tenant_id, cmts[i].who, "CommentSearch");
 				if (cmts[i].context) {
 					let todo = await Todo.findOne(
 						{
-							tenant,
+							tenant_id,
 							wfid: cmts[i].context.wfid,
 							todoid: cmts[i].context.todoid,
 						},
@@ -4778,27 +4804,27 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 					if (todo) {
 						cmts[i].todoTitle = todo.title;
 						cmts[i].todoDoer = todo.doer;
-						cmts[i].todoDoerCN = await Cache.getEmployeeName(tenant, todo.doer, "CommentSearch");
+						cmts[i].todoDoerCN = await Cache.getEmployeeName(tenant_id, todo.doer, "CommentSearch");
 					}
 				}
 				cmts[i].upnum = await Thumb.countDocuments({
-					tenant,
+					tenant_id,
 					cmtid: cmts[i]._id,
 					upordown: "UP",
 				});
 				cmts[i].downnum = await Thumb.countDocuments({
-					tenant,
+					tenant_id,
 					cmtid: cmts[i]._id,
 					upordown: "DOWN",
 				});
-				let tmpret = await Engine.splitMarked(tenant, cmts[i]);
+				let tmpret = await Engine.splitMarked(tenant_id, cmts[i]);
 				cmts[i].mdcontent = tmpret.mdcontent;
 				cmts[i].mdcontent2 = tmpret.mdcontent2;
 
 				if (cmts[i].context) {
 					cmts[i].latestReply = await Comment.find(
 						{
-							tenant: tenant,
+							tenant: tenant_id,
 							objtype: "COMMENT",
 							"context.todoid": cmts[i].objid,
 						},
@@ -4809,12 +4835,12 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 						.lean();
 					for (let r = 0; r < cmts[i].latestReply.length; r++) {
 						cmts[i].latestReply[r].whoCN = await Cache.getEmployeeName(
-							tenant,
+							tenant_id,
 							cmts[i].latestReply[r].who,
 							"commentSearch",
 						);
 						cmts[i].latestReply[r].mdcontent2 = (
-							await Engine.splitMarked(tenant, cmts[i].latestReply[r])
+							await Engine.splitMarked(tenant_id, cmts[i].latestReply[r])
 						)["mdcontent2"];
 					}
 				} else {
@@ -4823,31 +4849,31 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 			}
 
 			////清空 被评价的 TODO和comment已不存在的comment
-			let tmp = await Comment.find({ tenant: tenant }, { __v: 0 });
+			let tmp = await Comment.find({ tenant: tenant_id }, { __v: 0 });
 			for (let i = 0; i < tmp.length; i++) {
 				if (tmp[i].objtype === "TODO") {
-					let theTodo = await Todo.findOne({ tenant: tenant, todoid: tmp[i].objid }, { __v: 0 });
+					let theTodo = await Todo.findOne({ tenant: tenant_id, todoid: tmp[i].objid }, { __v: 0 });
 					if (!theTodo) {
 						console.log("TODO", tmp[i].objid, "not found");
-						await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+						await Comment.deleteOne({ tenant: tenant_id, _id: tmp[i]._id });
 					}
 				} else {
 					let theComment = await Comment.findOne({ _id: tmp[i].objid }, { __v: 0 });
 					if (!theComment) {
-						await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+						await Comment.deleteOne({ tenant: tenant_id, _id: tmp[i]._id });
 						console.log("CMNT", tmp[i].objid, "not found");
 					}
 				}
 			}
 			//修补towhom
-			tmp = await Comment.find({ tenant: tenant, towhom: { $exists: false } }, { __v: 0 });
+			tmp = await Comment.find({ tenant: tenant_id, towhom: { $exists: false } }, { __v: 0 });
 			for (let i = 0; i < tmp.length; i++) {
 				if (tmp[i].towhom) continue;
 				if (tmp[i].objtype === "TODO") {
-					let theTodo = await Todo.findOne({ tenant: tenant, todoid: tmp[i].objid }, { __v: 0 });
+					let theTodo = await Todo.findOne({ tenant: tenant_id, todoid: tmp[i].objid }, { __v: 0 });
 					if (!theTodo) {
 						console.log("TODO", tmp[i].objid, "not found");
-						await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+						await Comment.deleteOne({ tenant: tenant_id, _id: tmp[i]._id });
 					} else {
 						console.log("set towhom to", theTodo.doer);
 						await Comment.findOneAndUpdate(
@@ -4859,7 +4885,7 @@ async function CommentSearch(req: Request, h: ResponseToolkit) {
 				} else {
 					let theComment = await Comment.findOne({ _id: tmp[i].objid }, { __v: 0 });
 					if (!theComment) {
-						await Comment.deleteOne({ tenant: tenant, _id: tmp[i]._id });
+						await Comment.deleteOne({ tenant: tenant_id, _id: tmp[i]._id });
 						console.log("CMNT", tmp[i].objid, "not found");
 					} else {
 						console.log("set towhom to", theComment.who);
@@ -4884,7 +4910,7 @@ async function CommentToggle(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			let objtype = PLD.objtype;
@@ -4894,7 +4920,7 @@ async function CommentToggle(req: Request, h: ResponseToolkit) {
 			switch (objtype) {
 				case "template":
 					filter = {
-						tenant: tenant,
+						tenant: tenant_id,
 						tplid: objid,
 					};
 					if (myGroup !== "ADMIN") {
@@ -4909,7 +4935,7 @@ async function CommentToggle(req: Request, h: ResponseToolkit) {
 					break;
 				case "workflow":
 					filter = {
-						tenant: tenant,
+						tenant: tenant_id,
 						wfid: objid,
 					};
 					if (myGroup !== "ADMIN") {
@@ -4924,7 +4950,7 @@ async function CommentToggle(req: Request, h: ResponseToolkit) {
 					break;
 				case "todo":
 					filter = {
-						tenant: tenant,
+						tenant: tenant_id,
 						todoid: objid,
 					};
 					if (myGroup !== "ADMIN") {
@@ -4958,7 +4984,7 @@ async function TagDel(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let objtype = PLD.objtype;
 			let objid = PLD.objid;
@@ -4968,7 +4994,7 @@ async function TagDel(req: Request, h: ResponseToolkit) {
 
 			let existingTags = [];
 			if (objtype === "template") {
-				let searchFilter: any = { tenant: tenant, tplid: objid };
+				let searchFilter: any = { tenant: tenant_id, tplid: objid };
 				let tmp = await Template.findOneAndUpdate(
 					searchFilter,
 					{
@@ -4998,7 +5024,7 @@ async function TagAdd(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			let objtype = PLD.objtype;
@@ -5018,7 +5044,7 @@ async function TagAdd(req: Request, h: ResponseToolkit) {
 
 			//获得当前用户已经做过的tag和text
 			if (objtype === "template") {
-				let searchCondition: any = { tenant: tenant, tplid: objid };
+				let searchCondition: any = { tenant: tenant_id, tplid: objid };
 				obj = await Template.findOne(searchCondition, { __v: 0 });
 			}
 			existingTags = obj.tags;
@@ -5051,7 +5077,7 @@ async function TagAdd(req: Request, h: ResponseToolkit) {
 
 			if (tagsToAdd.length > 0) {
 				if (objtype === "template") {
-					let searchCondition: any = { tenant: tenant, tplid: objid };
+					let searchCondition: any = { tenant: tenant_id, tplid: objid };
 					//将新添加的放进数组
 					obj = await Template.findOneAndUpdate(
 						searchCondition,
@@ -5080,18 +5106,18 @@ async function TagList(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let objtype = PLD.objtype;
 			let objid = PLD.objid;
 
 			let ret = [];
 			if (objtype === "template") {
-				let filter: any = { tenant: tenant };
+				let filter: any = { tenant: tenant_id };
 				if (Tools.hasValue(objid)) {
-					filter = { tenant: tenant, tplid: objid, "tags:owner": myEid };
+					filter = { tenant: tenant_id, tplid: objid, "tags:owner": myEid };
 				} else {
-					filter = { tenant: tenant, "tags.owner": myEid };
+					filter = { tenant: tenant_id, "tags.owner": myEid };
 				}
 				let objs = await Template.find(filter, { __v: 0 });
 				for (let i = 0; i < objs.length; i++) {
@@ -5122,10 +5148,10 @@ async function TagListOrg(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 
-			let ret = (await Cache.getOrgTags(tenant)).split(";");
+			let ret = (await Cache.getOrgTags(tenant_id)).split(";");
 
 			console.log("TagListOrgs", ret);
 			return ret;
@@ -5139,9 +5165,9 @@ async function GetTodosByWorkid(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
-			return await Engine.getTodosByWorkid(tenant, PLD.workid, PLD.full);
+			return await Engine.getTodosByWorkid(tenant_id, PLD.workid, PLD.full);
 		}),
 	);
 }
@@ -5152,7 +5178,7 @@ async function TodoSetDoer(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			if (myGroup !== "ADMIN") {
@@ -5165,21 +5191,21 @@ async function TodoSetDoer(req: Request, h: ResponseToolkit) {
 			if (newDoer[0] === "@") newDoer = newDoer.substring(1);
 			if (newDoer.indexOf("@") > 0) newDoer = newDoer.substring(0, newDoer.indexOf("@"));
 			let newDoerEid = newDoer;
-			let newDoerObj = await Employee.findOne({ tenant: tenant, eid: newDoerEid }, { __v: 0 });
+			let newDoerObj = await Employee.findOne({ tenant: tenant_id, eid: newDoerEid }, { __v: 0 });
 			if (!newDoerObj) {
 				throw new EmpError("NO_EMPLOYEE", `Employee ${newDoerEid} not found`);
 			}
 
-			let filter: any = { tenant: tenant, todoid: todoid, doer: doer, status: "ST_RUN" };
+			let filter: any = { tenant: tenant_id, todoid: todoid, doer: doer, status: "ST_RUN" };
 			if (forAll) {
-				filter = { tenant: tenant, doer: doer, status: "ST_RUN" };
+				filter = { tenant: tenant_id, doer: doer, status: "ST_RUN" };
 			}
 
 			await Todo.updateMany(filter, { $set: { doer: newDoerEid } });
 
 			return {
 				newdoer: newDoerEid,
-				newcn: await Cache.getEmployeeName(tenant, newDoerEid, "TodoSetDoer"),
+				newcn: await Cache.getEmployeeName(tenant_id, newDoerEid, "TodoSetDoer"),
 			};
 		}),
 	);
@@ -5191,19 +5217,19 @@ async function ListSet(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let payloadItems = PLD.items;
 			payloadItems = payloadItems.replace("；", ",");
 			payloadItems = payloadItems.replace("，", ";");
 			payloadItems = Parser.splitStringToArray(payloadItems).join(";");
-			let filter: any = { tenant: tenant, name: PLD.name };
+			let filter: any = { tenant: tenant_id, name: PLD.name };
 			let list = await List.findOne(filter, { __v: 0 });
 			if (list && list.author !== myEid) {
 				throw new EmpError("NO_PERM", "List exists but it's not your owned list");
 			} else if (!list) {
 				list = new List({
-					tenant: tenant,
+					tenant: tenant_id,
 					author: myEid,
 					name: PLD.name,
 					entries: [
@@ -5225,7 +5251,7 @@ async function ListSet(req: Request, h: ResponseToolkit) {
 						$each: [{ key: theKey, items: payloadItems }],
 						$position: 0, //把Default插入到第一个位置
 					};
-					filter = { tenant: tenant, name: PLD.name, author: myEid };
+					filter = { tenant: tenant_id, name: PLD.name, author: myEid };
 					list = await List.findOneAndUpdate(
 						filter,
 						{
@@ -5238,7 +5264,7 @@ async function ListSet(req: Request, h: ResponseToolkit) {
 				} else if (allKeys.includes(theKey) === false) {
 					//如果key不存在
 					theEntry = { key: theKey, items: payloadItems };
-					filter = { tenant: tenant, name: PLD.name, author: myEid };
+					filter = { tenant: tenant_id, name: PLD.name, author: myEid };
 					list = await List.findOneAndUpdate(
 						filter,
 						{
@@ -5251,7 +5277,7 @@ async function ListSet(req: Request, h: ResponseToolkit) {
 					);
 				} else {
 					//否则,这个Key存在
-					filter = { tenant: tenant, name: PLD.name, author: myEid, "entries.key": theKey };
+					filter = { tenant: tenant_id, name: PLD.name, author: myEid, "entries.key": theKey };
 					//则修改它的items值
 					list = await List.findOneAndUpdate(
 						filter,
@@ -5275,10 +5301,10 @@ async function ListChangeName(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let newName = PLD.newName;
-			let filter: any = { tenant: tenant, name: PLD.name, author: myEid };
+			let filter: any = { tenant: tenant_id, name: PLD.name, author: myEid };
 			await List.findOneAndUpdate(
 				filter,
 				{ $set: { name: newName } },
@@ -5295,9 +5321,9 @@ async function ListList(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
-			return await List.find({ tenant: tenant }, { __v: 0 }).lean();
+			return await List.find({ tenant: tenant_id }, { __v: 0 }).lean();
 		}),
 	);
 }
@@ -5308,18 +5334,18 @@ async function ListDelListOrKey(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let filter: any = {};
 			if (PLD.key) {
-				filter = { tenant: tenant, author: myEid, name: PLD.name };
+				filter = { tenant: tenant_id, author: myEid, name: PLD.name };
 				await List.findOneAndUpdate(
 					filter,
 					{ $pull: { entries: { key: PLD.key } } },
 					{ upsert: false, new: true },
 				);
 			} else {
-				filter = { tenant: tenant, author: myEid, name: PLD.name };
+				filter = { tenant: tenant_id, author: myEid, name: PLD.name };
 				await List.deleteOne(filter);
 			}
 
@@ -5334,7 +5360,7 @@ async function ListGetItems(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let key = "Default";
 			if (Tools.isEmpty(PLD.key)) {
 				key = "Default";
@@ -5342,7 +5368,7 @@ async function ListGetItems(req: Request, h: ResponseToolkit) {
 				key = PLD.key;
 			}
 			let filter: any = {
-				tenant: tenant,
+				tenant: tenant_id,
 				name: PLD.name,
 				entries: { $elemMatch: { key: key } },
 			};
@@ -5364,12 +5390,12 @@ async function CodeTry(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let retMsg = { message: "" };
 			let code = PLD.code;
 			retMsg.message = await Engine.runCode(
-				tenant,
+				tenant_id,
 				"codetry",
 				"codetry",
 				myEid,
@@ -5425,7 +5451,7 @@ async function FilePondProcess(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let filepond = PLD.filepond;
 			let ids = "";
@@ -5436,12 +5462,12 @@ async function FilePondProcess(req: Request, h: ResponseToolkit) {
 					let serverId = IdGenerator();
 					serverId = serverId.replace(/-/g, "");
 					//serverId = Buffer.from(serverId, "hex").toString("base64");
-					let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
+					let pondServerFile = Tools.getPondServerFile(tenant_id, myEid, serverId);
 					if (fs.existsSync(pondServerFile.folder) === false)
 						fs.mkdirSync(pondServerFile.folder, { recursive: true });
 					fs.renameSync(filepond[i].path, pondServerFile.fullPath);
 					let newAttach = new PondFile({
-						tenant: tenant,
+						tenant: tenant_id,
 						serverId: serverId,
 						realName: realName,
 						contentType: contentType,
@@ -5463,12 +5489,12 @@ async function FilePondRemove(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let serverId = PLD.serverId;
-			let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
+			let pondServerFile = Tools.getPondServerFile(tenant_id, myEid, serverId);
 			fs.unlinkSync(pondServerFile.fullPath);
-			await PondFile.deleteOne({ tenant: tenant, serverId: serverId });
+			await PondFile.deleteOne({ tenant: tenant_id, serverId: serverId });
 			return serverId;
 		}),
 	);
@@ -5480,12 +5506,12 @@ async function FilePondRevert(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let serverId = PLD.serverId;
-			let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
+			let pondServerFile = Tools.getPondServerFile(tenant_id, myEid, serverId);
 			fs.unlinkSync(pondServerFile.fullPath);
-			await PondFile.deleteOne({ tenant: tenant, serverId: serverId });
+			await PondFile.deleteOne({ tenant: tenant_id, serverId: serverId });
 			return serverId;
 		}),
 	);
@@ -5497,11 +5523,14 @@ async function WorkflowAttachmentViewer(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			//const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let wfid = req.params.wfid;
 			let serverId = req.params.serverId;
-			let wf = await RCL.getWorkflow({ tenant, wfid }, "engine/handler.WrokflowAttachmentViewer");
+			let wf = await RCL.getWorkflow(
+				{ tenant: tenant_id, wfid },
+				"engine/handler.WrokflowAttachmentViewer",
+			);
 			let attach = null;
 			for (let i = 0; i < wf.attachments.length; i++) {
 				if (wf.attachments[i].serverId === serverId) {
@@ -5514,7 +5543,7 @@ async function WorkflowAttachmentViewer(req: Request, h: ResponseToolkit) {
 			let author = attach.author;
 			let contentType = attach.contentType;
 
-			let pondServerFile = Tools.getPondServerFile(tenant, author, serverId);
+			let pondServerFile = Tools.getPondServerFile(tenant_id, author, serverId);
 			var readStream = fs.createReadStream(pondServerFile.fullPath);
 			return replyHelper.buildReturn(readStream, {
 				"cache-control": "no-cache",
@@ -5535,10 +5564,10 @@ async function FormulaEval(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let expr = PLD.expr;
-			let ret = await Engine.formulaEval(tenant, expr);
+			let ret = await Engine.formulaEval(tenant_id, expr);
 			return "" + ret;
 		}),
 	);
@@ -5550,10 +5579,10 @@ async function WecomBotForTodoGet(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			//const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let wecomBot = await Webhook.find(
-				{ tenant: tenant, owner: myEid, webhook: "wecombot_todo" },
+				{ tenant: tenant_id, owner: myEid, webhook: "wecombot_todo" },
 				{ _id: 0, tplid: 1, key: 1 },
 			);
 			return wecomBot;
@@ -5567,10 +5596,10 @@ async function WecomBotForTodoSet(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let wecomBot = await Webhook.findOneAndUpdate(
-				{ tenant: tenant, owner: myEid, webhook: "wecombot_todo", tplid: PLD.tplid },
+				{ tenant: tenant_id, owner: myEid, webhook: "wecombot_todo", tplid: PLD.tplid },
 				{ $set: { key: PLD.key } },
 				{ upsert: true, new: true },
 			).lean();
@@ -5585,10 +5614,10 @@ async function WecomBotForTodoDel(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let wecomBot = await Webhook.deleteOne({
-				tenant: tenant,
+				tenant: tenant_id,
 				owner: myEid,
 				webhook: "wecombot_todo",
 				tplid: PLD.tplid,
@@ -5604,7 +5633,7 @@ async function TemplateSetCover(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let blobInfo = PLD.blob;
 			let tplid = PLD.tplid;
 			let ext = ".png";
@@ -5616,13 +5645,13 @@ async function TemplateSetCover(req: Request, h: ResponseToolkit) {
 					ext = ".jpeg";
 					break;
 			}
-			let coverFolder = Tools.getTenantFolders(tenant).cover;
+			let coverFolder = Tools.getTenantFolders(tenant_id).cover;
 			if (fs.existsSync(coverFolder) === false) fs.mkdirSync(coverFolder, { recursive: true });
 
-			let coverFilePath = path.join(Tools.getTenantFolders(tenant).cover, tplid + ext);
+			let coverFilePath = path.join(Tools.getTenantFolders(tenant_id).cover, tplid + ext);
 			fs.renameSync(blobInfo.path, coverFilePath);
 			await Template.findOneAndUpdate(
-				{ tenant: tenant, tplid: tplid },
+				{ tenant: tenant_id, tplid: tplid },
 				{ $set: { hasCover: true, coverTag: new Date().getTime().toString() } },
 				{ upsert: false, new: true },
 			);
@@ -5636,10 +5665,10 @@ async function TemplateGetCover(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
-			const tenant = req.params.tenant;
+			const tenant_id = req.params.tenant;
 			let tplid = req.params.tplid;
 
-			let coverInfo = await Cache.getTplCoverInfo(tenant, tplid);
+			let coverInfo = await Cache.getTplCoverInfo(tenant_id, tplid);
 			if (fs.existsSync(coverInfo.path)) {
 				return replyHelper.buildReturn(
 					fs.createReadStream(coverInfo.path),
@@ -5663,10 +5692,10 @@ async function TemplateGetWecomBot(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let tpl = await Template.findOne(
-				{ tenant: tenant, tplid: PLD.tplid, author: myEid },
+				{ tenant: tenant_id, tplid: PLD.tplid, author: myEid },
 				{ _id: 0, wecombotkey: 1 },
 			);
 			return tpl ? tpl.wecombotkey : "";
@@ -5680,10 +5709,10 @@ async function TemplateSetWecomBot(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let tpl = await Template.findOneAndUpdate(
-				{ tenant: tenant, tplid: PLD.tplid, author: myEid },
+				{ tenant: tenant_id, tplid: PLD.tplid, author: myEid },
 				{ $set: { wecombotkey: PLD.key } },
 				{ upsert: false, new: true },
 			);
@@ -5698,12 +5727,12 @@ async function CellsRead(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let fileId = PLD.fileId;
 
 			let cell = (await Cell.findOne(
-				{ tenant: tenant, serverId: fileId },
+				{ tenant: tenant_id, serverId: fileId },
 				{ _id: 0 },
 			).lean()) as CellType;
 			if (cell) {
@@ -5725,7 +5754,7 @@ async function CellsRead(req: Request, h: ResponseToolkit) {
 							if (
 								!(await Employee.findOne(
 									{
-										tenant: tenant,
+										tenant: tenant_id,
 										eid: cols[0],
 									},
 									{ __v: 0 },
@@ -5753,33 +5782,35 @@ async function NodeRerun(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfid = PLD.wfid;
 			let nodeid = PLD.nodeid;
-			await Engine.rerunNode(tenant, wfid, nodeid);
+			await Engine.rerunNode(tenant_id, wfid, nodeid);
 			return "Done";
 		}),
 	);
 }
 
-async function ListUsersNotStaff(req: Request, h: ResponseToolkit) {
+async function EmployeeNotInOrgchart(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			//let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
-			if (myGroup !== "ADMIN") {
-				throw new EmpError("NOT_ADMIN", "You are not admin");
-			}
-			let employees = await Employee.find(
-				{ tenant: tenant },
-				{ __v: 0, _id: 0, eid: 1, nickname: 1 },
+			await Parser.checkOrgChartAdminAuthorization(CRED);
+
+			let orgChartEntries = await OrgChart.find(
+				{ tenant: tenant_id, eid: { $ne: OUEID } },
+				{ eid: 1, _id: 0 },
 			).lean();
-			let orgChartEntries = await OrgChart.find({ tenant: tenant }, { _id: 0, eid: 1 }).lean();
-			const tmp: string[] = orgChartEntries.map((x: any) => x.eid);
-			employees = employees.filter((x) => tmp.includes(x.eid) === false);
+			let tmp = orgChartEntries.map((x: any) => x.eid);
+			let employees = await Employee.find(
+				{ tenant: tenant_id, eid: { $nin: tmp } },
+				{ eid: 1, nickname: 1, _id: 0 },
+			).lean();
+			console.log(employees);
 			return employees;
 		}),
 	);
@@ -5791,7 +5822,7 @@ async function ReplaceEmployeeSucceed(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
@@ -5800,7 +5831,7 @@ async function ReplaceEmployeeSucceed(req: Request, h: ResponseToolkit) {
 			let toEid = PLD.to;
 			let toEmployee = await Employee.findOne(
 				{
-					tenant: tenant,
+					tenant: tenant_id,
 					eid: toEid,
 				},
 				{ __v: 0 },
@@ -5811,14 +5842,14 @@ async function ReplaceEmployeeSucceed(req: Request, h: ResponseToolkit) {
 				new EmpError("EMPLOYEE_NOT_FOUND", "TO employee must exists"),
 			);
 			let fromEmployee = await Employee.findOneAndUpdate(
-				{ tenant: tenant, eid: fromEid },
+				{ tenant: tenant_id, eid: fromEid },
 				{ $set: { active: false, succeed: toEid, succeedname: toEmployee.nickname } },
 				{ upsert: false, new: true },
 			);
 
 			// If reassigned user has ever been set as any other reassigned users' succeed, change the succeed to the new user as well.
 			await Employee.updateMany(
-				{ tenant: tenant, succeed: fromEid },
+				{ tenant: tenant_id, succeed: fromEid },
 				{ $set: { succeed: toEid, succeedname: toEmployee.nickname } },
 			);
 			//Delete cache of reassigned user's credential cache from Redis,
@@ -5837,7 +5868,7 @@ async function ReplaceUserPrepare(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
@@ -5852,7 +5883,7 @@ async function ReplaceUserPrepare(req: Request, h: ResponseToolkit) {
 			});
 			let toEmployee = await Employee.findOne(
 				{
-					tenant: tenant,
+					tenant: tenant_id,
 					eid: PLD.to,
 				},
 				{ __v: 0 },
@@ -5864,7 +5895,7 @@ async function ReplaceUserPrepare(req: Request, h: ResponseToolkit) {
 			);
 			//TODO: replaceUser
 			Engine.replaceUser({
-				tenant,
+				tenant_id,
 				admin: myEid,
 				domain: Tools.getEmailDomain(myEid),
 				action: "prepare",
@@ -5910,7 +5941,7 @@ async function ReplaceUserExecute(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 			if (myGroup !== "ADMIN") {
@@ -5918,7 +5949,7 @@ async function ReplaceUserExecute(req: Request, h: ResponseToolkit) {
 			}
 			//TODO: replaceUser or replaceEmployee?
 			Engine.replaceUser({
-				tenant,
+				tenant_id,
 				domain: Tools.getEmailDomain(myEid),
 				action: "execute",
 				...PLD,
@@ -5934,21 +5965,21 @@ async function SavedSearchSave(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let { objtype, name, ss } = PLD;
 			let newSs = await SavedSearch.findOneAndUpdate(
-				{ tenant: tenant, author: myEid, name: name },
+				{ tenant: tenant_id, author: myEid, name: name },
 				{ $set: { author: myEid, name: name, ss: ss, objtype: objtype } },
 				{ upsert: true, new: true },
 			);
 			let total = await SavedSearch.countDocuments({
-				tenant: tenant,
+				tenant: tenant_id,
 				author: myEid,
 				objtype: objtype,
 			});
 			if (total > 20) {
-				SavedSearch.findOneAndDelete({ tenant: tenant, author: myEid, objtype: objtype }).sort(
+				SavedSearch.findOneAndDelete({ tenant: tenant_id, author: myEid, objtype: objtype }).sort(
 					"-createdAt",
 				);
 			}
@@ -5966,7 +5997,7 @@ async function SavedSearchList(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let ifNoneMatch = req.headers["if-none-match"];
 			let latestETag = Cache.getETag(`ETAG:SAVEDSEARCH:${myEid}`);
@@ -5975,7 +6006,7 @@ async function SavedSearchList(req: Request, h: ResponseToolkit) {
 			}
 			const tmp = await SavedSearch.find(
 				{
-					tenant: tenant,
+					tenant: tenant_id,
 					author: myEid,
 					objtype: PLD.objtype,
 				},
@@ -5995,10 +6026,10 @@ async function SavedSearchGetOne(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			return await SavedSearch.findOne(
-				{ tenant: tenant, author: myEid, name: PLD.name, objtype: PLD.objtype },
+				{ tenant: tenant_id, author: myEid, name: PLD.name, objtype: PLD.objtype },
 				{ ss: 1, _id: 0 },
 			).lean();
 		}),
@@ -6010,7 +6041,7 @@ async function Fix(req: Request, h: ResponseToolkit) {
 		h,
 		await MongoSession.noTransaction(async () => {
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let wfs = await Workflow.find({}, { __v: 0 });
 			for (let i = 0; i < wfs.length; i++) {
 				for (let a = 0; a < wfs[i].attachments.length; a++) {
@@ -6018,7 +6049,7 @@ async function Fix(req: Request, h: ResponseToolkit) {
 						console.log(wfs[i].attachments[a]);
 						await PondFile.findOneAndUpdate(
 							{
-								tenant: tenant,
+								tenant: tenant_id,
 								serverId: wfs[i].attachments[a].serverId,
 							},
 							{
@@ -6070,7 +6101,7 @@ async function FlexibleStart(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 
 			let innerTpl: Emp.TemplateObj = {
@@ -6083,7 +6114,7 @@ async function FlexibleStart(req: Request, h: ResponseToolkit) {
 			};
 			let wf = await Engine.startWorkflow_with(
 				false, //rehearsal
-				tenant, //tenant
+				tenant_id, //tenant
 				innerTpl.tplid, //template id
 				innerTpl, //TemplateObj object
 				myEid, //starter
@@ -6209,13 +6240,13 @@ async function KsTplPrepareDesign(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 
 			await CheckKsAdminPermission(CRED);
 
 			await Template.deleteMany({
-				tenant: tenant,
+				tenant: tenant_id,
 				author: myEid,
 				tplid: { $regex: /^TMP_KSHARE_/ },
 			});
@@ -6223,7 +6254,7 @@ async function KsTplPrepareDesign(req: Request, h: ResponseToolkit) {
 			const ksharetplid = "TMP_KSHARE_" + ksid.replace(/\//g, "_");
 			await Template.findOneAndUpdate(
 				{
-					tenant: tenant,
+					tenant: tenant_id,
 					tplid: ksharetplid,
 				},
 				{
@@ -6332,26 +6363,26 @@ async function KsTplPickOne(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 
 			const { ksid, pickto } = PLD;
-			if (await Template.findOne({ tenant: tenant, tplid: pickto }, { doc: 0 })) {
+			if (await Template.findOne({ tenant: tenant_id, tplid: pickto }, { doc: 0 })) {
 				throw new EmpError("ALREADY_EXIST", "Template exists, cannot overwrite it");
 			}
 			let tplid = pickto;
 			let author = myEid;
 			const newTemplate = new Template({
-				tenant: tenant,
+				tenant: tenant_id,
 				tplid: tplid,
 				author: author,
-				authorName: await Cache.getEmployeeName(tenant, author, "TemplateImport"),
+				authorName: await Cache.getEmployeeName(tenant_id, author, "TemplateImport"),
 				ins: false,
 				doc: (await KsTpl.findOne({ ksid: ksid }, { doc: 1 }))["doc"],
 				ksid: ksid,
 			});
 			await newTemplate.save();
-			await Cache.resetETag(`ETAG:TEPLDATES:${tenant}`);
+			await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
 
 			return { ret: "success", tplid: tplid };
 		}),
@@ -6416,7 +6447,7 @@ async function KShareTemplate(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let myGroup = CRED.employee.group;
 
@@ -6429,7 +6460,7 @@ async function KShareTemplate(req: Request, h: ResponseToolkit) {
 				desc: desc,
 				tags: tags,
 				ksid: IdGenerator(),
-				doc: (await Template.findOne({ tenant: tenant, tplid: tplid }, { __v: 0 })).doc,
+				doc: (await Template.findOne({ tenant: tenant_id, tplid: tplid }, { __v: 0 })).doc,
 			});
 			await newKstpl.save();
 			return { ksable: true };
@@ -6443,7 +6474,7 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 
 			const wfids = PLD.wfids;
 			const ret = [];
@@ -6451,7 +6482,7 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 			for (let i = 0; i < wfids.length; i++) {
 				ret.push(
 					await Workflow.findOne(
-						{ tenant: tenant, wfid: wfids[i] },
+						{ tenant: tenant_id, wfid: wfids[i] },
 						{
 							_id: 0,
 							wfid: 1,
@@ -6467,9 +6498,9 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 				);
 			}
 			for (let i = 0; i < ret.length; i++) {
-				ret[i].starterCN = await Cache.getEmployeeName(tenant, ret[i].starter);
+				ret[i].starterCN = await Cache.getEmployeeName(tenant_id, ret[i].starter);
 				ret[i].works = await Work.find(
-					{ tenant: tenant, wfid: ret[i].wfid },
+					{ tenant: tenant_id, wfid: ret[i].wfid },
 					{
 						_id: 0,
 						wfid: 1,
@@ -6487,7 +6518,7 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 				).lean();
 
 				ret[i].todos = await Todo.find(
-					{ tenant: tenant, wfid: ret[i].wfid },
+					{ tenant: tenant_id, wfid: ret[i].wfid },
 					{
 						_id: 0,
 						todoid: 1,
@@ -6506,7 +6537,7 @@ async function Mining_WorkflowDetails(req: Request, h: ResponseToolkit) {
 					},
 				).lean();
 				for (let t = 0; t < ret[i].todos.length; t++) {
-					ret[i].todos[t].doerCN = await Cache.getEmployeeName(tenant, ret[i].todos[t].doer);
+					ret[i].todos[t].doerCN = await Cache.getEmployeeName(tenant_id, ret[i].todos[t].doer);
 				}
 			}
 			return ret;
@@ -6520,14 +6551,14 @@ async function Mining_Data(req: Request, h: ResponseToolkit) {
 		await MongoSession.noTransaction(async () => {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
-			const tenant = CRED.tenant._id;
+			const tenant_id = CRED.tenant._id;
 			const myEid = CRED.employee.eid;
 
 			let wfids = [];
 			const { tplid, wfid } = PLD;
 			if (wfid.length < 1) {
 				wfids = (
-					await Workflow.find({ tenant: tenant, tplid: tplid }, { _id: 0, wfid: 1 }).lean()
+					await Workflow.find({ tenant: tenant_id, tplid: tplid }, { _id: 0, wfid: 1 }).lean()
 				).map((x: any) => x.wfid);
 			} else {
 				wfids = [wfid];
@@ -6537,7 +6568,7 @@ async function Mining_Data(req: Request, h: ResponseToolkit) {
 			let entries = [];
 			for (let i = 0; i < wfids.length; i++) {
 				let ALL_VISIED_KVARS = await Parser.userGetVars(
-					tenant,
+					tenant_id,
 					myEid,
 					wfids[i],
 					Const.FOR_WHOLE_PROCESS,
@@ -6614,7 +6645,7 @@ async function PrintLog(req: Request, h: ResponseToolkit) {
 	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	try {
-		const tenant = CRED.tenant._id;
+		const tenant_id = CRED.tenant._id;
 		const myEid = CRED.employee.eid;
 
 		console.log(`${CRED.employee.eid}: ${PLD.msg}`);
@@ -6722,10 +6753,16 @@ export default {
 	CheckCoworkers,
 	TransferWork,
 	OrgChartImportExcel,
-	OrgChartAddOrDeleteEntry,
+	OrgChartCreateEmployeeEntry,
+	OrgChartModifyEmployeeEntry,
+	OrgChartRemoveOneEmployeeEntry,
+	OrgChartRemoveAllEmployeeEntries,
+	OrgChartCopyEmployeeEntry,
+	OrgChartMoveEmployeeEntry,
+	OrgChartCreateOrModifyOuEntry,
+	OrgChartRemoveOuEntry,
 	OrgChartExport,
 	OrgChartGetAllOUs,
-	OrgChartCopyOrMoveStaff,
 	OrgChartGetLeader,
 	OrgChartGetStaff,
 	OrgChartList,
@@ -6774,7 +6811,7 @@ export default {
 	NodeRerun,
 	DemoAPI,
 	DemoPostContext,
-	ListUsersNotStaff,
+	EmployeeNotInOrgchart,
 	Fix,
 	ReplaceEmployeeSucceed,
 	ReplaceUserPrepare,

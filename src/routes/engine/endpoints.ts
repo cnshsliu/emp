@@ -2076,7 +2076,6 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						default_user_password: Joi.string().required(),
 						file: Joi.any().meta({ swaggerType: "file" }),
 					},
 					validator: Joi,
@@ -2085,20 +2084,140 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/orgchart/add",
-			handler: Handlers.OrgChartAddOrDeleteEntry,
+			path: "/orgchart/create/employee/entry",
+			handler: Handlers.OrgChartCreateEmployeeEntry,
 			config: {
-				description: "Add CSV orgchart",
+				description:
+					"Create a new entry of employee in orgchart, if employee object exist, will change it's nickname as well if cn is not empty, if employee does not exist, an employee object will be created under current tenant.  However, this operation requires the specified account exists.",
 				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
 					payload: {
-						password: Joi.string().required(),
-						content: Joi.string().required(),
-						default_user_password: Joi.string().required(),
+						ou_id: Joi.string().trim().required(),
+						eid: Joi.string().trim().required(),
+						cn: Joi.string().required().trim().allow(""),
+						account: Joi.string().trim().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/modify/employee/entry",
+			handler: Handlers.OrgChartModifyEmployeeEntry,
+			config: {
+				description:
+					"Modify employee information(CN: common name) in orgchart. employee object will be updated as well. Orgchart admin can modify employee information",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						ou_id: Joi.string().trim().required(),
+						eid: Joi.string().trim().required(),
+						cn: Joi.string().required().trim().allow(""),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/remove/one/employee/entry",
+			handler: Handlers.OrgChartRemoveOneEmployeeEntry,
+			config: {
+				description: "Remove one entry",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						ou_id: Joi.string().trim().required(),
+						eid: Joi.string().trim().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/remove/all/employee/entries",
+			handler: Handlers.OrgChartRemoveAllEmployeeEntries,
+			config: {
+				description: "Remove one entry",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						eid: Joi.string().trim().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/copy/employee/entry",
+			handler: Handlers.OrgChartCopyEmployeeEntry,
+			config: {
+				description: "Copy one entry to another department",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						eid: Joi.string().trim().required(),
+						from: Joi.string().trim().required(),
+						to: Joi.string().trim().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/move/employee/entry",
+			handler: Handlers.OrgChartMoveEmployeeEntry,
+			config: {
+				description: "Move one entry to another department",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						eid: Joi.string().trim().required(),
+						from: Joi.string().trim().required(),
+						to: Joi.string().trim().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/create/or/modify/ou/entry",
+			handler: Handlers.OrgChartCreateOrModifyOuEntry,
+			config: {
+				description: "Create a new entry of ou or modify name of an existing one.",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						ou_id: Joi.string().trim().required(),
+						cn: Joi.string().required().trim().allow(""),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/remove/ou/entry",
+			handler: Handlers.OrgChartRemoveOuEntry,
+			config: {
+				description: "Remove a OU entry from orgchart",
+				tags: ["api", "orgchart"],
+				auth: "token",
+				validate: {
+					payload: {
+						ou_id: Joi.string().trim().required(),
 					},
 					validator: Joi,
 				},
@@ -2116,9 +2235,7 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
-					payload: {
-						password: Joi.string().required(),
-					},
+					payload: {},
 					validator: Joi,
 				},
 			},
@@ -2136,31 +2253,6 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/orgchart/copyormovestaff",
-			handler: Handlers.OrgChartCopyOrMoveStaff,
-			config: {
-				description: "Copy or move staff from one OU to another OU",
-				tags: ["api", "orgchart"],
-				auth: "token",
-				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					payload: {
-						action: Joi.string()
-							.required()
-							.valid("delete", "copy", "move")
-							.description("delete/copy/move"),
-						eid: Joi.string().required().description("EID of the employee"),
-						from: Joi.string().required().description("move from which OU(department)"),
-						to: Joi.string().required().description("move to which OU(department)"),
-					},
 					validator: Joi,
 				},
 			},
@@ -3132,8 +3224,8 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/users/notstaff",
-			handler: Handlers.ListUsersNotStaff,
+			path: "/employee/not/in/orgchart",
+			handler: Handlers.EmployeeNotInOrgchart,
 			config: {
 				description: "Get same email domain users not in orgcharts",
 				tags: ["api"],

@@ -259,6 +259,13 @@ async function SetNickName(req: Request, h: ResponseToolkit) {
 					{ $set: { nickname: PLD.nickname } },
 					{ upsert: false, new: true },
 				)) as EmployeeType;
+
+				//Employee nickname修改以后，继续修改orgchart中的common name
+				await OrgChart.updateMany(
+					{ tenant: tenant_id, eid: employee.eid },
+					{ $set: { cn: employee.nickname } },
+				);
+
 				await Cache.removeKeyByEid(CRED.tenant._id, PLD.eid);
 				return { eid: PLD.eid, nickname: employee.nickname };
 			} else {
@@ -267,6 +274,11 @@ async function SetNickName(req: Request, h: ResponseToolkit) {
 					{ $set: { nickname: PLD.nickname } },
 					{ upsert: false, new: true },
 				)) as EmployeeType;
+
+				await OrgChart.updateMany(
+					{ tenant: tenant_id, eid: employee.eid },
+					{ $set: { cn: employee.nickname } },
+				);
 				await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid);
 				return await buildSessionResponse(CRED.user, employee, CRED.tenant);
 			}
@@ -1333,8 +1345,8 @@ async function JoinApprove(req: Request, h: ResponseToolkit) {
 						{ $set: { tenant: CRED.tenant._id } },
 						{ new: true, upsert: false },
 					);
-					user &&
-						(await Employee.findOneAndUpdate(
+					if (user) {
+						let employee = await Employee.findOneAndUpdate(
 							{
 								tenant: my_tenant_id,
 								account: accounts[i],
@@ -1349,7 +1361,13 @@ async function JoinApprove(req: Request, h: ResponseToolkit) {
 								},
 							},
 							{ new: true, upsert: true },
-						));
+						);
+
+						await OrgChart.updateMany(
+							{ tenant: my_tenant_id, eid: employee.eid },
+							{ $set: { cn: employee.nickname } },
+						);
+					}
 				} else {
 					let employee = await Employee.findOneAndUpdate(
 						{
@@ -1368,6 +1386,11 @@ async function JoinApprove(req: Request, h: ResponseToolkit) {
 						{ new: true, upsert: true },
 					);
 					await employee.save();
+
+					await OrgChart.updateMany(
+						{ tenant: my_tenant_id, eid: employee.eid },
+						{ $set: { cn: employee.nickname } },
+					);
 				}
 			}
 			await JoinApplication.deleteMany({ account: { $in: accounts } });
@@ -1452,6 +1475,7 @@ async function RemoveEmployees(req: Request, h: ResponseToolkit) {
 			let tenant_id = CRED.tenant._id.toString();
 
 			let eids = PLD.eids;
+			let tenantOwnerEid = "";
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 			for (let i = 0; i < eids.length; i++) {
 				let anEmployee = await Employee.findOne(
@@ -1461,6 +1485,10 @@ async function RemoveEmployees(req: Request, h: ResponseToolkit) {
 					},
 					{ account: 1 },
 				);
+				if (CRED.tenant.owner === anEmployee.account) {
+					tenantOwnerEid = eids[i];
+					continue;
+				}
 				let personalTenant = await Tenant.findOne({ owner: anEmployee.account }, { __v: 0 });
 				await Employee.findOneAndUpdate(
 					{
@@ -1474,7 +1502,9 @@ async function RemoveEmployees(req: Request, h: ResponseToolkit) {
 					},
 				);
 			}
-			await OrgChart.deleteMany({ tenant: CRED.tenant._id, eid: { $in: eids } });
+			eids = eids.filter((x: string) => x !== tenantOwnerEid);
+			if (eids.length > 0)
+				await OrgChart.deleteMany({ tenant: CRED.tenant._id, eid: { $in: eids } });
 			return { ret: "done" };
 			//TODO: remove employee's folders
 		}),
