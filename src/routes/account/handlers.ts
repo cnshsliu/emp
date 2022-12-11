@@ -830,19 +830,25 @@ async function RemoveUser(req: Request, h: ResponseToolkit) {
 				{ session },
 			).lean();
 
-			let tmp3 = tmp1.concat(tmp2);
-			for (let i = 0; i < tmp3.length; i++) {
-				await Todo.deleteMany({ tenant: tmp3[i].tenant, doer: tmp3[i].eid }, { session });
-				await Delegation.deleteMany(
-					{ tenant: tmp3[i].tenant, delegator: tmp3[i].eid },
+			let employeeTobeDeleted = tmp1.concat(tmp2);
+			for (let i = 0; i < employeeTobeDeleted.length; i++) {
+				await Todo.deleteMany(
+					{ tenant: employeeTobeDeleted[i].tenant, doer: employeeTobeDeleted[i].eid },
 					{ session },
 				);
 				await Delegation.deleteMany(
-					{ tenant: tmp3[i].tenant, delegatee: tmp3[i].eid },
+					{ tenant: employeeTobeDeleted[i].tenant, delegator: employeeTobeDeleted[i].eid },
+					{ session },
+				);
+				await Delegation.deleteMany(
+					{ tenant: employeeTobeDeleted[i].tenant, delegatee: employeeTobeDeleted[i].eid },
 					{ session },
 				);
 
-				await Employee.deleteOne({ tenant: tmp3[i].tenant, doer: tmp3[i].eid }, { session });
+				await Employee.deleteOne(
+					{ tenant: employeeTobeDeleted[i].tenant, doer: employeeTobeDeleted[i].eid },
+					{ session },
+				);
 			}
 			await Tenant.deleteMany({ owner: accountTobeDeleted }, { session });
 			await User.deleteOne({ account: accountTobeDeleted }, { session });
@@ -854,6 +860,7 @@ async function RemoveUser(req: Request, h: ResponseToolkit) {
 				},
 				{ session },
 			);
+			await OrgChart.deleteMany({ tenant: { $in: tenantIdsTobeDeleted } }, { session });
 
 			for (let i = 0; i < tenantIdsTobeDeleted.length; i++) {
 				let tenantId = tenantIdsTobeDeleted[i].toString();

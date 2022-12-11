@@ -36,15 +36,26 @@ const internals = {
 			);
 			if (employee) {
 				nickname = employee.nickname;
-				{
-					lruCache.set(`NOTIFY:${tenant}:{eid}`, employee.notify);
-				}
+				lruCache.set(`NOTIFY:${tenant}:{eid}`, employee.notify);
 			}
 		}
 		if (nickname) {
 			lruCache.set(lruKey, nickname);
 		}
 		return nickname;
+	},
+
+	setEmployeeNotify: async function (
+		tenant: string | Types.ObjectId,
+		eid: string,
+		expire: number = 60,
+	): Promise<string> {
+		const lruKey = `NOTIFY:${tenant}:${eid}`;
+		let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { nickname: 1, notify: 1 });
+		if (employee && employee.notify) {
+			lruCache.set(`NOTIFY:${tenant}:{eid}`, employee.notify);
+		}
+		return employee?.notify;
 	},
 
 	/* 根据eid从缓存去的用户名称 */
@@ -77,7 +88,7 @@ const internals = {
 
 	shouldNotifyViaEmail: async function (tenant: string | Types.ObjectId, doer: string) {
 		let ew = await internals.getEmployeeNotifyConfig(tenant, doer);
-		return ew.indexOf("e") >= 0;
+		return ew && ew.indexOf("e") >= 0;
 	},
 
 	/* 根据eid去的用户的提醒发送设置 */
@@ -91,7 +102,7 @@ const internals = {
 			//console.log(`[Cache 1️⃣ ] ✉️  getEmployeeNotifyConfig ${eid}  ${ew}`);
 			return ew;
 		} else {
-			await internals.setEmployeeName(tenant, eid, null, 60);
+			await internals.setEmployeeNotify(tenant, eid, 60);
 			ew = lruCache.get(key);
 			return ew;
 		}
