@@ -1952,11 +1952,11 @@ const addAdhoc = async function (payload) {
  */
 const explainPds = async function (payload) {
 	let theTeamid = "";
-	let theUser = payload.eid;
+	let theEid = payload.eid;
 	let theKvarString = payload.kvar;
 	let tpRoot = null,
 		wfRoot = null;
-	//使用哪个theTeam， theUser？ 如果有wfid，则
+	//使用哪个theTeam， theEid？ 如果有wfid，则
 	if (payload.wfid) {
 		let wf = await RCL.getWorkflow(
 			{ tenant: payload.tenant, wfid: payload.wfid },
@@ -1964,7 +1964,7 @@ const explainPds = async function (payload) {
 		);
 		if (wf) {
 			theTeamid = wf.teamid;
-			theUser = wf.starter;
+			theEid = wf.starter;
 			let wfIO = await Parser.parse(wf.doc);
 			tpRoot = wfIO(".template");
 			wfRoot = wfIO(".workflow");
@@ -1979,7 +1979,7 @@ const explainPds = async function (payload) {
 		payload.tenant,
 		theTeamid,
 		payload.pds,
-		theUser,
+		theEid,
 		payload.wfid,
 		null, //expalinPDS 没有workflow实例
 		theKvarString,
@@ -7553,18 +7553,18 @@ const procNext = async function (procParams: ProcNextParams) {
  * 目前只在yarkNode中的INFORM和ACTION中用到
  */
 const getDoer = async function (
-	tenant,
-	teamid,
-	pds,
-	starter,
-	wfid,
-	wfRoot,
-	kvarString,
-	insertDefaultStarter,
+	tenant: string | Types.ObjectId,
+	teamid: string,
+	pds: string,
+	referredEid: string,
+	wfid: string,
+	wfRoot: any,
+	kvarString: string,
+	insertDefault: boolean,
 ) {
 	let ret = [];
 	if (!pds || (pds && pds === "DEFAULT")) {
-		return [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter, "getDoer") }];
+		return [{ eid: referredEid, cn: await Cache.getEmployeeName(tenant, referredEid, "getDoer") }];
 	}
 	//先吧kvarString变为kvar对象
 	let kvars = {};
@@ -7593,19 +7593,10 @@ const getDoer = async function (
 			return kv[0];
 		});
 	}
-	ret = await Parser.getDoer(
-		tenant,
-		teamid,
-		pds,
-		starter,
-		wfid,
-		wfRoot,
-		kvars,
-		insertDefaultStarter,
-	);
-	//如果返回为空，并且需要插入缺省starter，则返回缺省starter
-	if (insertDefaultStarter && starter && (!ret || (Array.isArray(ret) && ret.length === 0))) {
-		ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter, "getDoer") }];
+	ret = await Parser.getDoer(tenant, teamid, pds, referredEid, wfid, wfRoot, kvars, insertDefault);
+	//如果返回为空，并且需要插入缺省referredEid，则返回缺省referredEid
+	if (insertDefault && referredEid && (!ret || (Array.isArray(ret) && ret.length === 0))) {
+		ret = [{ eid: referredEid, cn: await Cache.getEmployeeName(tenant, referredEid, "getDoer") }];
 	}
 	return ret;
 };

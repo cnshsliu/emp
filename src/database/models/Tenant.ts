@@ -34,7 +34,6 @@ const schema = new Schema({
 		required: false,
 	},
 	tags: { type: String, required: false, default: "" },
-	orgchartadminpds: { type: String, required: false, default: "" },
 });
 schema.index({ site: 1, name: 1 }, { unique: true });
 

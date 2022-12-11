@@ -69,7 +69,7 @@ const internals = {
 					eid,
 					" not found",
 				);
-				ret = "USER_NOT_FOUND";
+				ret = "EMPLOYEE_NOT_FOUND";
 			}
 		}
 		return ret;
@@ -237,7 +237,7 @@ const internals = {
 				return theStaff.ou;
 			} else {
 				console.warn("Cache.getEmployeeOU from orgchart, Eid:", eid, " not found");
-				return "USER_NOT_FOUND_OC";
+				return "USER_OU_NOT_FOUND_OC";
 			}
 		}
 	},
@@ -463,6 +463,17 @@ const internals = {
 
 	delKey: async function (key: string) {
 		lruCache.delete(key);
+	},
+	addCNtoEids: async (tenant: string, eids: string[]) => {
+		if (!eids) return [];
+		let retArray = [];
+		for (let i = 0; i < eids.length; i++) {
+			retArray.push({
+				eid: eids[i],
+				cn: await internals.getEmployeeName(tenant, eids[i]),
+			});
+		}
+		return retArray;
 	},
 };
 

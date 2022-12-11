@@ -40,6 +40,7 @@ import CbPoint from "../../database/models/CbPoint";
 import { Team, TeamType } from "../../database/models/Team";
 import TempSubset from "../../database/models/TempSubset";
 import OrgChart from "../../database/models/OrgChart";
+import OrgChartAdmin from "../../database/models/OrgChartAdmin";
 import SavedSearch from "../../database/models/SavedSearch";
 import { Site, SiteType } from "../../database/models/Site";
 import OrgChartHelper from "../../lib/OrgChartHelper";
@@ -776,7 +777,7 @@ async function WorkflowSetPbo(req: Request, h: ResponseToolkit) {
 				//将新的text类型attachments放到最前面;
 				wf.attachments.unshift(...newPbo);
 				await Workflow.findOneAndUpdate(
-					{ tenant_id, wfid: PLD.wfid },
+					{ tenant: tenant_id, wfid: PLD.wfid },
 					{ $set: { attachments: wf.attachments } },
 					{ upsert: false, new: true },
 				);
@@ -3565,6 +3566,61 @@ async function AutoRegisterOrgChartUser(
 	} //for
  */
 }
+async function OrgChartAddAdmin(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+
+			const existingEmployee = await Employee.findOne({
+				tenant: tenant_id,
+				eid: PLD.eid,
+			}).lean();
+			if (existingEmployee) {
+				const ret = await OrgChartAdmin.findOneAndUpdate(
+					{ tenant: tenant_id },
+					{ $addToSet: { admins: PLD.eid } },
+					{ upsert: true, new: true },
+				);
+				return await Cache.addCNtoEids(tenant_id, ret.admins);
+			} else {
+				throw new EmpError("EMPLOYEE_NOT_FOUND", `${PLD.eid} not exist`);
+			}
+		}),
+	);
+}
+
+async function OrgChartDelAdmin(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			const ret = await OrgChartAdmin.findOneAndUpdate(
+				{ tenant: tenant_id },
+				{ $pull: { admins: PLD.eid } },
+				{ new: true },
+			);
+			return await Cache.addCNtoEids(tenant_id, ret.admins);
+		}),
+	);
+}
+async function OrgChartListAdmin(req: Request, h: ResponseToolkit) {
+	try {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as any;
+		expect(CRED.employee.group).to.equal("ADMIN");
+		let tenant_id = CRED.tenant._id.toString();
+		const ret = await OrgChartAdmin.findOne({ tenant: tenant_id }, { _id: 0, admins: 1 });
+		return h.response(await Cache.addCNtoEids(tenant_id, ret?.admins));
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(400);
+	}
+}
 
 async function OrgChartImportExcel(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
@@ -3752,6 +3808,7 @@ async function OrgChartCreateEmployeeEntry(req: Request, h: ResponseToolkit) {
 					{
 						$set: { nickname: PLD.cn },
 					},
+					{ upsert: false, new: true },
 				);
 			}
 			if (!theEmployee) {
@@ -3772,13 +3829,14 @@ async function OrgChartCreateEmployeeEntry(req: Request, h: ResponseToolkit) {
 				theEmployee = await theEmployee.save();
 			}
 
-			let theOU = await OrgChart.findOne({ tenant: tenant_id, ou: PLD.ou_id, eid: OUEID });
+			let theOU = await OrgChart.findOne({ tenant: tenant_id, ou: PLD.ou, eid: OUEID });
 			if (!theOU) {
-				throw new EmpError("OU_NOT_EXIST", `Department ${PLD.ou_id} does not exist`);
+				throw new EmpError("OU_NOT_EXIST", `Department ${PLD.ou} does not exist`);
 			}
 			let newEntry = new OrgChart({
 				tenant: tenant_id,
-				ou: PLD.ou_id,
+				ou: PLD.ou,
+				account: PLD.account,
 				eid: PLD.eid,
 				cn: PLD.cn || theAccount.username,
 				position: [],
@@ -3817,7 +3875,7 @@ async function OrgChartRemoveOneEmployeeEntry(req: Request, h: ResponseToolkit) 
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 			let myEid = CRED.employee.eid;
 
-			await OrgChart.deleteOne({ tenant: tenant_id, ou: PLD.ou_id, eid: PLD.eid });
+			await OrgChart.deleteOne({ tenant: tenant_id, ou: PLD.ou, eid: PLD.eid });
 		}),
 	);
 }
@@ -3928,7 +3986,7 @@ async function OrgChartGetAllOUs(req: Request, h: ResponseToolkit) {
 				let filter: any = { tenant: tenant_id, ou: ou, eid: OUEID };
 				let entry = await OrgChart.findOne(filter, { __v: 0 });
 				if (entry) {
-					entries.push({ ou: entry.ou, eid: "", cn: entry.cn, pos: "", level: level });
+					entries.push({ ou: entry.ou, eid: OUEID, cn: entry.cn, pos: "", level: level });
 					let ouFilter = ou === "root" ? { $regex: "^.{5}$" } : { $regex: "^" + ou + ".{5}$" };
 					filter = { tenant: tenant_id, ou: ouFilter, eid: OUEID };
 					let ous = await OrgChart.find(filter, { __v: 0 });
@@ -3955,7 +4013,7 @@ async function OrgChartCopyEmployeeEntry(req: Request, h: ResponseToolkit) {
 
 			const { eid, from, to } = PLD;
 
-			const existingEntry = await OrgChart.findOne({ tenant_id, ou: from, eid: eid });
+			const existingEntry = await OrgChart.findOne({ tenant: tenant_id, ou: from, eid: eid });
 			if (!existingEntry) {
 				throw new EmpError(
 					"ORGCHART_ENTRY_DOES_NOT_EXIST",
@@ -3965,6 +4023,7 @@ async function OrgChartCopyEmployeeEntry(req: Request, h: ResponseToolkit) {
 			let newEntry = new OrgChart({
 				tenant: tenant_id,
 				ou: to,
+				account: existingEntry.account,
 				eid: eid,
 				cn: existingEntry.cn,
 				position: existingEntry.position,
@@ -3987,7 +4046,7 @@ async function OrgChartMoveEmployeeEntry(req: Request, h: ResponseToolkit) {
 			const { eid, from, to } = PLD;
 
 			const existingEntry = await OrgChart.findOneAndUpdate(
-				{ tenant_id, ou: from, eid: eid },
+				{ tenant: tenant_id, ou: from, eid: eid },
 				{ $set: { ou: to } },
 				{ upsert: false, new: true },
 			);
@@ -4003,12 +4062,14 @@ async function OrgChartCreateOrModifyOuEntry(req: Request, h: ResponseToolkit) {
 			const tenant_id = CRED.tenant._id;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
-			const { ou_id, cn } = PLD;
+			const { ou, cn } = PLD;
 
-			await OrgChart.findOneAndUpdate(
-				{ tenant: tenant_id, ou: ou_id, eid: OUEID },
+			const oneEntry = await OrgChart.findOneAndUpdate(
+				{ tenant: tenant_id, ou: ou, eid: OUEID },
 				{ $set: { cn: cn } },
+				{ upsert: true, new: true },
 			);
+			return oneEntry;
 		}),
 	);
 }
@@ -4021,9 +4082,9 @@ async function OrgChartRemoveOuEntry(req: Request, h: ResponseToolkit) {
 			const tenant_id = CRED.tenant._id;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
-			const { ou_id } = PLD;
+			const { ou } = PLD;
 
-			await OrgChart.deleteMany({ tenant: tenant_id, ou: ou_id });
+			await OrgChart.deleteMany({ tenant: tenant_id, ou: ou });
 
 			return "Done";
 		}),
@@ -4061,14 +4122,14 @@ async function OrgChartGetStaff(req: Request, h: ResponseToolkit) {
 			const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
 			const tenant_id = CRED.tenant._id;
-			let myUid = CRED.employee.eid;
+			let myEid = CRED.employee.eid;
 			let qstr = PLD.qstr;
-			return await OrgChartHelper.getOrgStaff(tenant_id, myUid, qstr);
+			return await OrgChartHelper.getOrgStaff(tenant_id, myEid, qstr);
 		}),
 	);
 }
 
-async function OrgChartListOu(req: Request, h: ResponseToolkit) {
+async function OrgChartListOU(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
 		await MongoSession.noTransaction(async () => {
@@ -4168,12 +4229,11 @@ async function OrgChartAddPosition(req: Request, h: ResponseToolkit) {
 			//let myEid = CRED.employee.eid;
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
-			let ocid = PLD.ocid;
 			let pos = PLD.pos;
 			let posArr = Parser.splitStringToArray(pos);
 
 			let ret = await OrgChart.findOneAndUpdate(
-				{ tenant: tenant_id, _id: ocid },
+				{ tenant: tenant_id, ou: PLD.ou, eid: PLD.eid },
 				{ $addToSet: { position: { $each: posArr } } },
 				{ upsert: false, new: true },
 			).lean();
@@ -4197,12 +4257,11 @@ async function OrgChartDelPosition(req: Request, h: ResponseToolkit) {
 			let me = await User.findOne({ _id: CRED._id }, { __v: 0 }).populate("tenant").lean();
 			await Parser.checkOrgChartAdminAuthorization(CRED);
 
-			let ocid = PLD.ocid;
 			let pos = PLD.pos;
 			let posArr = Parser.splitStringToArray(pos);
 
 			let ret = await OrgChart.findOneAndUpdate(
-				{ tenant: tenant_id, _id: ocid },
+				{ tenant: tenant_id, ou: PLD.ou, eid: PLD.eid },
 				{ $pull: { position: { $in: posArr } } },
 				{ upsert: false, new: true },
 			).lean();
@@ -6752,6 +6811,9 @@ export default {
 	CheckCoworker,
 	CheckCoworkers,
 	TransferWork,
+	OrgChartAddAdmin,
+	OrgChartDelAdmin,
+	OrgChartListAdmin,
 	OrgChartImportExcel,
 	OrgChartCreateEmployeeEntry,
 	OrgChartModifyEmployeeEntry,
@@ -6766,7 +6828,7 @@ export default {
 	OrgChartGetLeader,
 	OrgChartGetStaff,
 	OrgChartList,
-	OrgChartListOu,
+	OrgChartListOU,
 	OrgChartExpand,
 	OrgChartAddPosition,
 	OrgChartDelPosition,

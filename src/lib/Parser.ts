@@ -303,13 +303,19 @@ const Parser = {
 		return ret;
 	},
 
+	//Get Leader in current OU level
 	__getLeaderByPosition: async function (
 		tenant: string | Types.ObjectId,
-		eid: string,
+		referredEid: string,
 		rdsPart: string,
 	) {
 		let positions = rdsPart.startsWith("L:") ? rdsPart.substring(2) : rdsPart;
-		let leaders = await OrgChartHelper.getUpperOrPeerByPosition(tenant, eid, positions);
+		let leaders = await OrgChartHelper.getUpperOrPeerByPosition(
+			tenant,
+			referredEid,
+			positions,
+			OrgChartHelper.FIND_FIRST_UPPER,
+		);
 		let ret = leaders.map((x) => {
 			return { eid: x.eid, cn: x.cn };
 		});
@@ -359,11 +365,11 @@ const Parser = {
 
 	__getStaffByQuery: async function (
 		tenant: string | Types.ObjectId,
-		eid: string,
+		referredEid: string,
 		rdsPart: string,
 	) {
 		let positions = rdsPart.startsWith("Q:") ? rdsPart.substring(2) : rdsPart;
-		let staffs = await OrgChartHelper.getOrgStaff(tenant, eid, positions);
+		let staffs = await OrgChartHelper.getOrgStaff(tenant, referredEid, positions);
 		let ret = staffs.map((x) => {
 			return { eid: x.eid, cn: x.cn };
 		});
@@ -704,32 +710,25 @@ const Parser = {
 	/**
 	 *  Get Doer from PDS
 	 *
-	 *  tenant -
-	 *  teamid -
-	 *  pds -
-	 *  starter -
-	 *  wfRoot - can be null, only required when inteperate innerTeam of a running workflow. When getDoer is called to locate flexible team role or ortchart memebers, wfRoot can be ignored
-	 *  kvarString - Normally, used for testing purpose, in format of "pos=who;pos=who;..."
-	 *
 	 *
 	 */
 	getDoer: async function (
 		tenant: string | Types.ObjectId,
 		teamid: string,
 		pds: string,
-		starter: string,
+		referredEid: string,
 		wfid: string,
 		wfRoot: any,
 		kvars: any,
-		insertDefaultStarter: boolean = true,
+		insertDefault: boolean = true,
 	): Promise<DoersArray> {
 		//If there is team definition in PDS, use it.
-		//if PDS is empty, always use starter
+		//if PDS is empty, always use referredEid
 
 		let ret = [] as unknown as DoersArray;
 		if (Tools.isEmpty(pds)) {
-			if (insertDefaultStarter)
-				ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
+			if (insertDefault)
+				ret = [{ eid: referredEid, cn: await Cache.getEmployeeName(tenant, referredEid) }];
 			else ret = [] as unknown as DoersArray;
 		} else {
 			if (pds.match(/\[(.+)\]/)) {
@@ -752,6 +751,7 @@ const Parser = {
 			// rdsPart需要支持“-”操作，即黑名单，排除哪些用户
 			//////////////////////////////////////////////////
 			for (let i = 0; i < arr.length; i++) {
+				console.log(arr[i]);
 				let isWhiteList = true;
 				let rdsPart = arr[i].trim();
 				if (rdsPart[0] === "-") {
@@ -760,20 +760,20 @@ const Parser = {
 				}
 				tmp = [];
 				if (rdsPart.startsWith("L:")) {
-					tmp = await Parser.__getLeaderByPosition(tenant, starter, rdsPart);
+					tmp = await Parser.__getLeaderByPosition(tenant, referredEid, rdsPart);
 				} else if (rdsPart.startsWith("P:")) {
-					tmp = await Parser.__getPeerByPosition(tenant, starter, rdsPart);
+					tmp = await Parser.__getPeerByPosition(tenant, referredEid, rdsPart);
 				} else if (rdsPart.startsWith("Q:")) {
-					tmp = await Parser.__getStaffByQuery(tenant, starter, rdsPart);
+					tmp = await Parser.__getStaffByQuery(tenant, referredEid, rdsPart);
 				} else if (rdsPart.startsWith("@")) {
 					let tmpEid = rdsPart.substring(1).toLowerCase();
 					let cn = await Cache.getEmployeeName(tenant, tmpEid);
-					if (cn.startsWith("USER_NOT_FOUND")) tmp = [];
+					if (cn.startsWith("EMPLOYEE_NOT_FOUND")) tmp = [];
 					else tmp = [{ eid: `${tmpEid}`, cn: cn }];
 				} else if (rdsPart.startsWith("T:")) {
 					tmp = []; //Bypass Team Difinition
 				} else {
-					tmp = await Parser.__getDoerByTeam(tenant, teamid, rdsPart, starter, wfRoot);
+					tmp = await Parser.__getDoerByTeam(tenant, teamid, rdsPart, referredEid, wfRoot);
 				}
 				if (Array.isArray(tmp)) {
 					for (let i = 0; i < tmp.length; i++) {
@@ -804,13 +804,13 @@ const Parser = {
 			{ tenant: tenant, active: false },
 			{ _id: 0, eid: 1, succeed: 1, succeedname: 1 },
 		).lean();
-		//单独取出已离职用户的邮箱地址
+		//单独取出已离职用户的Eids
 		let nonActiveEids = nonActives.map((x) => x.eid);
 		for (let i = 0; i < ret.length; i++) {
 			//这个用户是否已离职
 			let foundNonActiveIndex = nonActiveEids.indexOf(ret[i].eid);
 			if (foundNonActiveIndex >= 0) {
-				//替换为接替人的邮箱和名称
+				//替换为接替人的EID和名称
 				ret[i].eid = nonActives[foundNonActiveIndex].succeed;
 				ret[i].cn = nonActives[foundNonActiveIndex].succeedname;
 			}

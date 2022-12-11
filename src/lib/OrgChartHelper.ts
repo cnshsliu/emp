@@ -128,12 +128,12 @@ const OrgChartHelper = {
 	 */
 	getUpperOrPeerByPosition: async function (
 		tenant: string | Types.ObjectId,
-		eid: string,
+		referredEid: string,
 		positions: string,
 		mode: number = OrgChartHelper.FIND_IN_OU,
 		ou: string = "",
 	) {
-		let filter: any = { tenant: tenant, eid: eid };
+		let filter: any = { tenant: tenant, eid: referredEid };
 		//找到用户
 		if (ou === null || ou === undefined) ou = "";
 		let ret = [];
@@ -145,7 +145,7 @@ const OrgChartHelper = {
 		if (ou === "" && mode !== OrgChartHelper.FIND_ALL) {
 			let ocEntry = await OrgChart.findOne(filter, { ou: 1 });
 			if (!ocEntry) {
-				console.log(`Orgchart Entry ${eid} not found`);
+				console.log(`Orgchart Entry ${referredEid} not found`);
 				return [];
 			}
 			ou = ocEntry.ou;
@@ -221,7 +221,11 @@ const OrgChartHelper = {
 	 *   getOrgStaff: async() GetStaff by PDS
 	 *
 	 */
-	getOrgStaff: async function (tenant: string | Types.ObjectId, eid: string, rdsPart: string) {
+	getOrgStaff: async function (
+		tenant: string | Types.ObjectId,
+		referredEid: string,
+		rdsPart: string,
+	) {
 		let that = this;
 		let ret = [];
 		// ouReg1/pos1:pos2&ouReg2/pos3:pos4
@@ -239,18 +243,29 @@ const OrgChartHelper = {
 
 			if (qstr.indexOf("/") < 0) {
 				ret = ret.concat(
-					await that.getUpperOrPeerByPosition(tenant, eid, qstr, OrgChartHelper.FIND_ALL, ""),
+					await that.getUpperOrPeerByPosition(
+						tenant,
+						referredEid,
+						qstr,
+						OrgChartHelper.FIND_ALL,
+						"",
+					),
 				);
 			} else {
 				let tmp = qstr.split("/");
 				let ouReg = tmp[0].trim();
 				if (ouReg === "*") {
 					ret = ret.concat(
-						await that.getUpperOrPeerByPosition(tenant, eid, tmp[1], OrgChartHelper.FIND_ALL),
+						await that.getUpperOrPeerByPosition(
+							tenant,
+							referredEid,
+							tmp[1],
+							OrgChartHelper.FIND_ALL,
+						),
 					);
 				} else {
 					ret = ret.concat(
-						await that.getUpperOrPeerByPosition(tenant, eid, tmp[1], findScope, ouReg),
+						await that.getUpperOrPeerByPosition(tenant, referredEid, tmp[1], findScope, ouReg),
 					);
 				}
 			}

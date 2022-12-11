@@ -1339,7 +1339,7 @@ const internals = {
 					payload: {
 						pds: Joi.string().required(),
 						teamid: Joi.string().optional().allow(""),
-						email: Joi.string().optional(),
+						eid: Joi.string().optional(),
 						kvar: Joi.string().optional(),
 						wfid: Joi.string().optional(),
 					},
@@ -2057,6 +2057,53 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/orgchart/add/admin",
+			handler: Handlers.OrgChartAddAdmin,
+			config: {
+				tags: ["api", "orgchart"],
+				description: "Add orgchart administrator",
+				auth: "token",
+				validate: {
+					payload: {
+						eid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/del/admin",
+			handler: Handlers.OrgChartDelAdmin,
+			config: {
+				tags: ["api", "orgchart"],
+				description: "Delete orgchart amdinistrator",
+				auth: "token",
+				validate: {
+					payload: {
+						eid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/orgchart/list/admin",
+			handler: Handlers.OrgChartListAdmin,
+			config: {
+				tags: ["api"],
+				description: "List orgchart amdinistrators",
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/orgchart/import/excel",
 			handler: Handlers.OrgChartImportExcel,
 			config: {
@@ -2093,7 +2140,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					payload: {
-						ou_id: Joi.string().trim().required(),
+						ou: Joi.string().trim().required(),
 						eid: Joi.string().trim().required(),
 						cn: Joi.string().required().trim().allow(""),
 						account: Joi.string().trim().required(),
@@ -2113,7 +2160,6 @@ const internals = {
 				auth: "token",
 				validate: {
 					payload: {
-						ou_id: Joi.string().trim().required(),
 						eid: Joi.string().trim().required(),
 						cn: Joi.string().required().trim().allow(""),
 					},
@@ -2131,7 +2177,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					payload: {
-						ou_id: Joi.string().trim().required(),
+						ou: Joi.string().trim().required(),
 						eid: Joi.string().trim().required(),
 					},
 					validator: Joi,
@@ -2200,7 +2246,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					payload: {
-						ou_id: Joi.string().trim().required(),
+						ou: Joi.string().trim().required(),
 						cn: Joi.string().required().trim().allow(""),
 					},
 					validator: Joi,
@@ -2217,7 +2263,7 @@ const internals = {
 				auth: "token",
 				validate: {
 					payload: {
-						ou_id: Joi.string().trim().required(),
+						ou: Joi.string().trim().required(),
 					},
 					validator: Joi,
 				},
@@ -2280,7 +2326,7 @@ const internals = {
 		{
 			method: "POST",
 			path: "/orgchart/listou",
-			handler: Handlers.OrgChartListOu,
+			handler: Handlers.OrgChartListOU,
 			config: {
 				description: "List out OU",
 				tags: ["api", "orgchart"],
@@ -2291,7 +2337,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						top: Joi.string().required(),
-						withTop: Joi.string().required(),
+						withTop: Joi.string().required().valid("yes", "no"),
 					},
 					validator: Joi,
 				},
@@ -2299,10 +2345,11 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/orgchart/getstaff",
+			path: "/orgchart/get/staff",
 			handler: Handlers.OrgChartGetStaff,
 			config: {
-				description: "Check staffs within orgchart",
+				description:
+					"Check staffs within orgchart, staff is an person entry in orgchart, may not have corresponding employee object",
 				tags: ["api", "orgchart"],
 				auth: "token",
 				validate: {
@@ -2328,7 +2375,6 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
-					payload: {},
 					validator: Joi,
 				},
 			},
@@ -2366,8 +2412,9 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						ocid: Joi.string().required(),
-						pos: Joi.string().required(),
+						ou: Joi.string().required(),
+						eid: Joi.string().required(),
+						pos: Joi.string().required().description("multiple position delimiter with ';'"),
 					},
 					validator: Joi,
 				},
@@ -2386,7 +2433,8 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						ocid: Joi.string().required(),
+						ou: Joi.string().required(),
+						eid: Joi.string().required(),
 						pos: Joi.string().required(),
 					},
 					validator: Joi,

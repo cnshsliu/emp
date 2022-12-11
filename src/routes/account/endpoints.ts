@@ -2,9 +2,9 @@
 import Handlers from "./handlers";
 import Joi from "joi";
 const validation = {
-	account: /^[a-zA-Z][a-zA-Z0-9_]{2,18}[a-zA-Z0-9]$/,
-	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9. \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
-	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9. \-_\u4e00-\u9fa5]{0,18}[a-zA-Z0-9\u4e00-\u9fa5]$/,
+	account: /^[a-zA-Z][a-zA-Z0-9_]{2,28}[a-zA-Z0-9]$/,
+	username: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9. \-_\u4e00-\u9fa5]{0,28}[a-zA-Z0-9\u4e00-\u9fa5]$/,
+	nickname: /^[a-zA-Z\u4e00-\u9fa5][a-zA-Z0-9. \-_\u4e00-\u9fa5]{0,28}[a-zA-Z0-9\u4e00-\u9fa5]$/,
 	password: /^(?=.*[0-9])(?=.*[!@#$%^&*])[a-zA-Z0-9!@#$%^&*]{6,20}$/,
 	notify: /[esw]{0,3}/,
 };
@@ -683,71 +683,6 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/tnt/set/orgchartadminpds",
-			handler: Handlers.OrgSetOrgChartAdminPds,
-			config: {
-				tags: ["api", "orgchart"],
-				description: "Save PDS for OrgChart admin",
-				auth: "token",
-				validate: {
-					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: {
-						orgchartadminpds: Joi.string().required().allow(""),
-						//password: Joi.string().required(),
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/tnt/add/orgchartadmin",
-			handler: Handlers.OrgChartAdminAdd,
-			config: {
-				tags: ["api", "orgchart"],
-				description: "Add orgchart administrator",
-				auth: "token",
-				validate: {
-					payload: {
-						eid: Joi.string().required(),
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/tnt/del/orgchartadmin",
-			handler: Handlers.OrgChartAdminDel,
-			config: {
-				tags: ["api", "orgchart"],
-				description: "Delete orgchart amdinistrator",
-				auth: "token",
-				validate: {
-					payload: {
-						eid: Joi.string().required(),
-					},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
-			path: "/tnt/list/orgchartadmin",
-			handler: Handlers.OrgChartAdminList,
-			config: {
-				tags: ["api"],
-				description: "List orgchart amdinistrators",
-				auth: "token",
-				validate: {
-					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: {},
-					validator: Joi,
-				},
-			},
-		},
-		{
-			method: "POST",
 			path: "/tnt/join",
 			handler: Handlers.JoinOrg,
 			config: {
@@ -781,7 +716,14 @@ const internals = {
 				auth: "token",
 				validate: {
 					//headers: Joi.object({ Authorization: Joi.string() }).unknown(),
-					payload: { accounts: Joi.array().items(Joi.string().lowercase()).required() },
+					payload: {
+						account_eids: Joi.array()
+							.items({
+								account: Joi.string().lowercase(),
+								eid: Joi.string().lowercase(),
+							})
+							.required(),
+					},
 					validator: Joi,
 				},
 			},
@@ -852,9 +794,9 @@ const internals = {
 					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
 					payload: {
 						eids: Joi.array()
+							.default([])
 							.items(Joi.string())
-							.optional()
-							.description("不带eids返回全部, 带了eids,eids是一个eid数组,仅返回这部分员工信息"),
+							.description("eids数组为空，返回全部, eids是一个eid数组,仅返回这部分员工信息"),
 						active: Joi.number().optional().default(1).description("1: 在职, 2: 离职, 3:全部"),
 					},
 					validator: Joi,

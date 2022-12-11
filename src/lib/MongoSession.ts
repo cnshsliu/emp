@@ -48,11 +48,16 @@ const MongoSession = {
 
 	errorHandler: (err: Error) => {
 		console.error(err);
+		interface withKey {
+			keyValue: any;
+		}
 		if (err.message.indexOf("E11000 duplicate key") > -1) {
 			if (err.message.indexOf("emp.tenants index: domain") > 0) {
 				err = new EmpError(
 					"DUPLICATE_TENANT_DOMAIN",
-					"Tenants with the same domain already exists",
+					`Tenants with the same domain ${
+						(err as unknown as withKey).keyValue?.domain
+					} already exists`,
 				);
 			} else if (err.message.indexOf("emp.tenants index: site") > 0) {
 				err = new EmpError(

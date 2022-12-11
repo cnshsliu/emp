@@ -901,7 +901,7 @@ async function MyOrg(req: Request, h: ResponseToolkit) {
 			tnt.joinorg = true;
 			tnt.quitorg = false;
 		}
-		tnt.orgchartadmins = await addCNtoUserIds(
+		tnt.orgchartadmins = await Cache.addCNtoEids(
 			tenant._id,
 			(
 				await OrgChartAdmin.findOne({ tenant: tenant._id }, { _id: 0, admins: 1 })
@@ -1171,93 +1171,6 @@ async function OrgSetTags(req: Request, h: ResponseToolkit) {
 	);
 }
 
-async function OrgSetOrgChartAdminPds(req: Request, h: ResponseToolkit) {
-	return h.response(
-		await MongoSession.noTransaction(async () => {
-			const PLD = req.payload as any;
-			const CRED = req.auth.credentials as any;
-			expect(CRED.employee.group).to.equal("ADMIN");
-			let tenant_id = CRED.tenant._id.toString();
-			let tmp = PLD.orgchartadminpds;
-			let tenant = await Tenant.findOneAndUpdate(
-				{ _id: CRED.tenant._id },
-				{ $set: { orgchartadminpds: tmp } },
-				{ new: true },
-			);
-			return { orgchartadminpds: tenant.orgchartadminpds };
-		}),
-	);
-}
-
-async function OrgChartAdminAdd(req: Request, h: ResponseToolkit) {
-	return h.response(
-		await MongoSession.noTransaction(async () => {
-			const PLD = req.payload as any;
-			const CRED = req.auth.credentials as any;
-			expect(CRED.employee.group).to.equal("ADMIN");
-			let tenant_id = CRED.tenant._id.toString();
-
-			const existingEmployee = await Employee.findOne({
-				tenant: tenant_id,
-				eid: PLD.eid,
-			}).lean();
-			if (existingEmployee) {
-				const ret = await OrgChartAdmin.findOneAndUpdate(
-					{ tenant: tenant_id },
-					{ $addToSet: { admins: PLD.eid } },
-					{ upsert: true, new: true },
-				);
-				return await addCNtoUserIds(tenant_id, ret.admins);
-			} else {
-				throw new EmpError("EMPLOYEE_NOT_FOUND", `${PLD.eid} not exist`);
-			}
-		}),
-	);
-}
-
-async function OrgChartAdminDel(req: Request, h: ResponseToolkit) {
-	return h.response(
-		await MongoSession.noTransaction(async () => {
-			const PLD = req.payload as any;
-			const CRED = req.auth.credentials as any;
-			expect(CRED.employee.group).to.equal("ADMIN");
-			let tenant_id = CRED.tenant._id.toString();
-			const ret = await OrgChartAdmin.findOneAndUpdate(
-				{ tenant: tenant_id },
-				{ $pull: { admins: PLD.eid } },
-				{ new: true },
-			);
-			return await addCNtoUserIds(tenant_id, ret.admins);
-		}),
-	);
-}
-
-const addCNtoUserIds = async (tenant: string, eids: string[]) => {
-	if (!eids) return [];
-	let retArray = [];
-	for (let i = 0; i < eids.length; i++) {
-		retArray.push({
-			eid: eids[i],
-			cn: await Cache.getEmployeeName(tenant, eids[i]),
-		});
-	}
-	return retArray;
-};
-
-async function OrgChartAdminList(req: Request, h: ResponseToolkit) {
-	try {
-		const PLD = req.payload as any;
-		const CRED = req.auth.credentials as any;
-		expect(CRED.employee.group).to.equal("ADMIN");
-		let tenant_id = CRED.tenant._id.toString();
-		const ret = await OrgChartAdmin.findOne({ tenant: tenant_id }, { _id: 0, admins: 1 });
-		return h.response(await addCNtoUserIds(tenant_id, ret?.admins));
-	} catch (err) {
-		console.error(err);
-		return h.response(replyHelper.constructErrorResponse(err)).code(400);
-	}
-}
-
 async function OrgSetMenu(req: Request, h: ResponseToolkit) {
 	return h.response(
 		await MongoSession.noTransaction(async () => {
@@ -1333,29 +1246,29 @@ async function JoinApprove(req: Request, h: ResponseToolkit) {
 			expect(CRED.employee.group).to.equal("ADMIN");
 			let tenant_id = CRED.tenant._id.toString();
 			let my_tenant_id = CRED.tenant._id;
-			let accounts = PLD.accounts;
+			let account_eids = PLD.account_eids;
 			// TODO 这里的组织是当前登录的组织，如果用户切换到别的组织，他就不能进行组织管理了
 			//管理员的tenant id
-			for (let i = 0; i < accounts.length; i++) {
-				await Cache.removeKeyByEid(tenant_id, accounts[i]);
-				if (accounts[i] !== CRED.user.account) {
+			for (let i = 0; i < account_eids.length; i++) {
+				await Cache.removeKeyByEid(tenant_id, account_eids[i].eid);
+				if (account_eids[i].account !== CRED.user.account) {
 					//将用户的tenant id 设置为管理员的tenant id
 					let user = await User.findOneAndUpdate(
-						{ account: accounts[i] },
+						{ account: account_eids[i].account },
 						{ $set: { tenant: CRED.tenant._id } },
-						{ new: true, upsert: false },
+						{ upsert: false, new: true },
 					);
 					if (user) {
 						let employee = await Employee.findOneAndUpdate(
 							{
 								tenant: my_tenant_id,
-								account: accounts[i],
+								account: account_eids[i].account,
 							},
 							{
 								$set: {
 									userid: user._id,
 									group: "DOER",
-									eid: accounts[i],
+									eid: account_eids[i].eid,
 									domain: CRED.tenant.domain,
 									nickname: user.username,
 								},
@@ -1372,13 +1285,13 @@ async function JoinApprove(req: Request, h: ResponseToolkit) {
 					let employee = await Employee.findOneAndUpdate(
 						{
 							tenant: my_tenant_id,
-							account: accounts[i],
+							account: account_eids[i].account,
 						},
 						{
 							$set: {
 								userid: CRED.user._id,
 								group: "ADMIN",
-								eid: accounts[i],
+								eid: account_eids[i].eid,
 								domain: CRED.tenant.domain,
 								nickname: CRED.user.username,
 							},
@@ -1393,7 +1306,9 @@ async function JoinApprove(req: Request, h: ResponseToolkit) {
 					);
 				}
 			}
-			await JoinApplication.deleteMany({ account: { $in: accounts } });
+			await JoinApplication.deleteMany({
+				account: { $in: account_eids.map((x: any) => x.account) },
+			});
 			return {
 				ret: "array",
 				joinapps: await JoinApplication.find(
@@ -1553,7 +1468,7 @@ async function GetOrgEmployees(req: Request, h: ResponseToolkit) {
 				default:
 					filter.active = true;
 			}
-			if (PLD.eids) filter["eid"] = { $in: PLD.eids };
+			if (PLD.eids.length > 0) filter["eid"] = { $in: PLD.eids };
 			return await Employee.find(filter, { _id: 0, eid: 1, nickname: 1, group: 1, account: 1 });
 		}),
 	);
@@ -2113,7 +2028,6 @@ export default {
 	OrgSetTheme,
 	OrgSetTimezone,
 	OrgSetTags,
-	OrgSetOrgChartAdminPds,
 	OrgSetMenu,
 	JoinOrg,
 	ClearJoinApplication,
@@ -2131,9 +2045,6 @@ export default {
 	SignatureSetText,
 	SignatureGetText,
 	SignatureViewer,
-	OrgChartAdminAdd,
-	OrgChartAdminDel,
-	OrgChartAdminList,
 	TenantList,
 	SwitchTenant,
 	TenantDetail,
