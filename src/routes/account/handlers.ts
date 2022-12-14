@@ -107,41 +107,72 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 			//检查site设置，如果这个部署属于私有部署，就检查注册用户在不在被允许的列表里
 			//接下去在用户和tenant里记录site， 之后，用户加入tenants时，需要在同一个site里面
 			//新建个人tenant， 每个用户注册成功，都有一个个人Tenant
-			let personalTenant = new Tenant({
-				site: siteid,
-				owner: PLD.account,
-				name: "Org of " + PLD.username,
-				hasemail: false, //该租户没有邮箱
-				domain: PLD.account + ".mtc123", //该租户没有domain
-			});
-			personalTenant = await personalTenant.save({ session });
+			let personalTenant = await Tenant.findOne(
+				{
+					site: siteid,
+					owner: PLD.account,
+				},
+				{ __v: 0 },
+				{ session },
+			);
+			if (!personalTenant) {
+				personalTenant = new Tenant({
+					site: siteid,
+					owner: PLD.account,
+					name: "Org of " + PLD.account,
+					hasemail: false, //该租户没有邮箱
+					domain: PLD.account + ".mtc123", //该租户没有domain
+				});
+				personalTenant = await personalTenant.save({ session });
+			}
+
 			PLD.password = Crypto.encrypt(PLD.password);
 			//创建用户
 			const { account, username, password } = PLD;
-			let userObj = new User({
-				site: siteid,
-				tenant: personalTenant._id,
-				account: PLD.account,
-				username: PLD.username,
-				password: PLD.password,
-				phone: PLD.account + ".phone",
-			});
-			let user = await userObj.save({ session });
-			let employee = new Employee({
-				tenant: personalTenant._id,
-				userid: user._id,
-				group: "ADMIN",
-				account: user.account,
-				nickname: PLD.username,
-				eid: user.account,
-				domain: personalTenant.domain,
-				avatarinfo: {
-					path: Tools.getDefaultAvatarPath(),
-					media: "image/png",
-					tag: "nochange",
+			let user = await User.findOne(
+				{
+					site: siteid,
+					account: PLD.account,
 				},
-			});
-			employee = await employee.save({ session });
+				{ __v: 0 },
+				{ session },
+			);
+			if (!user) {
+				user = new User({
+					site: siteid,
+					tenant: personalTenant._id,
+					account: PLD.account,
+					username: PLD.username,
+					password: PLD.password,
+					phone: PLD.account + ".phone",
+				});
+				user = await user.save({ session });
+			}
+			let employee = await Employee.findOne(
+				{
+					tenant: personalTenant._id,
+					account: user.account,
+				},
+				{ __v: 0 },
+				{ session },
+			);
+			if (!employee) {
+				employee = new Employee({
+					tenant: personalTenant._id,
+					userid: user._id,
+					group: "ADMIN",
+					account: user.account,
+					nickname: PLD.username,
+					eid: user.account,
+					domain: personalTenant.domain,
+					avatarinfo: {
+						path: Tools.getDefaultAvatarPath(),
+						media: "image/png",
+						tag: "nochange",
+					},
+				});
+				employee = await employee.save({ session });
+			}
 
 			const folders = Tools.getTenantFolders(personalTenant._id);
 			try {
@@ -809,8 +840,12 @@ async function RemoveUser(req: Request, h: ResponseToolkit) {
 			if (
 				theSite.admins.includes(CRED.user.account) === false ||
 				Crypto.decrypt(theSite.password) !== PLD.password
-			)
+			) {
+				console.log("1>", theSite.admins);
+				console.log("2>", Crypto.decrypt(theSite.password));
+				console.log("3>", PLD.password);
 				throw new EmpError("NOT_SITE_ADMIN", "Not site admin or wrong password");
+			}
 			let accountTobeDeleted = PLD.account;
 
 			let tenantTobeDeleted = await Tenant.find(
@@ -1412,17 +1447,42 @@ async function RemoveEmployees(req: Request, h: ResponseToolkit) {
 					continue;
 				}
 				let personalTenant = await Tenant.findOne({ owner: anEmployee.account }, { __v: 0 });
-				await Employee.findOneAndUpdate(
-					{
-						tenant: tenant_id,
-						eid: eids[i],
-					},
-					{
-						$set: {
-							tenant: personalTenant._id,
+
+				try {
+					anEmployee && (await anEmployee.remove());
+				} catch (err) {
+					console.debug(err);
+				}
+				//回老家
+				try {
+					await Employee.findOneAndUpdate(
+						{
+							tenant: tenant_id,
+							eid: eids[i],
 						},
-					},
-				);
+						{
+							$set: {
+								tenant: personalTenant._id,
+								domain: personalTenant.domain,
+							},
+						},
+						{ upsert: true, new: true },
+					);
+				} catch (err) {
+					console.debug(err);
+				}
+				//该account当前的tenant
+				try {
+					await User.findOneAndUpdate(
+						{ account: anEmployee.account },
+						{
+							$set: { tenant: personalTenant._id },
+						},
+						{ upsert: false, new: true },
+					);
+				} catch (err) {
+					console.debug(err);
+				}
 			}
 			eids = eids.filter((x: string) => x !== tenantOwnerEid);
 			if (eids.length > 0)

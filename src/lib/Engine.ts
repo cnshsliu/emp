@@ -550,6 +550,8 @@ const doWork = async function (
 	//找到该Todo数据库对象
 	let todo = (await Todo.findOne(todo_filter, { __v: 0 })) as TodoType;
 	if (Tools.isEmpty(todo)) {
+		console.log(await Todo.find({ tenant: tenant }).lean());
+		console.log(todo_filter);
 		console.error(
 			`Todo "${nodeid ? nodeid : todoid}" ${nodeid ? "" : todoid}, not found, see following filter`,
 		);
@@ -4906,7 +4908,7 @@ const destroyWorkflow = async function (
 	} else {
 		throw new EmpError(
 			"NO_PERM",
-			`Only by ADMIN or starter at first step eid:${employee.eid} group: ${employee.group}`,
+			`Only by ADMIN.or if still on first step, starter ${wf.starter} can destroy workflow. You are ${employee.eid}, your group: ${employee.group}, step: ${wf.pnodeid}`,
 		);
 	}
 };
@@ -7437,10 +7439,11 @@ const procNext = async function (procParams: ProcNextParams) {
 	let foundRoutes = lodash.intersection(routes, routingOptionsInTemplate);
 	if (foundRoutes.length === 0) {
 		console.error(
-			"decision '" +
+			"user decision '" +
 				JSON.stringify(decision) +
-				"' not found in linksInTemplate " +
-				routingOptionsInTemplate.toString(),
+				"' not found in linksInTemplate [" +
+				routingOptionsInTemplate.toString() +
+				"]",
 		);
 		console.error("decision '" + JSON.stringify(decision) + "' is replaced with DEFAULT");
 		foundRoutes = ["DEFAULT"];

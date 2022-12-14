@@ -29,6 +29,9 @@ const OrgChartHelper = {
 	) {
 		let filter: any = { tenant: tenant, eid: "OU---", ou: "root" };
 		let rootOu = await OrgChart.findOne(filter, { ou: 1, cn: 1 });
+		if (!rootOu) {
+			return "OrgchartNotSet";
+		}
 		if (ou === "root") {
 			return rootOu.cn;
 		} else {
