@@ -28,6 +28,9 @@ const MongoSession = {
 			});
 			return resultObj;
 		} catch (err) {
+			console.log("==================");
+			console.log("Got err", err);
+			console.log("==================");
 			return MongoSession.errorHandler(err);
 		} finally {
 			try {

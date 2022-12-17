@@ -85,7 +85,7 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/account/sacnner",
+			path: "/account/scanner",
 			handler: Handlers.ScanLogin,
 			config: {
 				// Include this API in swagger documentation

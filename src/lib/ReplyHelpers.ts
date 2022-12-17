@@ -11,6 +11,7 @@ function joiResponseErrorHandler(err) {
 			response.errors[error.context.key] = [error.message];
 		});
 
+		console.log("Error handler with JOI");
 		return response;
 	}
 
@@ -25,6 +26,7 @@ function defaultResponseErrorHandler(err) {
 	response.code = "default";
 	response.message = err.message;
 	response.details = err.details;
+	console.log("Error handler with default");
 
 	return response;
 }
@@ -44,14 +46,13 @@ function mongooseResponseValidationErrorHandler(err) {
 			}
 		}
 
+		console.log("Error handler with mongoValidation");
 		return response;
 	}
 
 	return null;
 }
 function mongooseErrorHandler(err) {
-	console.log("mongooseErrorHandler: err.name=", err.name);
-	console.log(JSON.stringify(err));
 	//err={"driver":true,"name":"MongoError","index":0,"code":11000,"keyPattern":{"email":1},"keyValue":{"email":"liukehong@gmail.com"}}
 	if (err.name && ["MongoError", "MongoServerError"].includes(err.name)) {
 		let response: ErrResponse = {};
@@ -66,6 +67,7 @@ function mongooseErrorHandler(err) {
 			response.message = `${duplicateValue} 已经存在`;
 		}
 
+		console.log("Error handler with mongoServer");
 		return response;
 	}
 
@@ -119,6 +121,7 @@ const replyHelper = {
 		if (retData?.data) {
 			//复杂返回，必须要有data
 			res = h.response(retData.data);
+			res = res.header("Access-Control-Allow-Origin", "*");
 			if (retData.code) res = res.code(retData.code);
 			if (retData.etag) res = res.header("ETag", retData.etag);
 			if (retData.headers) {

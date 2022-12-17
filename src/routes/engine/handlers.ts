@@ -5516,7 +5516,7 @@ async function FilePondProcess(req: Request, h: ResponseToolkit) {
 			let ids = "";
 			for (let i = 0; i < filepond.length; i++) {
 				if (filepond[i].path && filepond[i].headers) {
-					let contentType = filepond[i]["headers"]["content-type"];
+					let contentType = filepond[i]["headers"]["Content-Type"];
 					let realName = filepond[i]["filename"];
 					let serverId = IdGenerator();
 					serverId = serverId.replace(/-/g, "");
@@ -5696,7 +5696,7 @@ async function TemplateSetCover(req: Request, h: ResponseToolkit) {
 			let blobInfo = PLD.blob;
 			let tplid = PLD.tplid;
 			let ext = ".png";
-			switch (blobInfo["content-type"]) {
+			switch (blobInfo["Content-Type"]) {
 				case "image/png":
 					ext = ".png";
 					break;

@@ -124,6 +124,18 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 					domain: PLD.account + ".mtc123", //该租户没有domain
 				});
 				personalTenant = await personalTenant.save({ session });
+
+				let rootOU = new OrgChart({
+					tenant: personalTenant._id,
+					ou: "root",
+					account: PLD.account,
+					eid: "OU---",
+					cn: "Org of " + PLD.account,
+					position: [],
+				});
+				rootOU = await rootOU.save({ session });
+			} else {
+				throw new EmpError("ALREADY_EXIST", `${PLD.account} has been occupied`);
 			}
 
 			PLD.password = Crypto.encrypt(PLD.password);
@@ -172,6 +184,17 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 					},
 				});
 				employee = await employee.save({ session });
+
+				let staffOC = await OrgChart.findOneAndUpdate(
+					{
+						tenant: personalTenant._id,
+						ou: "root",
+						account: PLD.account,
+						eid: user.account,
+					},
+					{ $set: { cn: PLD.username, position: ["mtcadmin", "owner"] } },
+					{ upsert: true, new: true },
+				);
 			}
 
 			const folders = Tools.getTenantFolders(personalTenant._id);
@@ -465,11 +488,43 @@ async function LoginUser(req: Request, h: ResponseToolkit) {
 					console.log(`[Login] ${user.account}`);
 					let ret = await buildSessionResponse(user);
 
-					const employee = await Employee.findOne(
-						{ tenant: user.tenant, account: user.account },
-						{ eid: 1 },
-					).lean();
-					await Cache.removeKeyByEid(user.tenant.toString(), employee.eid);
+					if (!ret.user.eid) {
+						let employee = (await Employee.findOneAndUpdate(
+							{
+								tenant: user.tenant,
+								userid: user._id,
+							},
+							{
+								$set: {
+									group: ret.user.tenant.owner === ret.user.account ? "ADMIN" : "DOER",
+									account: user.account,
+									nickname: user.username,
+									eid: user.account,
+									domain: ret.user.tenant.domain,
+									avatarinfo: {
+										path: Tools.getDefaultAvatarPath(),
+										media: "image/png",
+										tag: "nochange",
+									},
+								},
+							},
+							{ upsert: true, new: true },
+						)) as EmployeeType;
+
+						ret = await buildSessionResponse(user, employee);
+
+						let staffOC = await OrgChart.findOneAndUpdate(
+							{
+								tenant: user.tenant,
+								ou: "root",
+								account: PLD.account,
+								eid: user.account,
+							},
+							{ $set: { cn: user.username, position: ["mtcadmin", "owner"] } },
+							{ upsert: true, new: true },
+						);
+					}
+					await Cache.removeKeyByEid(user.tenant.toString(), ret.user.eid);
 					// 如果有openid，先判断这个openid是否绑定过，如果没有就绑定这个账号
 					return ret;
 				}
@@ -484,8 +539,52 @@ async function LoginUser(req: Request, h: ResponseToolkit) {
  * get openid url：https://api.weixin.qq.com/sns/oauth2/access_token?appid=" + appid + "&secret=" + secret + "&code=" + code + "&grant_type=authorization_code
  */
 async function ScanLogin(req: Request, h: ResponseToolkit) {
-	const PLD = req.payload as any;
-	const CRED = req.auth.credentials as any;
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const { code = "" } = PLD;
+			if (
+				!(ServerConfig.wxConfig && ServerConfig.wxConfig.appId && ServerConfig.wxConfig.appSecret)
+			) {
+				throw new EmpError("WX_APP_NOT_CONFIGURED", "Wx app not configured");
+			}
+			const authParam = {
+				appid: ServerConfig.wxConfig.appId,
+				secret: ServerConfig.wxConfig.appSecret,
+				js_code: code,
+			};
+			console.log("腾讯的参数1：", authParam);
+			const res: any = await getOpenId(authParam);
+			console.log(res);
+			if (res.status == 200 && res?.data?.openid) {
+				const openId = res.data.openid;
+				// Take the openid to find user from db
+				const user = (await User.findOne({
+					openId,
+				})) as UserType;
+				if (user) {
+					await redisClient.del(`logout_${user.account}`);
+					console.log(`[Login] ${user.account}`);
+					let ret = await buildSessionResponse(user);
+					return h.response(ret);
+				} else {
+					// non-existent
+					return h.response({
+						code: "ACCOUNT_NO_BINDING",
+						data: openId,
+						msg: "No account is bound to openid!",
+					});
+				}
+			} else {
+				return h.response({
+					code: 500,
+					msg: "Auth fail!",
+					data: false,
+				});
+			}
+		}),
+	);
+	/*
 	try {
 		const { code = "" } = PLD;
 		const authParam = {
@@ -493,31 +592,20 @@ async function ScanLogin(req: Request, h: ResponseToolkit) {
 			secret: ServerConfig.wxConfig.appSecret,
 			js_code: code,
 		};
-		console.log("腾讯的参数：", authParam);
+		console.log("腾讯的参数1：", authParam);
 		const res: any = await getOpenId(authParam);
 		console.log(res);
 		if (res.status == 200 && res?.data?.openid) {
 			const openId = res.data.openid;
 			// Take the openid to find user from db
-			const user = await User.findOne({
+			const user = (await User.findOne({
 				openId,
-			});
+			})) as UserType;
 			if (user) {
-				// exist
-				/*
-				if (user.emailVerified === false) {
-					await redisClient.set("resend_" + user.email, "sent");
-					await redisClient.expire("resend_" + user.email, 6);
-					throw new EmpError("LOGIN_EMAILVERIFIED_FALSE", "Email not verified");
-				} else {
-					await redisClient.del(`logout_${user.account}`);
-					console.log(`[Login] ${user.email}`);
-					let ret = await buildSessionResponse(user);
-					await Cache.removeKeyByEmail(user.email);
-					return h.response(ret);
-				}
-				 */
-				return "Tobe implemented";
+				await redisClient.del(`logout_${user.account}`);
+				console.log(`[Login] ${user.account}`);
+				let ret = await buildSessionResponse(user);
+				return h.response(ret);
 			} else {
 				// non-existent
 				return h.response({
@@ -537,6 +625,7 @@ async function ScanLogin(req: Request, h: ResponseToolkit) {
 		console.error(err);
 		return h.response(replyHelper.constructErrorResponse(err)).code(500);
 	}
+	*/
 }
 
 async function PhoneLogin(req: Request, h: ResponseToolkit) {
@@ -841,9 +930,6 @@ async function RemoveUser(req: Request, h: ResponseToolkit) {
 				theSite.admins.includes(CRED.user.account) === false ||
 				Crypto.decrypt(theSite.password) !== PLD.password
 			) {
-				console.log("1>", theSite.admins);
-				console.log("2>", Crypto.decrypt(theSite.password));
-				console.log("3>", PLD.password);
 				throw new EmpError("NOT_SITE_ADMIN", "Not site admin or wrong password");
 			}
 			let accountTobeDeleted = PLD.account;
@@ -1552,7 +1638,7 @@ async function UploadAvatar(req: Request, h: ResponseToolkit) {
 			payload.eid = CRED.employee.eid;
 
 			await Tools.resizeImage([payload.avatar.path], 200, Jimp.AUTO, 90);
-			let media = payload.avatar.headers["content-type"];
+			let media = payload.avatar.headers["Content-Type"];
 			const avatarFolder = Tools.getTenantFolders(payload.tenant._id).avatar;
 			let avatarFilePath = path.join(avatarFolder, payload.eid);
 			if (!fs.existsSync(avatarFolder))
@@ -1642,7 +1728,7 @@ async function SignatureUpload(req: Request, h: ResponseToolkit) {
 			let tenant_id = CRED.tenant._id.toString();
 
 			await Tools.resizeImage([PLD.signature.path], 200, Jimp.AUTO, 90);
-			let media = PLD.signature.headers["content-type"];
+			let media = PLD.signature.headers["Content-Type"];
 
 			const signatureFolder = Tools.getTenantFolders(CRED.tenant._id).signature;
 			let signatureFilePath = path.join(signatureFolder, CRED.employee.eid);
