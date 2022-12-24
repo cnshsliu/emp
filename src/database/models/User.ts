@@ -9,7 +9,7 @@ interface ITimestamp {
 const schema = new Schema({
 	//部署站点编码
 	site: String,
-	account: { type: String, index: true, unique: true, required: true, lowercase: true },
+	account: { type: String, index: true, required: true, lowercase: true },
 	//用户名，显示名，比如中文名字
 	username: { type: String, required: true },
 	//用户登录密码
@@ -25,6 +25,7 @@ const schema = new Schema({
 	// 最后登录的组织
 	tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 });
+schema.index({ site: 1, account: 1 }, { unique: true });
 
 export type UserType = HydratedDocument<InferSchemaType<typeof schema>> & ITimestamp;
 
