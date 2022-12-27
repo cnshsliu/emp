@@ -2657,11 +2657,12 @@ async function TemplateSearch(req: Request, h: ResponseToolkit) {
 				x.tags = x.tags.filter((t: any) => t.owner === myEid);
 				return x;
 			});
-			console.log(
-				`[Template Search] ${myEid} [${total}] filter: ${JSON.stringify(
-					filter,
-				)} sortBy: ${sortBy} limit: ${limit}\nGot ${total}`,
-			);
+			// console.log(
+			//   `[Template Search] ${myEid} [${total}] filter: ${JSON.stringify(
+			//     filter,
+			//   )} sortBy: ${sortBy} limit: ${limit}\nGot ${total}`,
+			// );
+			// console.log(ret);
 			return replyHelper.buildReturnWithEtag(
 				{ total, objs: ret, version: Const.VERSION },
 				latestETag,
@@ -2711,7 +2712,7 @@ async function TemplateImport(req: Request, h: ResponseToolkit) {
 			const tenant_id = CRED.tenant._id;
 			let myEid = CRED.employee.eid;
 			let author = myEid;
-			let authorName = CRED.username;
+			let authorName = CRED.nickname;
 			let fileInfo = PLD.file;
 			let doc = fs.readFileSync(fileInfo.path, "utf8");
 			let myGroup = CRED.employee.group;

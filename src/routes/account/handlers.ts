@@ -17,6 +17,7 @@ import { redisClient } from "../../database/redis";
 import { Site, SiteType } from "../../database/models/Site";
 import { User, UserType } from "../../database/models/User";
 import { Todo } from "../../database/models/Todo";
+import { Template } from "../../database/models/Template";
 import { Tenant, TenantType } from "../../database/models/Tenant";
 import { EdittingLog } from "../../database/models/EdittingLog";
 import OrgChart from "../../database/models/OrgChart";
@@ -320,7 +321,8 @@ async function SetNickName(req: Request, h: ResponseToolkit) {
 					{ $set: { cn: employee.nickname } },
 				);
 
-				await Cache.removeKeyByEid(CRED.tenant._id, PLD.eid);
+				await Cache.removeKeyByEid(CRED.tenant._id, PLD.eid, "NICKNAME");
+				expect(PLD.nickname).to.equal(await Cache.getEmployeeName(CRED.tenant._id, PLD.eid));
 				return { eid: PLD.eid, nickname: employee.nickname };
 			} else {
 				let employee: EmployeeType = (await Employee.findOneAndUpdate(
@@ -333,8 +335,17 @@ async function SetNickName(req: Request, h: ResponseToolkit) {
 					{ tenant: tenant_id, eid: employee.eid },
 					{ $set: { cn: employee.nickname } },
 				);
-				await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid);
-				return await buildSessionResponse(CRED.user, employee, CRED.tenant);
+
+				await Template.updateMany(
+					{ tenant: tenant_id, author: employee.eid },
+					{
+						$set: { authorName: employee.nickname },
+					},
+				);
+				await Cache.removeKeyByEid(CRED.tenant._id, CRED.employee.eid, "NICKNAME");
+				expect(PLD.nickname).to.equal(await Cache.getEmployeeName(CRED.tenant._id, PLD.eid));
+				const newCookieData = await buildSessionResponse(CRED.user, employee, CRED.tenant);
+				return newCookieData;
 			}
 		}),
 	);
