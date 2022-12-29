@@ -3495,7 +3495,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 			},
 			{ __v: 0 },
 		);
-		let repeaton = getRepeaton(tpNode);
+		let repeaton = getRepeaton(tpNode); //如果用户选择了本选项,则重复执行当前工作
 		let cronrun = parseInt(Tools.blankToDefault(tpNode.attr("cronrun"), "0"));
 		let cronexpr = Tools.blankToDefault(tpNode.attr("cronexpr"), "0 8 * * 1");
 		let workObj = {
@@ -3674,6 +3674,7 @@ const getPdsOfAllNodesForScript = async function (data) {
 	return ret;
 };
 
+//如果用户选择了本选项,则重复执行当前工作
 const getRepeaton = (tpNode) => {
 	let repeaton = tpNode.attr("repeaton");
 	if (repeaton) repeaton = repeaton.trim();
@@ -7378,7 +7379,7 @@ const procNext = async function (procParams: ProcNextParams) {
 	let parallel_id = IdGenerator();
 
 	let tpNode = tpRoot.find("#" + this_nodeid);
-	let repeaton = getRepeaton(tpNode);
+	let repeaton = getRepeaton(tpNode); //如果用户选择了本选项,则重复执行当前工作
 	let cronrun = parseInt(Tools.blankToDefault(tpNode.attr("cronrun"), "0"));
 	let cronexpr = Tools.blankToDefault(tpNode.attr("cronexpr"), "0 8 * * 1");
 	if ((cronrun === 1 || cronrun === 2) && repeaton !== decision) {
