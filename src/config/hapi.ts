@@ -102,8 +102,15 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 				plugin: HapiSwagger,
 				options: {
 					info: {
-						title: "EMP Documentation",
-						version: "2.0",
+						title: "YarkNode API Documentation",
+						version: "3.0",
+						description:
+							"YarkNode is a enterprise operation system, integrate people, systems and devices to boost execution efficiency ",
+						termsOfService: "https://www.yarknode.com/api/tos",
+						contact: {
+							name: "API Support",
+							url: "http://www.yarknode.com/api/support",
+						},
 					},
 				},
 			},

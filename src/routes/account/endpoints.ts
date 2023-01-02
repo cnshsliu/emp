@@ -18,14 +18,21 @@ const internals = {
 			config: {
 				// Include this API in swagger documentation
 				tags: ["api"],
-				description: "Register user",
-				notes: "The user registration generates an email for verification",
+				description: "注册用户",
+				notes: "注册一个新用户",
 				validate: {
 					payload: {
-						account: Joi.string().regex(validation.account).lowercase().required(),
-						username: Joi.string().regex(validation.username).required(),
-						password: Joi.string().regex(validation.password).required(),
-						siteid: Joi.string().optional(),
+						account: Joi.string()
+							.regex(validation.account)
+							.lowercase()
+							.required()
+							.description("要注册的账户名称"),
+						username: Joi.string()
+							.regex(validation.username)
+							.required()
+							.description("该账户的用户名"),
+						password: Joi.string().regex(validation.password).required().description("登录密码"),
+						siteid: Joi.string().optional().description("可以为空"),
 					},
 					validator: Joi,
 				},
@@ -36,9 +43,10 @@ const internals = {
 			path: "/check/freereg",
 			handler: Handlers.CheckFreeReg,
 			config: {
-				description: "Check account owned Tenant is able to able to register freely or not",
+				description: "检查组织是否允许自由注册",
+				notes: "Check account owned Tenant is able to able to register freely or not",
 				// Include this API in swagger documentation
-				tags: ["api"],
+				tags: ["deprecated"],
 				validate: {
 					payload: {
 						account: Joi.string().email().lowercase().required(),
@@ -53,7 +61,7 @@ const internals = {
 			handler: Handlers.CheckAccountAvailability,
 			config: {
 				description: "Check account availability",
-				tags: ["api"],
+				tags: ["private"],
 				validate: {
 					payload: {
 						account: Joi.string().lowercase().min(3).required(),
@@ -69,15 +77,20 @@ const internals = {
 			config: {
 				// Include this API in swagger documentation
 				tags: ["api"],
-				description: "A user can login",
-				notes: "The user login will return a sessionToken",
+				description: "用户登录",
+				notes: "如登录成功,返回session数据",
 				validate: {
 					payload: {
-						account: Joi.string().lowercase().required(),
+						account: Joi.string().lowercase().required().description("用户账号"),
 						//password required with same regex as client
-						password: Joi.string().required(),
-						siteid: Joi.string().optional(),
-						openid: Joi.string().optional().allow(""),
+						password: Joi.string().required().description("用户密码"),
+						siteid: Joi.string().optional().description("站点ID, 可省略"),
+						openid: Joi.string()
+							.optional()
+							.allow("")
+							.description(
+								"微信openid, 仅用于使用微信openid登录时, 之前需要绑定。用账号密码登录时可省略",
+							),
 					},
 					validator: Joi,
 				},
@@ -88,10 +101,10 @@ const internals = {
 			path: "/account/scanner",
 			handler: Handlers.ScanLogin,
 			config: {
-				// Include this API in swagger documentation
 				tags: ["api"],
-				description: "User can login by wechat scanner",
-				notes: "The user login will return a sessionToken",
+				description: "微信扫码登录",
+				notes:
+					"扫码登录成功后, 返回session数据. 用户扫码后,后台从微信获得openid, 然后根据openid匹配之前绑定的账号信息",
 				validate: {
 					payload: {
 						code: Joi.string().required(),
@@ -140,8 +153,8 @@ const internals = {
 			config: {
 				// Include this API in swagger documentation
 				tags: ["api"],
-				description: "A user can logout",
-				notes: "A user may be already be logged in",
+				description: "从客户端退出登录",
+				notes: "退出登录以后,将不能再正常调用API",
 				//authorization optional
 				auth: "token",
 				validate: {
@@ -175,7 +188,7 @@ const internals = {
 			path: "/account/verifyEmail/{token}",
 			handler: Handlers.VerifyEmail,
 			config: {
-				tags: ["api"],
+				tags: ["deprecated"],
 				description: "Verify User email",
 				notes: "User clicks link in email sent during registration",
 				validate: {
@@ -191,7 +204,7 @@ const internals = {
 			path: "/account/verifyEmail",
 			handler: Handlers.VerifyEmail,
 			config: {
-				tags: ["api"],
+				tags: ["deprecated"],
 				description: "Verify user email with verification token(not authentication token)",
 				notes: "User clicks link in email sent during registration",
 				validate: {
@@ -207,7 +220,7 @@ const internals = {
 			path: "/account/evc",
 			handler: Handlers.Evc,
 			config: {
-				tags: ["api"],
+				tags: ["private"],
 				validate: {
 					payload: {
 						email: Joi.string().email().lowercase().required(),
@@ -222,7 +235,7 @@ const internals = {
 			handler: Handlers.ResetPasswordRequest,
 			config: {
 				// Include this API in swagger documentation
-				tags: ["api"],
+				tags: ["deprecated"],
 				description: "User requests to reset password",
 				notes: "Email is sent to email address provided",
 				validate: {
@@ -236,7 +249,7 @@ const internals = {
 			handler: Handlers.ResetPassword,
 			config: {
 				// Include this API in swagger documentation
-				tags: ["api"],
+				tags: ["deprecated"],
 				description: "User posts new password",
 				notes: "Password form posts new password",
 				validate: {
@@ -258,8 +271,9 @@ const internals = {
 			config: {
 				auth: "token",
 				tags: ["api"],
-				description: "Get the current users profile",
-				notes: "The user has username, email and emailVerified",
+				description: "获取当前用户的账户信息",
+				notes:
+					"账号信息,包括账户,当前所在组织的员工信息,以及当前所在组织的信息, 返回 {user, employee,  tenant}对象",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
@@ -355,15 +369,22 @@ const internals = {
 			config: {
 				auth: "token",
 				tags: ["api"],
-				description:
+				description: "修改账号的姓名",
+				notes:
 					"修改当前登录用户的account下的username , 并返回于登录时相同的session数据; 如当前用户是ADMIN,可以使用修改 其他用户的username, 此时需要指定account, 返回{account, username}",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						username: Joi.string().trim().regex(validation.username).required(),
-						account: Joi.string().optional(),
+						username: Joi.string()
+							.trim()
+							.regex(validation.username)
+							.required()
+							.description("账户名称"),
+						account: Joi.string()
+							.optional()
+							.description("可选。如指定且用户为管理员时，可修改他人名称"),
 					},
 					validator: Joi,
 				},
@@ -376,15 +397,22 @@ const internals = {
 			config: {
 				auth: "token",
 				tags: ["api", "employee"],
-				description:
+				description: "修改用户在当前组织中的名称",
+				notes:
 					"如果不指定eid, 则修改当前登录用户的当下tenant中employee的nickname, 并返回于登录时相同的session数据, 如果指定eid, 当eid不是当前用户时,要求当前用户必须是ADMIN, 如果是修改当前用户自己的nickname, 则返回session数据, 如果是ADMIN修改其他用户的nickname,则返回{eid, nickname}",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						nickname: Joi.string().trim().regex(validation.nickname).required(),
-						eid: Joi.string().optional(),
+						nickname: Joi.string()
+							.trim()
+							.regex(validation.nickname)
+							.required()
+							.description("组织内名称"),
+						eid: Joi.string()
+							.optional()
+							.description("可选.如指定eid且当前用户是管理员时,可修改他人的组织内名称"),
 					},
 					validator: Joi,
 				},
@@ -397,13 +425,15 @@ const internals = {
 			config: {
 				auth: "token",
 				tags: ["api"],
+				description: "修改密码",
+				notes: "当前登录用户修改密码",
 				validate: {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						oldpassword: Joi.string().required(),
-						password: Joi.string().min(6).required(),
+						oldpassword: Joi.string().required().description("原密码"),
+						password: Joi.string().min(6).required().description("新密码"),
 					},
 					validator: Joi,
 				},
@@ -435,7 +465,7 @@ const internals = {
 			handler: Handlers.RemoveUser,
 			config: {
 				auth: "token",
-				tags: ["api", "admin", "account"],
+				tags: ["admin", "account"],
 				description: "站点管理员删除一个账号，管理员必须处于已登录状态，切提供站点管理密码",
 				validate: {
 					headers: Joi.object({
@@ -841,7 +871,8 @@ const internals = {
 			config: {
 				auth: "token",
 				tags: ["api"],
-				description: "View an employee's avatar",
+				description: "用户的头像",
+				notes: "可直接集成到html的 img src中",
 			},
 		},
 		{

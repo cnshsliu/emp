@@ -2018,7 +2018,7 @@ const internals = {
 			handler: Handlers.MySystemPerm,
 			config: {
 				description: "Check my permission on object",
-				tags: ["api"],
+				tags: ["internal"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -2134,7 +2134,8 @@ const internals = {
 			path: "/orgchart/create/employee/entry",
 			handler: Handlers.OrgChartCreateEmployeeEntry,
 			config: {
-				description:
+				description: "create entry in orgchart",
+				notes:
 					"Create a new entry of employee in orgchart, if employee object exist, will change it's nickname as well if cn is not empty, if employee does not exist, an employee object will be created under current tenant.  However, this operation requires the specified account exists.",
 				tags: ["api", "orgchart"],
 				auth: "token",
@@ -2154,7 +2155,8 @@ const internals = {
 			path: "/orgchart/modify/employee/entry",
 			handler: Handlers.OrgChartModifyEmployeeEntry,
 			config: {
-				description:
+				description: "Modify employee entry",
+				notes:
 					"Modify employee information(CN: common name) in orgchart. employee object will be updated as well. Orgchart admin can modify employee information",
 				tags: ["api", "orgchart"],
 				auth: "token",
@@ -2469,7 +2471,7 @@ const internals = {
 			path: "/comment/workflow/load",
 			handler: Handlers.CommentWorkflowLoad,
 			config: {
-				description: "Load all comments",
+				description: "加载工作流进程的所有评论",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2526,7 +2528,8 @@ const internals = {
 			path: "/comment/add",
 			handler: Handlers.CommentAddForComment,
 			config: {
-				description: "Add Comment for comment",
+				description: "为评论添加一个回复",
+				notes: "评论是一级reply, 回复是二级以后的reply",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2534,9 +2537,9 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						cmtid: Joi.string().required(),
-						content: Joi.string().required(),
-						threadid: Joi.string().optional(),
+						cmtid: Joi.string().required().description("被回复的一级评论的id"),
+						content: Joi.string().required().description("回复内容"),
+						threadid: Joi.string().optional().description("可忽略,TODO的threadid就是todoid自身"),
 					},
 					validator: Joi,
 				},
@@ -2547,7 +2550,8 @@ const internals = {
 			path: "/comment/addforbiz",
 			handler: Handlers.CommentAddForBiz,
 			config: {
-				description: "Add Comment for biz object (such as TODO)",
+				description: "为业务对象添加一条评论",
+				notes: "评论是一级comment, 对comment的回复需要调用/comment/add",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2555,9 +2559,9 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						objtype: Joi.string().required(),
-						objid: Joi.string().required(),
-						content: Joi.string().required(),
+						objtype: Joi.string().required().valid("TODO").description("当前仅支持TODO"),
+						objid: Joi.string().required().description("评论对象的id"),
+						content: Joi.string().required().description("评论内容"),
 					},
 					validator: Joi,
 				},
@@ -2568,7 +2572,8 @@ const internals = {
 			path: "/comment/loadmorepeers",
 			handler: Handlers.CommentLoadMorePeers,
 			config: {
-				description: "Add Comment",
+				description: "载入更多同级评论",
+				notes: "返回后续同级评论",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2576,8 +2581,8 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						cmtid: Joi.string().required(),
-						currentlength: Joi.number().required(),
+						cmtid: Joi.string().required().description("当前的评论, 加载更多其同级评论"),
+						currentlength: Joi.number().required().description("当前已经加载的个数"),
 					},
 					validator: Joi,
 				},
@@ -2588,7 +2593,7 @@ const internals = {
 			path: "/comment/thumb",
 			handler: Handlers.CommentThumb,
 			config: {
-				description: "Thumb up or Thumb down for Comment",
+				description: "赞或踩一个评论",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2596,8 +2601,8 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						cmtid: Joi.string().required(),
-						thumb: Joi.string().uppercase().valid("UP", "DOWN"),
+						cmtid: Joi.string().required().description("评论的ID"),
+						thumb: Joi.string().uppercase().valid("UP", "DOWN").description("UP:赞,DOWN:踩"),
 					},
 					validator: Joi,
 				},
@@ -2609,7 +2614,8 @@ const internals = {
 			path: "/comment/search",
 			handler: Handlers.CommentSearch,
 			config: {
-				description: "Search Comment",
+				description: "搜索评论",
+				notes: "返回评论搜索结果",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2617,10 +2623,15 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						category: Joi.array().items(Joi.string()).required(),
-						pageSer: Joi.number().default(0),
-						pageSize: Joi.number().default(20),
-						q: Joi.string().allow("").optional(),
+						category: Joi.array()
+							.items(Joi.string())
+							.required()
+							.description(
+								"分组: 可以是一到多个: I_AM_IN表示,我参与的流程, I_AM_QED:表示与我相关的, I_STARTED:表示我启动的流程; ALL_VISIED:表示所有我有权查看的流程",
+							),
+						pageSer: Joi.number().default(0).description("分页页数"),
+						pageSize: Joi.number().default(20).description("每页个数"),
+						q: Joi.string().allow("").optional().description("可选,搜索词"),
 					},
 					validator: Joi,
 				},
@@ -2632,7 +2643,7 @@ const internals = {
 			path: "/comment/toggle",
 			handler: Handlers.CommentToggle,
 			config: {
-				description: "Toggle Comment Allowance for BizObj",
+				description: "是否允许评论",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2653,7 +2664,7 @@ const internals = {
 			path: "/comment/delnewtimeout",
 			handler: Handlers.CommentDelNewTimeout,
 			config: {
-				description: "Timeout value of delete newly created comment",
+				description: "获得系统所设定的可删除新建评论的超时时间",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2749,7 +2760,8 @@ const internals = {
 			path: "/check/coworker",
 			handler: Handlers.CheckCoworker,
 			config: {
-				description: "Check co-worker exists",
+				description: "检查同事信息",
+				notes: "如存在该同事,返回信息{eid, nickname, group};  否则返回错误USER_NOT_FOUND",
 				auth: "token",
 				tags: ["api"],
 				validate: {
@@ -2768,7 +2780,8 @@ const internals = {
 			path: "/check/coworkers",
 			handler: Handlers.CheckCoworkers,
 			config: {
-				description: "Append user name if found",
+				description: "返回多个同事用户的信息",
+				notes: "返回信息为文本, 每个用户为eid(cn)格式",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2947,7 +2960,8 @@ const internals = {
 			path: "/code/try",
 			handler: Handlers.CodeTry,
 			config: {
-				description: "Try run script code",
+				description: "试运行脚本",
+				notes: "试运行脚本, 返回运行结果",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -2967,7 +2981,7 @@ const internals = {
 			handler: Handlers.FilePondProcess,
 			config: {
 				description: "FilePond process",
-				tags: ["api"],
+				tags: ["internal", "filepond"],
 				auth: "token",
 				payload: {
 					maxBytes: 1024 * 1024 * 100,
@@ -2997,7 +3011,7 @@ const internals = {
 			handler: Handlers.FilePondRevert,
 			config: {
 				description: "FilePond revert",
-				tags: ["api"],
+				tags: ["internal", "filepond"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -3016,7 +3030,7 @@ const internals = {
 			handler: Handlers.FilePondRemove,
 			config: {
 				description: "FilePond remove",
-				tags: ["api"],
+				tags: ["internal", "filepond"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -3031,7 +3045,7 @@ const internals = {
 		},
 		{
 			method: "GET",
-			path: "/wf/attach/viewer/{wfid}/{serverId}",
+			path: "/workflow/attach/viewer/{wfid}/{serverId}",
 			handler: Handlers.WorkflowAttachmentViewer,
 			config: {
 				auth: "token",
@@ -3043,7 +3057,7 @@ const internals = {
 			handler: Handlers.Fix,
 			config: {
 				description: "Fix attachments to pondfile",
-				tags: ["api"],
+				tags: ["private"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -3056,7 +3070,7 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/wf/attach/viewer",
+			path: "/workflow/attach/viewer",
 			handler: Handlers.WorkflowAttachmentViewer,
 			config: {
 				description: "Workflow attachment file viewer",
@@ -3079,7 +3093,7 @@ const internals = {
 			handler: Handlers.FormulaEval,
 			config: {
 				description: "Evaluate formula",
-				tags: ["api"],
+				tags: ["internal"],
 				auth: "token",
 				validate: {
 					headers: Joi.object({
@@ -3256,7 +3270,8 @@ const internals = {
 			path: "/cells/read",
 			handler: Handlers.CellsRead,
 			config: {
-				description: "Read Cells",
+				description: "根据fileid读取cell数据",
+				notes: "cell数据",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -3381,7 +3396,7 @@ const internals = {
 			handler: Handlers.TestWishhouseAuth,
 			config: {
 				description: "Test WishHouse Authentication",
-				tags: ["api"],
+				tags: ["internal"],
 				auth: "wh",
 				validate: {
 					headers: Joi.object({

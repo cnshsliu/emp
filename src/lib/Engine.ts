@@ -7314,6 +7314,8 @@ const getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
 	}
 	tpRoot.find(linkSelector).each(function (i, el) {
 		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+		//option以h: h_ h-开头,不显示在用户界面上, 在每个节点上,都有脚本, 当使用脚本决定下一步往哪里走的时候, 对用户隐藏的选择项就有用处
+		//意思是, 脚本用的到,用户不能用的选择项就隐藏起来
 		if (
 			!(option.startsWith("h:") || option.startsWith("h_") || option.startsWith("h-")) &&
 			routings.indexOf(option) < 0

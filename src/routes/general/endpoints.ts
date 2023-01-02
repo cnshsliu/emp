@@ -25,7 +25,7 @@ let internals = {
 			config: {
 				description: "Get the default/home template.",
 				notes: "Renders the /docs/home.md file as HTML.",
-				tags: ["api"],
+				tags: ["private"],
 			},
 		},
 		{
@@ -35,7 +35,7 @@ let internals = {
 			config: {
 				description: "Show the status.",
 				notes: "renders json if server is running",
-				tags: ["api"],
+				tags: ["private"],
 			},
 		},
 		/* {

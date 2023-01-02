@@ -6,7 +6,7 @@ const internals = {
 	endpoints: [
 		{
 			method: "POST",
-			path: "/delegate",
+			path: "/delegation/new",
 			handler: DelegateHandlers.Delegate,
 			config: {
 				tags: ["api"],
@@ -120,7 +120,7 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/undelegate",
+			path: "/delegation/revoke",
 			handler: DelegateHandlers.UnDelegate,
 			config: {
 				tags: ["api"],
