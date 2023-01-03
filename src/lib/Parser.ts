@@ -1,4 +1,5 @@
-import Cheerio from "cheerio";
+import { load as CheerioLoad } from "cheerio";
+import { Cheerio, CheerioAPI, Node as CheerioNode } from "cheerio";
 import lodash from "lodash";
 import Moment from "moment";
 import Const from "./Const";
@@ -16,10 +17,8 @@ import OrgChartHelper from "./OrgChartHelper";
 import type { DoerInfo, DoersArray } from "./EmpTypes";
 
 const Parser = {
-	parse: async function (str: string) {
-		const $ = Cheerio.load(str);
-		//TODO:
-		return Cheerio.load(str);
+	parse: async function (str: string): Promise<CheerioAPI> {
+		return CheerioLoad(str);
 	},
 	/*
  * //field defiition:
@@ -200,6 +199,7 @@ const Parser = {
 							checkVisiForWhom,
 							wfid,
 							null, //wfRoot
+							null, //wfIO
 							retResult, //当前的kvars
 						);
 						let visiPeople = tmp.map((x) => x.eid);
@@ -263,9 +263,13 @@ const Parser = {
 		return valueDef;
 	},
 
-	sysGetTemplateVars: async function (tenant: string | Types.ObjectId, elem: any) {
+	sysGetTemplateVars: async function (
+		tenant: string | Types.ObjectId,
+		elem: any,
+		wfIO: CheerioAPI,
+	) {
 		let ret = {};
-		const mergeTplVars = async function (elem: any, destVars: any) {
+		const mergeTplVars = async function (elem: Cheerio<CheerioNode>, destVars: any) {
 			let base64_string = elem.text();
 			let code = Parser.base64ToCode(base64_string);
 			let jsonVars = {};
@@ -282,7 +286,7 @@ const Parser = {
 		} else {
 			let kvars = elem.find(".kvars");
 			for (let i = 0; i < kvars.length; i++) {
-				let cheerObj = Cheerio(kvars.get(i));
+				let cheerObj = wfIO(kvars.get(i));
 				ret = await mergeTplVars(cheerObj, ret);
 			}
 		}
@@ -382,6 +386,7 @@ const Parser = {
 		rdsPart: string,
 		starter: string,
 		wfRoot = null,
+		wfIO = null,
 	) {
 		let ret = [];
 		let roles = rdsPart
@@ -390,7 +395,7 @@ const Parser = {
 			.filter((x) => x.length > 0);
 		for (let i = 0; i < roles.length; i++) {
 			ret = ret.concat(
-				await Parser.getSingleRoleDoerByTeam(tenant, teamid, roles[i], starter, wfRoot),
+				await Parser.getSingleRoleDoerByTeam(tenant, teamid, roles[i], starter, wfRoot, wfIO),
 			);
 		}
 		return ret;
@@ -408,6 +413,7 @@ const Parser = {
 		aRole: string,
 		starter: string,
 		wfRoot = null,
+		wfIO = null,
 	) {
 		let ret = [];
 		aRole = aRole.trim();
@@ -429,7 +435,7 @@ const Parser = {
 				try {
 					innerTeamDef = lodash.assignIn(
 						innerTeamDef,
-						JSON.parse(Parser.base64ToCode(Cheerio(allInnerTeam.get(i)).text())),
+						JSON.parse(Parser.base64ToCode(CheerioLoad(allInnerTeam.get(i)).text())),
 					);
 				} catch (e) {
 					console.log(e);
@@ -719,6 +725,7 @@ const Parser = {
 		referredEid: string,
 		wfid: string,
 		wfRoot: any,
+		wfIO: CheerioAPI,
 		kvars: any,
 		insertDefault: boolean = true,
 	): Promise<DoersArray> {
@@ -751,7 +758,6 @@ const Parser = {
 			// rdsPart需要支持“-”操作，即黑名单，排除哪些用户
 			//////////////////////////////////////////////////
 			for (let i = 0; i < arr.length; i++) {
-				console.log(arr[i]);
 				let isWhiteList = true;
 				let rdsPart = arr[i].trim();
 				if (rdsPart[0] === "-") {
@@ -773,7 +779,7 @@ const Parser = {
 				} else if (rdsPart.startsWith("T:")) {
 					tmp = []; //Bypass Team Difinition
 				} else {
-					tmp = await Parser.__getDoerByTeam(tenant, teamid, rdsPart, referredEid, wfRoot);
+					tmp = await Parser.__getDoerByTeam(tenant, teamid, rdsPart, referredEid, wfRoot, wfIO);
 				}
 				if (Array.isArray(tmp)) {
 					for (let i = 0; i < tmp.length; i++) {

@@ -1,4 +1,6 @@
-import Cheerio from "cheerio";
+import { load as CheerioLoad } from "cheerio";
+import { Cheerio, CheerioAPI, Node as CheerioNode } from "cheerio";
+import cheerio from "cheerio";
 import MongoSession from "./MongoSession";
 import { Types, ClientSession } from "mongoose";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
@@ -67,6 +69,7 @@ const asyncFilter = async (arr: Array<any>, predicate: any) => {
 	return arr.filter((_v, index) => results[index]);
 };
 
+type wfIOType = typeof CheerioLoad;
 const frontendUrl = Tools.getFrontEndUrl();
 
 const CF = {
@@ -316,6 +319,7 @@ const startWorkflowByCron = async (cron: CrontabType) => {
 		cron.creator, //starter
 		null,
 		null, //expalinPDS 没有workflow实例
+		null, //wfIO
 		null, //kvarString
 		false,
 	); //
@@ -370,6 +374,7 @@ const startBatchWorkflow = async (
 		directorEid,
 		null,
 		null, //expalinPDS 没有workflow实例
+		null, //wfIO
 		null, //kvarString
 		false,
 	); //
@@ -928,7 +933,7 @@ const __doneTodo = async function (
 				let callbackId = "";
 				let innerTeamSet = "";
 				try {
-					let pdsResolvedForScript = await getPdsOfAllNodesForScript({
+					let pdsResolvedForScript = await getPdsOfAllNodesForScript(wfIO, {
 						tenant: tenant,
 						tplid: wf.tplid,
 						starter: wf.starter,
@@ -1099,6 +1104,7 @@ const __doneTodo = async function (
 			wfRoot.attr("starter"),
 			todo.wfid,
 			wfRoot,
+			wfIO,
 			null,
 			true,
 		)) as unknown as DoersArray;
@@ -1893,6 +1899,7 @@ const addAdhoc = async function (payload) {
 		wf.starter,
 		payload.wfid,
 		wfRoot,
+		wfIO,
 		null, //kvarstring for testing purpose
 		true, //insertDefault
 	); //
@@ -1984,6 +1991,7 @@ const explainPds = async function (payload) {
 		theEid,
 		payload.wfid,
 		null, //expalinPDS 没有workflow实例
+		null, //wfIO
 		theKvarString,
 		payload.insertDefault,
 	); //
@@ -2647,6 +2655,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 				wfRoot.attr("starter"),
 				obj.wfid,
 				wfRoot,
+				wfIO,
 				null,
 				true,
 			);
@@ -2874,7 +2883,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 			log(tenant, obj.wfid, "ASYNC mode, callbackID is " + callbackId);
 		}
 		try {
-			let pdsResolvedForScript = await getPdsOfAllNodesForScript({
+			let pdsResolvedForScript = await getPdsOfAllNodesForScript(wfIO, {
 				tenant: obj.tenant,
 				tplid: obj.tplid,
 				starter: obj.starter,
@@ -3248,8 +3257,8 @@ const yarkNode_internal = async function (obj: NextDef) {
 			let parent_tpRoot = parent_wfIO(".template");
 			let parent_wfRoot = parent_wfIO(".workflow");
 			let parent_work = parent_wfRoot.find(`#${parent_workid}`);
-			let parent_nodeid = Cheerio(parent_work).attr("nodeid");
-			let parent_work_round = Number(Cheerio(parent_work).attr("round"));
+			let parent_nodeid = parent_work.attr("nodeid");
+			let parent_work_round = Number(parent_work.attr("round"));
 			//TODO: workflow work round
 			log(
 				tenant,
@@ -3398,6 +3407,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 				wfRoot.attr("starter"),
 				obj.wfid,
 				wfRoot,
+				wfIO,
 				null,
 				true,
 			);
@@ -3409,6 +3419,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 					wfRoot.attr("starter"),
 					obj.wfid,
 					wfRoot,
+					wfIO,
 					null,
 					true,
 				)) as unknown as DoersArray;
@@ -3473,7 +3484,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 				`<div class="work ACTION ST_RUN" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}" ${prl_id} byroute="${obj.byroute}"  round="${thisRound}"  at="${isoNow}" role="${roleInNode}" doer="${doer_string}"></div>`,
 			);
 		}
-		let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode);
+		let varsFromTemplateNode = await Parser.sysGetTemplateVars(obj.tenant, tpNode, wfIO);
 		//console.log(JSON.stringify(varsFromTemplateNode, null, 2));
 		await Parser.setVars(
 			obj.tenant,
@@ -3635,7 +3646,7 @@ const rerunNode = async function (tenant: string, wfid: string, nodeid: string) 
 };
 
 //TODO:
-const getPdsOfAllNodesForScript = async function (data) {
+const getPdsOfAllNodesForScript = async function (wfIO: CheerioAPI, data: any) {
 	let ret = {};
 	let PDS = [];
 	try {
@@ -3650,7 +3661,7 @@ const getPdsOfAllNodesForScript = async function (data) {
 			}
 		}
 		actions.each(async function (index, el) {
-			let jq = Cheerio(el);
+			let jq = wfIO(this);
 			let pds = jq.attr("role");
 			//TODO: data.teamid;
 			//let doers = Parser.getDoer(data.tenant, data.teamid, pds, data.starter, data.wfid, kvars);
@@ -3665,6 +3676,7 @@ const getPdsOfAllNodesForScript = async function (data) {
 				data.starter,
 				data.wfid,
 				data.wfRoot,
+				wfIO,
 				kvars,
 			);
 		}
@@ -3844,7 +3856,7 @@ const getNextNodeIds = async function (tpRoot, nodeid) {
 	let ret = [];
 	let linkSelector = '.link[from="' + nodeid + '"]';
 	tpRoot.find(linkSelector).each(function (i, el) {
-		let nextToNodeId = Cheerio(el).attr("to");
+		let nextToNodeId = cheerio(el).attr("to");
 		ret.push(nextToNodeId);
 	});
 	return ret;
@@ -3926,7 +3938,7 @@ const ignoreRoute = async function (
 	}
 	let linkSelector = '.link[from="' + toNodeId + '"]';
 	tpRoot.find(linkSelector).each(async function (i, el) {
-		let nextToNodeId = Cheerio(el).attr("to");
+		let nextToNodeId = cheerio(el).attr("to");
 		await ignoreRoute(
 			tenant,
 			wfid,
@@ -4774,12 +4786,12 @@ const stopWorkflow = async function (
 		wfRoot.removeClass("ST_PAUSE");
 		wfRoot.addClass("ST_STOP");
 		wfRoot.find(".ST_RUN").each(function (i, el) {
-			Cheerio(this).removeClass("ST_RUN");
-			Cheerio(this).addClass("ST_STOP");
+			cheerio(this).removeClass("ST_RUN");
+			cheerio(this).addClass("ST_STOP");
 		});
 		wfRoot.find(".ST_PAUSE").each(function (i, el) {
-			Cheerio(this).removeClass("ST_PAUSE");
-			Cheerio(this).addClass("ST_STOP");
+			cheerio(this).removeClass("ST_PAUSE");
+			cheerio(this).addClass("ST_STOP");
 		});
 		wfUpdate["doc"] = wfIO.html();
 	}
@@ -4830,7 +4842,7 @@ const restartWorkflow = async function (
 	await resetTodosETagByWfId(tenant, old_wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	let new_wfid = IdGenerator();
-	let tplDoc = Cheerio.html(old_wfIO(".template").first());
+	let tplDoc = cheerio.html(old_wfIO(".template").first());
 	let tplid = old_wf.tplid;
 	let startDoc =
 		`<div class="process">` +
@@ -5702,7 +5714,7 @@ const _getFollowingActions = function (
 	let ret = [];
 	let linkSelector = `.link[from="${tplNodeId}"]`;
 	tpRoot.find(linkSelector).each(function (i, el) {
-		let linkObj = Cheerio(el);
+		let linkObj = cheerio(el);
 		let toid = linkObj.attr("to");
 		let workSelector = `.work[nodeid="${toid}"]`;
 		let tmpWork = workNode.nextAll(workSelector);
@@ -5889,7 +5901,7 @@ const _getFromActions = function (tpRoot, wfRoot, workNode, decentlevel = 0): Ac
 	let linkSelector = `.link[to="${tplNodeId}"]`;
 	let ret = [];
 	tpRoot.find(linkSelector).each(function (i, el) {
-		let linkObj = Cheerio(el);
+		let linkObj = cheerio(el);
 		let fromid = linkObj.attr("from");
 		//let workSelector = `.work.ST_DONE[nodeid="${fromid}"]`;
 		let workSelector = `.work[nodeid="${fromid}"]`;
@@ -5968,7 +5980,7 @@ const _getFromNodeIds = function (tpRoot, thisNodeId) {
 	let linkSelector = `.link[to="${thisNodeId}"]`;
 	let ret = [];
 	tpRoot.find(linkSelector).each(function (i, el) {
-		let linkObj = Cheerio(el);
+		let linkObj = cheerio(el);
 		let fromid = linkObj.attr("from");
 		ret.push(fromid);
 	});
@@ -6041,8 +6053,8 @@ const pauseWorkflow = async function (
 		wfRoot.removeClass("ST_RUN");
 		wfRoot.addClass("ST_PAUSE");
 		// wfRoot.find(".ST_RUN").each(function (i, el) {
-		//   Cheerio(this).removeClass('ST_RUN');
-		//   Cheerio(this).addClass('ST_STOP');
+		//   cheerio(this).removeClass('ST_RUN');
+		//   cheerio(this).addClass('ST_STOP');
 		// });
 		wfUpdate["doc"] = wfIO.html();
 	}
@@ -6093,8 +6105,8 @@ const resumeWorkflow = async function (
 		wfRoot.removeClass("ST_PAUSE");
 		wfRoot.addClass("ST_RUN");
 		// wfRoot.find(".ST_RUN").each(function (i, el) {
-		//   Cheerio(this).removeClass('ST_RUN');
-		//   Cheerio(this).addClass('ST_STOP');
+		//   cheerio(this).removeClass('ST_RUN');
+		//   cheerio(this).addClass('ST_STOP');
 		// });
 		wfUpdate["doc"] = wfIO.html();
 	}
@@ -6893,7 +6905,7 @@ const getNodeStatus = async function (wf) {
 	let works = wfRoot.find(".work");
 	let ret = [];
 	works.each(function (i, el) {
-		let workObj = Cheerio(el);
+		let workObj = cheerio(el);
 		let classArray = workObj
 			.attr("class")
 			.split(/\s/)
@@ -7033,7 +7045,7 @@ const checkOr = function (tenant, wfid, tpRoot, wfRoot, nodeid, from_workid, rou
   let route_param = route;
   let linkSelector = `.link[to="${nodeid}"]`;
   tpRoot.find(linkSelector).each(function (i, el) {
-    let linkObj = Cheerio(el);
+    let linkObj = cheerio(el);
     let fromid = linkObj.attr("from");
     let wfSelector = `.work.ST_DONE[nodeid="${fromid}"]`;
     if (wfRoot.find(wfSelector).length > 0) {
@@ -7081,7 +7093,7 @@ const ignore4Or = function (tenant, wfid, tpRoot, wfRoot, nodeid, route, nexts) 
 	//找到指向OR的所有连接
 	let linkSelector = `.link[to="${nodeid}"]`;
 	tpRoot.find(linkSelector).each(async function (i, el) {
-		let linkObj = Cheerio(el);
+		let linkObj = cheerio(el);
 		let fromid = linkObj.attr("from");
 		//选择前置节点
 		let wfSelector = `.work[nodeid="${fromid}"]`;
@@ -7237,7 +7249,7 @@ const endAllWorks = async function (
 ) {
 	let workSelector = ".work.ST_RUN";
 	wfRoot.find(workSelector).each(async function (i, el) {
-		let work = Cheerio(el);
+		let work = cheerio(el);
 		if (work.hasClass("ADHOC") === false) {
 			work.removeClass("ST_RUN");
 			work.addClass("ST_END");
@@ -7313,7 +7325,7 @@ const getRoutingOptions = function (tpRoot, nodeid, removeOnlyDefault = false) {
 		routings.push(repeaton);
 	}
 	tpRoot.find(linkSelector).each(function (i, el) {
-		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+		let option = Tools.emptyThenDefault(cheerio(el).attr("case"), "DEFAULT");
 		//option以h: h_ h-开头,不显示在用户界面上, 在每个节点上,都有脚本, 当使用脚本决定下一步往哪里走的时候, 对用户隐藏的选择项就有用处
 		//意思是, 脚本用的到,用户不能用的选择项就隐藏起来
 		if (
@@ -7421,7 +7433,7 @@ const procNext = async function (procParams: ProcNextParams) {
 	let linksInTemplate = tpRoot.find(linkSelector);
 	tpRoot.find(linkSelector).each(function (i, el) {
 		//SEE HERE
-		let option = Tools.emptyThenDefault(Cheerio(el).attr("case"), "DEFAULT");
+		let option = Tools.emptyThenDefault(cheerio(el).attr("case"), "DEFAULT");
 		if (routingOptionsInTemplate.indexOf(option) < 0) routingOptionsInTemplate.push(option);
 	});
 
@@ -7457,7 +7469,7 @@ const procNext = async function (procParams: ProcNextParams) {
 	//统计需要经过的路径的数量, 同时,运行路径上的变量设置
 
 	linksInTemplate.each(function (i, el) {
-		let linkObj = Cheerio(el);
+		let linkObj = cheerio(el);
 		let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
 		if (foundRoutes.includes(option)) {
 			//将要被执行的路径
@@ -7565,6 +7577,7 @@ const getDoer = async function (
 	referredEid: string,
 	wfid: string,
 	wfRoot: any,
+	wfIO: CheerioAPI,
 	kvarString: string,
 	insertDefault: boolean,
 ) {
@@ -7599,7 +7612,17 @@ const getDoer = async function (
 			return kv[0];
 		});
 	}
-	ret = await Parser.getDoer(tenant, teamid, pds, referredEid, wfid, wfRoot, kvars, insertDefault);
+	ret = await Parser.getDoer(
+		tenant,
+		teamid,
+		pds,
+		referredEid,
+		wfid,
+		wfRoot,
+		wfIO,
+		kvars,
+		insertDefault,
+	);
 	//如果返回为空，并且需要插入缺省referredEid，则返回缺省referredEid
 	if (insertDefault && referredEid && (!ret || (Array.isArray(ret) && ret.length === 0))) {
 		ret = [{ eid: referredEid, cn: await Cache.getEmployeeName(tenant, referredEid, "getDoer") }];
