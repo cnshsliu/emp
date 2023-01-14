@@ -119,6 +119,11 @@ export interface DelegationType {
 	enddate: string;
 }
 
+export type NodeBriefType = {
+	nodeid: string;
+	title: string;
+};
+
 export type ActionDef = {
 	nodeid: string;
 	workid: string;
@@ -183,6 +188,7 @@ export type workFullInfo = {
 	wf: workflowInfo;
 	instruct: string;
 	routingOptions: string[];
+	freejump_nodes: NodeBriefType[];
 	from_actions: ActionDef[];
 	following_actions: ActionDef[];
 	parallel_actions: ActionDef[];

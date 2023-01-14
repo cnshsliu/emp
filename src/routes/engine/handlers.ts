@@ -2182,6 +2182,67 @@ async function WorkDo(req: Request, h: ResponseToolkit) {
 	);
 }
 
+async function WorkFreeJump(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			return await Engine.freejump(
+				CRED.tenant._id,
+				CRED.employee.eid,
+				PLD as {
+					from: { nodeid: string; todoid: string; workid: string };
+					to: string;
+				},
+			);
+		}),
+	);
+}
+async function WorkFinder(req: Request, h: ResponseToolkit) {
+	return replyHelper.buildResponse(
+		h,
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			let filter: any = {
+				wfid: PLD.wfid,
+				nodeid: PLD.nodeid,
+				todoid: PLD.todoid,
+				title: PLD.title,
+			};
+			filter = lodash.omitBy(filter, lodash.isNil);
+			let todo = await Todo.findOne(
+				{
+					$and: [
+						//两个条件合并
+						//////////////// 第一个条件 start
+						lodash.assign(
+							{
+								tenant: CRED.tenant._id,
+								status: "ST_RUN",
+							},
+							filter,
+						),
+						///////////////  第一个条件 end
+						///////////////  第二个条件 start
+						{
+							$where: `((this.wfstarter==='${CRED.employee.eid}' && this.rehearsal===true) || (this.rehearsal===false && this.doer==='${CRED.employee.eid}')) `,
+						},
+						///////////////  第二个条件 end
+					],
+				},
+				{ _id: 0, todoid: 1 },
+			).lean();
+			if (todo) {
+				return todo.todoid;
+			} else {
+				return "";
+			}
+		}),
+	);
+}
+
 async function WorkDoByNode(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(
 		h,
@@ -2836,6 +2897,7 @@ async function TemplateSetProp(req: Request, h: ResponseToolkit) {
 						pboat: PLD.pboat,
 						endpoint: PLD.endpoint,
 						endpointmode: PLD.endpointmode,
+						freejump: PLD.freejump,
 					},
 				},
 				{ upsert: false, new: true },
@@ -6784,6 +6846,8 @@ export default {
 	WorkGetHtml,
 	WorkDo,
 	WorkDoByNode,
+	WorkFreeJump,
+	WorkFinder,
 	WorkStatus,
 	WorkRevoke,
 	WorkSendback,

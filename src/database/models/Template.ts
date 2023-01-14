@@ -11,6 +11,7 @@ const schema = new Schema({
 	},
 	endpoint: { type: String, default: "" },
 	endpointmode: { type: String, default: "both" },
+	freejump: { type: String, default: "", trim: true },
 	author: { type: String, required: [true, "不能为空"], index: true },
 	authorName: { type: String, required: [true, "不能为空"], index: false },
 	lastUpdateBy: String,

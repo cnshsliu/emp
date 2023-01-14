@@ -59,6 +59,7 @@ import type {
 	ErrorReturn,
 	HistoryTodoEntryType,
 	workFullInfo,
+	NodeBriefType,
 	workflowInfo,
 	ActionDef,
 	SmtpInfo,
@@ -1244,6 +1245,81 @@ const __doneTodo = async function (
 		status: todo.status,
 		doneat: todo.doneat,
 	};
+};
+
+const freejump = async function (
+	tenantId: string,
+	eId: string,
+	PLD: {
+		from: { nodeid: string; todoid: string; workid: string };
+		to: string;
+	},
+) {
+	let todo = await Todo.findOne({ tenant: tenantId, todoid: PLD.from.todoid }, { __v: 0 });
+
+	//出发的节点的状态必须是ST_RUN
+	if (todo.status !== "ST_RUN") {
+		throw new EmpError("WORK_UNEXPECTED_STATUS", "Todo status is not ST_RUN");
+	}
+	let isoNow = Tools.toISOString(new Date());
+	let wf = await RCL.getWorkflow({ tenant: tenantId, wfid: todo.wfid }, "Engine.freejump");
+	let wfUpdate = {};
+
+	let wfIO = await Parser.parse(wf.doc);
+	let tpRoot = wfIO(".template");
+	let wfRoot = wfIO(".workflow");
+	let info: workFullInfo = {} as workFullInfo;
+	let workNode = wfRoot.find(`#${todo.workid}`);
+	let nexts = [];
+
+	let fromWorks = await _getFromActionsWithRoutes(tenantId, tpRoot, wfRoot, workNode);
+	for (let i = 0; i < fromWorks.length; i++) {
+		let prevWorkid = fromWorks[i].workid;
+		//await Route.deleteMany({ tenant: tenant, wfid: wfid, from_workid: prevWorkid, status: "ST_PASS" });
+		await Route.deleteMany({ tenant: tenantId, wfid: todo.wfid, from_workid: prevWorkid });
+	}
+
+	workNode.remove();
+
+	wfUpdate["doc"] = wfIO.html();
+	wf = await RCL.updateWorkflow(
+		{ tenant: tenantId, wfid: todo.wfid },
+		{ $set: wfUpdate },
+		"Engine.sendback",
+	);
+
+	await Todo.deleteMany({
+		tenant: tenantId,
+		wfid: todo.wfid,
+		todoid: todo.workid,
+	});
+	await Work.deleteMany({
+		tenant: tenantId,
+		wfid: todo.wfid,
+		workid: todo.workid,
+	});
+	await Comment.deleteMany({
+		tenant: tenantId,
+		"context.todoid": todo.todoid,
+	});
+	nexts.push({
+		CMD: "CMD_yarkNode",
+		tenant: tenantId,
+		teamid: wf.teamid,
+		from_nodeid: PLD.from.nodeid,
+		from_workid: PLD.from.workid,
+		tplid: wf.tplid,
+		wfid: wf.wfid,
+		rehearsal: wf.rehearsal,
+		selector: `#${PLD.to}`,
+		byroute: "freejump",
+		round: todo.round,
+		starter: wf.starter,
+	});
+
+	await sendNexts(nexts);
+	//log(tenantId, todo.wfid, `[Freejump] [${JSON.stringify(PLD)}]`);
+	return "Done";
 };
 
 const procWeComBot = async function (
@@ -5132,7 +5208,16 @@ const getWorkInfo = async function (tenant: string | Types.ObjectId, eid: string
 		let tpRoot = wfIO(".template");
 		let wfRoot = wfIO(".workflow");
 
-		return await __getWorkFullInfo(tenant, peopleInBrowser, wf, tpRoot, wfRoot, todo.wfid, todo);
+		return await __getWorkFullInfo(
+			wfIO,
+			tenant,
+			peopleInBrowser,
+			wf,
+			tpRoot,
+			wfRoot,
+			todo.wfid,
+			todo,
+		);
 	} catch (error) {
 		if (error.name === "WF_NOT_FOUND") {
 			await Todo.updateMany(
@@ -5411,6 +5496,7 @@ const __getWorkFullInfoRevocableAndReturnable = async function (
 };
 
 const __getWorkFullInfo = async function (
+	wfIO: CheerioAPI,
 	tenant: string | Types.ObjectId,
 	peopleInBrowser: string,
 	theWf: any,
@@ -5548,6 +5634,7 @@ const __getWorkFullInfo = async function (
 	//ret.following_actions = _getFollowingActions(tpRoot, wfRoot, workNode);
 	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
 	ret.parallel_actions = _getParallelActions(tpRoot, wfRoot, workNode);
+	ret.freejump_nodes = _getFreeJumpNodes(wfIO, tpRoot, tpNode);
 
 	const tmp = await __getWorkFullInfoRevocableAndReturnable(
 		tenant,
@@ -5563,6 +5650,27 @@ const __getWorkFullInfo = async function (
 
 	ret.wf.history = await __getWorkflowWorksHistory(tenant, TodoOwner, tpRoot, wfRoot, wfid);
 	ret.version = Const.VERSION;
+
+	return ret;
+};
+
+const _getFreeJumpNodes = (wfIO: CheerioAPI, tpRoot: any, tpNode: any): NodeBriefType[] => {
+	let ret: NodeBriefType[] = [];
+	let fjdef = tpNode.attr("freejump")?.trim();
+	if (fjdef) {
+		let re = new RegExp(fjdef);
+		tpRoot.find(".node.ACTION").each(function (i, el) {
+			let jq = wfIO(this);
+			if (jq.attr("id") === tpNode.attr("id")) return;
+			let title = jq.find("p").first().text().trim();
+			if (title.match(re)) {
+				ret.push({
+					nodeid: jq.attr("id"),
+					title: title,
+				});
+			}
+		});
+	}
 
 	return ret;
 };
@@ -7698,6 +7806,7 @@ export default {
 	postCommentForComment,
 	postCommentForTodo,
 	doWork,
+	freejump,
 	hasPermForWork,
 	stopCronTask,
 	scheduleCron,

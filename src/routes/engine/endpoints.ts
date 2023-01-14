@@ -553,6 +553,7 @@ const internals = {
 						),
 						endpoint: Joi.string().required().trim().allow(""),
 						endpointmode: Joi.string().required().trim().valid("both", "server", "user"),
+						freejump: Joi.boolean().required().default(false),
 					},
 					validator: Joi,
 				},
@@ -1464,6 +1465,52 @@ const internals = {
 						route: Joi.string().optional(),
 						comment: Joi.string().optional().allow(""),
 						kvars: Joi.object().optional(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/work/freejump",
+			handler: Handlers.WorkFreeJump,
+			config: {
+				description: "Free jump to another todo",
+				auth: "token",
+				tags: ["api"],
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						from: {
+							nodeid: Joi.string().required(),
+							todoid: Joi.string().required(),
+							workid: Joi.string().required(),
+						},
+						to: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/work/finder",
+			handler: Handlers.WorkFinder,
+			config: {
+				description: "Work finder by filters ",
+				auth: "token",
+				tags: ["api"],
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						wfid: Joi.string().required(),
+						todoid: Joi.string().optional(),
+						nodeid: Joi.string().optional(),
+						title: Joi.string().optional(),
 					},
 					validator: Joi,
 				},
