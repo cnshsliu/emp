@@ -76,6 +76,7 @@ const buildSessionResponse = async (
 			eid: employee?.eid,
 			domain: employee?.domain,
 			group: employee?.group,
+			mg: employee?.mg ?? "default",
 			sessionToken: token,
 			notify: employee?.notify,
 			tenant: {
@@ -174,6 +175,7 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 					tenant: personalTenant._id,
 					userid: user._id,
 					group: "ADMIN",
+					mg: "default",
 					account: user.account,
 					nickname: PLD.username,
 					eid: user.account,
@@ -1495,6 +1497,41 @@ async function SetEmployeeGroup(req: Request, h: ResponseToolkit) {
 	);
 }
 
+async function SetEmployeeMenuGroup(req: Request, h: ResponseToolkit) {
+	return h.response(
+		await MongoSession.noTransaction(async () => {
+			const PLD = req.payload as any;
+			const CRED = req.auth.credentials as any;
+			expect(CRED.employee.group).to.equal("ADMIN");
+			let tenant_id = CRED.tenant._id.toString();
+			if (Tools.isEmpty(PLD.eids)) {
+				throw new EmpError("set-member-group-failed", "Email or group must be valid");
+			} else {
+				let eids = PLD.eids;
+				for (let i = 0; i < eids.length; i++) {
+					await Cache.removeKeyByEid(tenant_id, eids[i]);
+					await Employee.findOneAndUpdate(
+						{
+							tenant: tenant_id,
+							eid: eids[i],
+						},
+						{
+							$set: {
+								mg: PLD.menugroup,
+							},
+						},
+						{
+							new: true,
+							upsert: false,
+						},
+					);
+				}
+			}
+			return { ret: "done" };
+		}),
+	);
+}
+
 async function SetEmployeePassword(req: Request, h: ResponseToolkit) {
 	return h.response(
 		await MongoSession.noTransaction(async () => {
@@ -1633,7 +1670,14 @@ async function GetOrgEmployees(req: Request, h: ResponseToolkit) {
 					filter.active = true;
 			}
 			if (PLD.eids.length > 0) filter["eid"] = { $in: PLD.eids };
-			return await Employee.find(filter, { _id: 0, eid: 1, nickname: 1, group: 1, account: 1 });
+			return await Employee.find(filter, {
+				_id: 0,
+				eid: 1,
+				nickname: 1,
+				group: 1,
+				mg: 1,
+				account: 1,
+			});
 		}),
 	);
 }
@@ -2009,6 +2053,7 @@ async function handleDateFlow(req: Request, h: ResponseToolkit) {
 					groupno: "",
 					nickname: user.username || "",
 					group: user?.group || "ADMIN",
+					mg: user?.mg || "default",
 					avatarinfo: user?.avatarinfo || {},
 					signature: user?.signature || "",
 					active: user?.active || false,
@@ -2197,6 +2242,7 @@ export default {
 	ClearJoinApplication,
 	JoinApprove,
 	SetEmployeeGroup,
+	SetEmployeeMenuGroup,
 	SetEmployeePassword,
 	RemoveEmployees,
 	QuitOrg,

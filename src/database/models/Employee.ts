@@ -32,6 +32,10 @@ const schema = new Schema({
 		enum: ["DOER", "OBSERVER", "ADMIN", "SALES", "BD", "BA", "CS", "LEADER", "NOQUOTA", "NONE"],
 		default: "DOER",
 	},
+	mg: {
+		type: String,
+		default: "default",
+	},
 	// 用户上传的头像，相对路径
 	// 注意历史遗留未澄清：
 	// 1. 之前使用avatar，就是一个url，直接作为img的src值

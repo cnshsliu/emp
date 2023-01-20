@@ -796,6 +796,24 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/tnt/employee/setmenugroup",
+			handler: Handlers.SetEmployeeMenuGroup,
+			config: {
+				tags: ["api"],
+				description: "Set menu group for members",
+				auth: "token",
+				validate: {
+					headers: Joi.object({ Authorization: Joi.string() }).unknown(),
+					payload: {
+						eids: Joi.array().items(Joi.string()).required().description("Array of eids"),
+						menugroup: Joi.string().required().description("menu group to set"),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/tnt/employee/setpassword",
 			handler: Handlers.SetEmployeePassword,
 			config: {

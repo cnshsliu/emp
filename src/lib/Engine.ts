@@ -1272,6 +1272,7 @@ const freejump = async function (
 	let workNode = wfRoot.find(`#${todo.workid}`);
 	let nexts = [];
 
+	//删除Route
 	let fromWorks = await _getFromActionsWithRoutes(tenantId, tpRoot, wfRoot, workNode);
 	for (let i = 0; i < fromWorks.length; i++) {
 		let prevWorkid = fromWorks[i].workid;
@@ -1279,6 +1280,7 @@ const freejump = async function (
 		await Route.deleteMany({ tenant: tenantId, wfid: todo.wfid, from_workid: prevWorkid });
 	}
 
+	//从Process xml中删除当前worknode
 	workNode.remove();
 
 	wfUpdate["doc"] = wfIO.html();
@@ -1288,10 +1290,11 @@ const freejump = async function (
 		"Engine.sendback",
 	);
 
+	//删除Todo
 	await Todo.deleteMany({
 		tenant: tenantId,
 		wfid: todo.wfid,
-		todoid: todo.workid,
+		todoid: todo.todoid,
 	});
 	await Work.deleteMany({
 		tenant: tenantId,
@@ -1302,6 +1305,7 @@ const freejump = async function (
 		tenant: tenantId,
 		"context.todoid": todo.todoid,
 	});
+
 	nexts.push({
 		CMD: "CMD_yarkNode",
 		tenant: tenantId,
@@ -5656,20 +5660,33 @@ const __getWorkFullInfo = async function (
 
 const _getFreeJumpNodes = (wfIO: CheerioAPI, tpRoot: any, tpNode: any): NodeBriefType[] => {
 	let ret: NodeBriefType[] = [];
-	let fjdef = tpNode.attr("freejump")?.trim();
-	if (fjdef) {
-		let re = new RegExp(fjdef);
+	let tplfjdef = tpRoot.attr("freejump")?.trim();
+	if (tplfjdef === "yes") {
 		tpRoot.find(".node.ACTION").each(function (i, el) {
 			let jq = wfIO(this);
 			if (jq.attr("id") === tpNode.attr("id")) return;
 			let title = jq.find("p").first().text().trim();
-			if (title.match(re)) {
-				ret.push({
-					nodeid: jq.attr("id"),
-					title: title,
-				});
-			}
+			ret.push({
+				nodeid: jq.attr("id"),
+				title: title,
+			});
 		});
+	} else {
+		let fjdef = tpNode.attr("freejump")?.trim();
+		if (fjdef) {
+			let re = new RegExp(fjdef);
+			tpRoot.find(".node.ACTION").each(function (i, el) {
+				let jq = wfIO(this);
+				if (jq.attr("id") === tpNode.attr("id")) return;
+				let title = jq.find("p").first().text().trim();
+				if (title.match(re)) {
+					ret.push({
+						nodeid: jq.attr("id"),
+						title: title,
+					});
+				}
+			});
+		}
 	}
 
 	return ret;
