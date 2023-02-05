@@ -1,8 +1,9 @@
 import Mongoose from "mongoose";
 import EmpError from "../../lib/EmpError";
-import replyHelper from "../../lib/helpers";
-import Workflow from "../../database/models/Workflow";
-import PondFile from "../../database/models/PondFile";
+import { Request, ResponseToolkit } from "@hapi/hapi";
+import replyHelper from "../../lib/ReplyHelpers";
+import { Workflow } from "../../database/models/Workflow";
+import { PondFile } from "../../database/models/PondFile";
 import fs from "fs";
 import path from "path";
 import Tools from "../../tools/tools";
@@ -24,12 +25,12 @@ let getWf = async (tenant, file, wfid = "") => {
 	return wf;
 };
 
-async function MyFiles(req, h) {
+async function MyFiles(req: Request, h: ResponseToolkit) {
 	const PLD = req.payload as any;
 	const CRED = req.auth.credentials as any;
 	let tenant = CRED.tenant._id;
-	let q = req.payload.q;
-	let wf = req.payload.wf;
+	let q = PLD.q;
+	let wf = PLD.wf;
 	let regex = new RegExp(`.*${q}.*`);
 	try {
 		let userPath = path.join(Tools.getTenantFolders(tenant).attachment, CRED.employee.eid);
@@ -59,14 +60,16 @@ async function MyFiles(req, h) {
 	}
 }
 
-async function ViewMyFile(req, h) {
+async function ViewMyFile(req: Request, h: ResponseToolkit) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let serverId = req.params.serverId;
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as any;
+		let tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let serverId = PLD.serverId;
 
-		let aFile = await PondFile.findOne({ tenant: tenant, author: myEmail, serverId: serverId });
-		let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+		let aFile = await PondFile.findOne({ tenant: tenant, author: myEid, serverId: serverId });
+		let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
 		var readStream = fs.createReadStream(pondServerFile.fullPath);
 		return h
 			.response(readStream)
@@ -84,13 +87,15 @@ async function ViewMyFile(req, h) {
 	}
 }
 
-async function DeleteMyFile(req, h) {
+async function DeleteMyFile(req: Request, h: ResponseToolkit) {
 	try {
-		let tenant = req.auth.credentials.tenant._id;
-		let myEmail = req.auth.credentials.email;
-		let serverId = req.payload.serverId;
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as any;
+		let tenant = CRED.tenant._id;
+		let myEid = CRED.employee.eid;
+		let serverId = PLD.serverId;
 		let wf = await Workflow.aggregate([
-			{ $match: { tenant: new Mongoose.Types.ObjectId(tenant), "attachments.serverId": serverId } },
+			{ $match: { tenant: tenant, "attachments.serverId": serverId } },
 			{ $project: { _id: 0, doc: 0 } },
 			{ $unwind: "$attachments" },
 			{ $match: { "attachments.serverId": serverId } },
@@ -99,9 +104,9 @@ async function DeleteMyFile(req, h) {
 			throw new EmpError("CANNOT_DELETE", "File is used in workflow");
 		}
 
-		let pondServerFile = Tools.getPondServerFile(tenant, myEmail, serverId);
+		let pondServerFile = Tools.getPondServerFile(tenant, myEid, serverId);
 		fs.unlinkSync(pondServerFile.fullPath);
-		await PondFile.deleteOne({ tenant: tenant, author: myEmail, serverId: serverId });
+		await PondFile.deleteOne({ tenant: tenant, author: myEid, serverId: serverId });
 		return h.response({ success: true });
 	} catch (err) {
 		console.error(err);

@@ -195,6 +195,43 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/template/snapshot/put",
+			handler: Handlers.TemplateSnapshotPut,
+			config: {
+				description: "Save a template's snapshot svg",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().required(),
+						svg: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "GET",
+			path: "/template/snapshot/{tenant}/{tplid}",
+			handler: Handlers.TemplateSnapshotGet,
+			config: {
+				auth: "token",
+				description: "Get the template cover image",
+				tags: ["api"],
+				validate: {
+					params: {
+						tenant: Joi.string().required(),
+						tplid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/template/put",
 			handler: Handlers.TemplatePut,
 			config: {
@@ -3541,6 +3578,7 @@ const internals = {
 					}).unknown(),
 					payload: {
 						name: Joi.string().required(),
+						toWhom: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -3902,6 +3940,26 @@ const internals = {
 					}).unknown(),
 					payload: {
 						msg: Joi.string().required().allow(""),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/workflow/iamin",
+			handler: Handlers.WorkflowIamIn,
+			config: {
+				description: "Get process data",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().optional(),
+						q: Joi.string().optional(),
 					},
 					validator: Joi,
 				},
