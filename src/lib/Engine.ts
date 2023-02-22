@@ -700,24 +700,24 @@ const __doneTodo = async function (
 	let workNode = wfRoot.find("#" + todo.workid);
 	//let workNodeText = workNode.toString();
 	/*
-	if (workNode.hasClass("ST_RUN") === false) {
-		try {
-			let st = getStatusFromClass(workNode);
-			todo.status = st;
-			if (st === "ST_DONE") {
-				todo.doneat = isoNow;
-			}
-			if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
-			await todo.save();
-			throw new EmpError(
-				"WORK_UNEXPECTED_STATUS",
-				`Todo node status is not ST_RUN but ${st}, set Todo to ${st} automatically`,
-			);
-		} catch (e) {
-			console.error(e);
-		}
-	}
-	*/
+  if (workNode.hasClass("ST_RUN") === false) {
+    try {
+      let st = getStatusFromClass(workNode);
+      todo.status = st;
+      if (st === "ST_DONE") {
+        todo.doneat = isoNow;
+      }
+      if (Tools.isEmpty(todo.origtitle)) todo.origtitle = todo.title;
+      await todo.save();
+      throw new EmpError(
+        "WORK_UNEXPECTED_STATUS",
+        `Todo node status is not ST_RUN but ${st}, set Todo to ${st} automatically`,
+      );
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  */
 
 	let workResultRoute = userDecision;
 
@@ -2367,8 +2367,8 @@ Client.onYarkNode = async function (obj) {
 		);
 
 		/* callYarkNodeWorker(obj).then((res) => {
-			console.log("++++", res);
-		}); */
+      console.log("++++", res);
+    }); */
 	} catch (error) {
 		console.error(error);
 	}
@@ -2593,20 +2593,20 @@ const replaceUser_child = async function (msg) {
 						{ $set: { doer: tempsubset.todo.to } },
 					));
 				/*
-				if (tempsubset.wf && msg.wf.length > 0) {
-					regex = new RegExp(`\\b${tempsubset.wf.from}\\b`, "g");
-					let cursor = Workflow.find({ wfid: { $in: msg.wf } }, {__v:0}).cursor();
+        if (tempsubset.wf && msg.wf.length > 0) {
+          regex = new RegExp(`\\b${tempsubset.wf.from}\\b`, "g");
+          let cursor = Workflow.find({ wfid: { $in: msg.wf } }, {__v:0}).cursor();
 
-					for (let wf = await cursor.next(); wf != null; wf = await cursor.next()) {
-						let update = {};
-						if (wf.starter.indexOf(tempsubset.wf.from) >= 0) {
-							update["starter"] = wf.starter.replace(regex, tempsubset.wf.to);
-						}
-						update["doc"] = wf.doc.replace(regex, tempsubset.wf.to);
-						await RCL.updateWorkflow({ tenant: msg.tenant, wfid: wf.wfid }, { $set: update });
-					}
-				}
-				*/
+          for (let wf = await cursor.next(); wf != null; wf = await cursor.next()) {
+            let update = {};
+            if (wf.starter.indexOf(tempsubset.wf.from) >= 0) {
+              update["starter"] = wf.starter.replace(regex, tempsubset.wf.to);
+            }
+            update["doc"] = wf.doc.replace(regex, tempsubset.wf.to);
+            await RCL.updateWorkflow({ tenant: msg.tenant, wfid: wf.wfid }, { $set: update });
+          }
+        }
+        */
 				if (tempsubset.tpl && msg.tpl.length > 0) {
 					regex = new RegExp(`\\b${tempsubset.tpl.from}\\b`, "g");
 					let cursor = Template.find({ tplid: { $in: msg.tpl } }, { __v: 0 }).cursor();
@@ -3153,15 +3153,15 @@ const yarkNode_internal = async function (obj: NextDef) {
 	} else if (tpNode.hasClass("OR")) {
 		//OR不需要检查，只要碰到，就会完成
 		/* let orDone = checkOr(
-			obj.tenant,
-			obj.wfid,
-			tpRoot,
-			wfRoot,
-			nodeid,
-			from_workid,
-			"DEFAULT",
-			nexts
-		); */
+      obj.tenant,
+      obj.wfid,
+      tpRoot,
+      wfRoot,
+      nodeid,
+      from_workid,
+      "DEFAULT",
+      nexts
+    ); */
 		let orDone = true;
 		if (orDone) {
 			wfRoot.append(
@@ -3859,7 +3859,7 @@ const createTodo = async function (obj) {
 					cellInfo: cellInfo,
 				});
 				/* } else {
-				console.log("Same running TODO existing, skip creating a same one"); */
+        console.log("Same running TODO existing, skip creating a same one"); */
 			}
 		} catch (error) {
 			console.error(error);
@@ -3891,6 +3891,9 @@ const sanitizeHtmlAndHandleBar = function (wfRoot, all_kvars, txt) {
 			"thead",
 			"th",
 			"tbody",
+			"img",
+			"video",
+			"source",
 			"tr",
 			"td",
 			"div",
@@ -3900,6 +3903,9 @@ const sanitizeHtmlAndHandleBar = function (wfRoot, all_kvars, txt) {
 			"h3",
 			"h4",
 		],
+		allowedAttributes: {
+			"*": ["*"],
+		},
 	});
 	return ret;
 };
@@ -4724,10 +4730,18 @@ const startWorkflow_with = async function (
 	let attachments = [...textPbo, ...uploadedFiles];
 	attachments = attachments.map((x) => {
 		if (x.serverId) {
+			x.type = "file";
 			x.author = starter.eid;
 			x.forWhat = Const.ENTITY_WORKFLOW;
 			x.forWhich = wfid;
 			x.forKey = "pbo";
+		} else {
+			let obj = {
+				type: "url",
+				author: starter.eid,
+				url: x,
+			};
+			x = obj;
 		}
 		return x;
 	});
@@ -5597,6 +5611,7 @@ const __getWorkFullInfo = async function (
 			  ];
 	//取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
 	ret.wf = {
+		wfid: theWf.wfid,
 		endpoint: theWf.endpoint,
 		endpointmode: theWf.endpointmode,
 		tplid: theWf.tplid,
@@ -7075,7 +7090,7 @@ const checkAnd = async function (
 	//在该版本之前已经运行的流程，可能会有问题。因为没有counterPart. 手工修复可以吗？
 	if (counterPart) {
 		/*
-			 let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }, {__v:0}).sort(
+       let work = await Work.findOne({ tenant: tenant, wfid: wfid, nodeid: counterPart }, {__v:0}).sort(
       "-round"
     );
     counterPartRound = work.round;
@@ -7655,7 +7670,7 @@ const procNext = async function (procParams: ProcNextParams) {
       round: round,
       workid: this_workid,
       status: "ST_DONE",
-			}, {__v:0})
+      }, {__v:0})
   ).map((x) => {
     withouts.push(x.from_workid);
     return x.from_workid;

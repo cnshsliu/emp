@@ -15,5 +15,6 @@ const schema = new Schema({
 	def: { type: Object },
 });
 
+export type MenuDataType = InferSchemaType<typeof schema>;
 export type MenuType = HydratedDocument<InferSchemaType<typeof schema>>;
 export const Menu = model("Menu", schema);
