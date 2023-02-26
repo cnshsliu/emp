@@ -5,6 +5,8 @@ import EngineRoutes from "../routes/engine/endpoints";
 import DelegationRoutes from "../routes/delegation/endpoints";
 import FilesRoutes from "../routes/files/endpoints";
 import MenuRoutes from "../routes/menu/endpoints";
+import ShareRoutes from "../routes/share/endpoints";
+import TryRoutes from "../routes/try/endpoints";
 
 const Routes = {
 	//Concatentate the routes into one array
@@ -17,6 +19,8 @@ const Routes = {
 			DelegationRoutes.endpoints,
 			FilesRoutes.endpoints,
 			MenuRoutes.endpoints,
+			ShareRoutes.endpoints,
+			TryRoutes.endpoints,
 		);
 		await server.route(allRoutes);
 	},
