@@ -23,17 +23,18 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/try/load/foredit",
-			handler: Handlers.LoadForEdit,
+			path: "/try/start",
+			handler: Handlers.StartTryByKsId,
 			config: {
-				description: "Load menu definition for edit",
-				tags: ["api"],
+				// should be no auth, anybody can access try page
+				// and get demo data from backend
 				auth: "token",
+				description: "Show user the try info",
+				tags: ["api"],
 				validate: {
-					headers: Joi.object({
-						Authorization: Joi.string(),
-					}).unknown(),
-					payload: {},
+					payload: {
+						tryid: Joi.string().required(),
+					},
 					validator: Joi,
 				},
 			},

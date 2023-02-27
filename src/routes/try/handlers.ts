@@ -1,10 +1,11 @@
 "use strict";
-import lodash from "lodash";
 import MongoSession from "../../lib/MongoSession";
+import Engine from "../../lib/Engine";
 import { Request, ResponseToolkit } from "@hapi/hapi";
+import { shortId } from "../../lib/IdGenerator";
 import { Template } from "../../database/models/Template";
-import { Menu, MenuDataType, MENU_ACL_SELF, MENU_ACL_TENANT } from "../../database/models/Menu";
-import { PersonalMenuItem } from "../../database/models/PersonalMenuItem";
+import Cache from "../../lib/Cache";
+import KsTpl from "../../database/models/KsTpl";
 import EmpError from "../../lib/EmpError";
 
 export default {
@@ -12,35 +13,55 @@ export default {
 		return h.response(
 			await MongoSession.noTransaction(async () => {
 				const PLD = req.payload as any;
-				const CRED = req.auth.credentials as any;
+				// const CRED = req.auth.credentials as any;
 
-				let template = await Template.findOne({ _id: PLD.tryid }, { doc: 0 }).lean();
-				if (!template) throw new EmpError("ERR_TEMPLATE_NOT_FOUND", "Template not found");
+				let kstpl = await KsTpl.findOne({ ksid: PLD.tryid }, { doc: 0 }).lean();
+				if (!kstpl) throw new EmpError("ERR_KS_TEMPLATE_NOT_FOUND", "KSTPL not found");
 
-				return template;
+				return kstpl;
 			}),
 		);
 	},
-	LoadForEdit: async (req: Request, h: ResponseToolkit) => {
+	StartTryByKsId: async (req: Request, h: ResponseToolkit) => {
 		return h.response(
 			await MongoSession.noTransaction(async () => {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
-				let isAdmin: boolean = CRED.employee.group === "ADMIN";
-				if (isAdmin) {
-					return await Menu.find({
-						$where: `this.tenant=='${CRED.tenant._id}' && 
-							(this.acl==${MENU_ACL_TENANT} || (this.acl==${MENU_ACL_SELF} && this.eid=='${CRED.employee.eid}'))`,
-					});
-				} else {
-					const res = await Menu.find({
-						tenant: CRED.tenant._id,
-						acl: MENU_ACL_SELF,
-						eid: CRED.employee.eid,
-					});
-					console.log(res);
-					return res;
-				}
+
+				let kstpl = await KsTpl.findOne({ ksid: PLD.tryid }, { doc: 1 }).lean();
+				if (!kstpl) throw new EmpError("ERR_KS_TEMPLATE_NOT_FOUND", "KSTPL not found");
+				let author = CRED.employee.eid;
+				const newTemplate = new Template({
+					tenant: CRED.tenant._id,
+					tplid: shortId(),
+					author: author,
+					authorName: await Cache.getEmployeeName(CRED.tenant._id, author, "TemplateImport"),
+					ins: false,
+					doc: kstpl["doc"],
+					ksid: PLD.tryid,
+				});
+				await newTemplate.save();
+				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+
+				let wfid = shortId();
+				let wfDoc = await Engine.startWorkflow(
+					false,
+					CRED.tenant._id,
+					newTemplate.tplid,
+					CRED.employee,
+					"",
+					"",
+					wfid,
+					kstpl.name,
+					"",
+					"",
+					{},
+					"standalone",
+					[],
+				);
+				await Engine.resetTodosETagByWfId(CRED.tenant._id, wfid);
+				await Cache.resetETag(`ETAG:WORKFLOWS:${CRED.tenant._id}`);
+				return wfDoc;
 			}),
 		);
 	},
