@@ -159,6 +159,7 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 					username: PLD.username,
 					password: PLD.password,
 					phone: PLD.account + ".phone",
+					demo: PLD.demo ?? false
 				});
 				user = await user.save({ session });
 			}

@@ -32,6 +32,7 @@ const internals = {
 							.required()
 							.description("该账户的用户名"),
 						password: Joi.string().regex(validation.password).required().description("登录密码"),
+						demo: Joi.boolean().optional().default(false),
 						siteid: Joi.string().optional().description("可以为空"),
 					},
 					validator: Joi,
