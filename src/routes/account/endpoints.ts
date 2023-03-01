@@ -473,8 +473,8 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						account: Joi.string().required(),
-						password: Joi.string().required(),
+						account: Joi.string().required().description("The account to be deleted"),
+						password: Joi.string().required().description("The site password"),
 					},
 					validator: Joi,
 				},

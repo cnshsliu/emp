@@ -3,7 +3,6 @@ import Mongoose from "mongoose";
 import MongoSession from "../../lib/MongoSession";
 import { expect } from "@hapi/code";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import Boom from "@hapi/boom";
 import fs from "fs";
 import path from "path";
 import ServerConfig from "../../../secret/keep_secret";
@@ -43,7 +42,6 @@ const buildSessionResponse = async (
 ) => {
 	let token = JwtAuth.createToken({ id: user._id });
 	console.log("Build Session Token for ", JSON.stringify(user));
-	const userId = user._id;
 	let matchObj: any = {
 		account: user.account,
 		active: true,
@@ -159,7 +157,7 @@ async function RegisterUser(req: Request, h: ResponseToolkit) {
 					username: PLD.username,
 					password: PLD.password,
 					phone: PLD.account + ".phone",
-					demo: PLD.demo ?? false
+					demo: PLD.demo ?? false,
 				});
 				user = await user.save({ session });
 			}
@@ -939,6 +937,9 @@ async function RemoveUser(req: Request, h: ResponseToolkit) {
 			const CRED = req.auth.credentials as any;
 			//TODO: 删除总用户账户时，依据什么数据
 			//TODO: 如何删除单个Employee
+
+			//删除用户需要验证当前用户是否为SiteAdmin
+			//并且PLD.password是Site的管理密码，不是用户的密码
 			const theSite = (await Site.findOne({}, { password: 1, admins: 1 }, { session })) as SiteType;
 			if (
 				theSite.admins.includes(CRED.user.account) === false ||
@@ -946,72 +947,8 @@ async function RemoveUser(req: Request, h: ResponseToolkit) {
 			) {
 				throw new EmpError("NOT_SITE_ADMIN", "Not site admin or wrong password");
 			}
-			let accountTobeDeleted = PLD.account;
 
-			let tenantTobeDeleted = await Tenant.find(
-				{ owner: accountTobeDeleted },
-				{ name: 1 },
-				{ session },
-			).lean();
-			const tenantIdsTobeDeleted = tenantTobeDeleted.map((x: any) => x._id);
-			let tmp1 = await Employee.find(
-				{ account: accountTobeDeleted },
-				{ tenant: 1, eid: 1 },
-				{ session },
-			).lean();
-			let tmp2 = await Employee.find(
-				{ tenant: { $in: tenantIdsTobeDeleted } },
-				{ tenant: 1, eid: 1 },
-				{ session },
-			).lean();
-
-			let employeeTobeDeleted = tmp1.concat(tmp2);
-			for (let i = 0; i < employeeTobeDeleted.length; i++) {
-				await Todo.deleteMany(
-					{ tenant: employeeTobeDeleted[i].tenant, doer: employeeTobeDeleted[i].eid },
-					{ session },
-				);
-				await Delegation.deleteMany(
-					{ tenant: employeeTobeDeleted[i].tenant, delegator: employeeTobeDeleted[i].eid },
-					{ session },
-				);
-				await Delegation.deleteMany(
-					{ tenant: employeeTobeDeleted[i].tenant, delegatee: employeeTobeDeleted[i].eid },
-					{ session },
-				);
-
-				await Employee.deleteOne(
-					{ tenant: employeeTobeDeleted[i].tenant, doer: employeeTobeDeleted[i].eid },
-					{ session },
-				);
-			}
-			await Tenant.deleteMany({ owner: accountTobeDeleted }, { session });
-			await User.deleteOne({ account: accountTobeDeleted }, { session });
-			await EdittingLog.deleteMany({ editor: accountTobeDeleted }, { session });
-			await EdittingLog.deleteMany({ tenant: { $in: tenantIdsTobeDeleted } }, { session });
-			await JoinApplication.deleteMany(
-				{
-					tenant_id: { $in: tenantIdsTobeDeleted.map((x) => x.toString()) },
-				},
-				{ session },
-			);
-			await OrgChart.deleteMany({ tenant: { $in: tenantIdsTobeDeleted } }, { session });
-
-			for (let i = 0; i < tenantIdsTobeDeleted.length; i++) {
-				let tenantId = tenantIdsTobeDeleted[i].toString();
-				/* fs.rmSync(path.join(process.env.EMP_RUNTIME_FOLDER, tenantId), {
-					recursive: true,
-					force: true,
-				}); */
-				fs.rmSync(path.join(process.env.EMP_STATIC_FOLDER, tenantId), {
-					recursive: true,
-					force: true,
-				});
-				fs.rmSync(path.join(process.env.EMP_ATTACHMENT_FOLDER, tenantId), {
-					recursive: true,
-					force: true,
-				});
-			}
+			await Engine.removeUser(PLD.account, session, false);
 
 			return { deleted: PLD.account };
 		}),

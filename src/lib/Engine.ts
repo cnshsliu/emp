@@ -1,7 +1,5 @@
-import { load as CheerioLoad } from "cheerio";
-import { Cheerio, CheerioAPI, Node as CheerioNode } from "cheerio";
+import { CheerioAPI } from "cheerio";
 import cheerio from "cheerio";
-import MongoSession from "./MongoSession";
 import { Types, ClientSession } from "mongoose";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
 import cronEngine from "node-cron";
@@ -15,6 +13,10 @@ import moment from "moment";
 import { Template } from "../database/models/Template";
 import { User } from "../database/models/User";
 import { Employee, EmployeeType } from "../database/models/Employee";
+import { Tenant } from "../database/models/Tenant";
+import { EdittingLog } from "../database/models/EdittingLog";
+import OrgChart from "../database/models/OrgChart";
+import JoinApplication from "../database/models/JoinApplication";
 import List from "../database/models/List";
 import { Workflow, WorkflowType } from "../database/models/Workflow";
 import Handlebars from "handlebars";
@@ -48,9 +50,9 @@ import Podium from "@hapi/podium";
 import EmpError from "./EmpError";
 import Const from "./Const";
 import RCL from "./RedisCacheLayer";
-import type { DoerInfo, DoersArray } from "./EmpTypes";
+import type { DoersArray } from "./EmpTypes";
 
-import { redisClient, redisConnect } from "../database/redis";
+import { redisClient } from "../database/redis";
 
 import type {
 	NextDef,
@@ -60,7 +62,6 @@ import type {
 	HistoryTodoEntryType,
 	workFullInfo,
 	NodeBriefType,
-	workflowInfo,
 	ActionDef,
 	SmtpInfo,
 } from "./EmpTypes";
@@ -70,7 +71,7 @@ const asyncFilter = async (arr: Array<any>, predicate: any) => {
 	return arr.filter((_v, index) => results[index]);
 };
 
-type wfIOType = typeof CheerioLoad;
+// type wfIOType = typeof CheerioLoad;
 const frontendUrl = Tools.getFrontEndUrl();
 
 const CF = {
@@ -7770,6 +7771,85 @@ const getDoer = async function (
 	return ret;
 };
 
+const removeUser = async (
+	accountTobeDeleted: string,
+	session: ClientSession,
+	removeBizData: boolean,
+) => {
+	//The tenants owned by to-be-deleted account
+	let tenantTobeDeleted = await Tenant.find(
+		{ owner: accountTobeDeleted },
+		{ name: 1 },
+		{ session },
+	).lean();
+	const tenantIdsTobeDeleted = tenantTobeDeleted.map((x: any) => x._id);
+	//The employees owned by to-be-deleted account
+	let tmp1 = await Employee.find(
+		{ account: accountTobeDeleted },
+		{ tenant: 1, eid: 1 },
+		{ session },
+	).lean();
+
+	//The employess within to-be-deleted tenants (ownened by to-b-deleted account)
+	let tmp2 = await Employee.find(
+		{ tenant: { $in: tenantIdsTobeDeleted } },
+		{ tenant: 1, eid: 1 },
+		{ session },
+	).lean();
+
+	let employeeTobeDeleted = tmp1.concat(tmp2);
+	for (let i = 0; i < employeeTobeDeleted.length; i++) {
+		await Todo.deleteMany(
+			{ tenant: employeeTobeDeleted[i].tenant, doer: employeeTobeDeleted[i].eid },
+			{ session },
+		);
+		await Delegation.deleteMany(
+			{ tenant: employeeTobeDeleted[i].tenant, delegator: employeeTobeDeleted[i].eid },
+			{ session },
+		);
+		await Delegation.deleteMany(
+			{ tenant: employeeTobeDeleted[i].tenant, delegatee: employeeTobeDeleted[i].eid },
+			{ session },
+		);
+
+		await Employee.deleteOne(
+			{ tenant: employeeTobeDeleted[i].tenant, doer: employeeTobeDeleted[i].eid },
+			{ session },
+		);
+	}
+	await Tenant.deleteMany({ owner: accountTobeDeleted }, { session });
+	await User.deleteOne({ account: accountTobeDeleted }, { session });
+	await EdittingLog.deleteMany({ editor: accountTobeDeleted }, { session });
+	await EdittingLog.deleteMany({ tenant: { $in: tenantIdsTobeDeleted } }, { session });
+	await JoinApplication.deleteMany(
+		{
+			tenant_id: { $in: tenantIdsTobeDeleted.map((x) => x.toString()) },
+		},
+		{ session },
+	);
+	await OrgChart.deleteMany({ tenant: { $in: tenantIdsTobeDeleted } }, { session });
+
+	for (let i = 0; i < tenantIdsTobeDeleted.length; i++) {
+		let tenantId = tenantIdsTobeDeleted[i].toString();
+		/* fs.rmSync(path.join(process.env.EMP_RUNTIME_FOLDER, tenantId), {
+					recursive: true,
+					force: true,
+				}); */
+		fs.rmSync(path.join(process.env.EMP_STATIC_FOLDER, tenantId), {
+			recursive: true,
+			force: true,
+		});
+		fs.rmSync(path.join(process.env.EMP_ATTACHMENT_FOLDER, tenantId), {
+			recursive: true,
+			force: true,
+		});
+	}
+
+	// if(removeBizData){
+	//   removeBizData(accountTobeDeleted, "allEids", session)
+	// }
+};
+
 /**
  * 生成6位短信验证码
  * @returns
@@ -7849,4 +7929,5 @@ export default {
 	scanKShares,
 	randomNumber,
 	rescheduleCrons,
+	removeUser,
 };
