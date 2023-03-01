@@ -362,6 +362,8 @@ export default {
 					desc: PLD.desc ? PLD.desc : "",
 					tags: theTags,
 					visi: "@" + CRED.employee.eid,
+					ksid: "",
+					searchable: true,
 				});
 				obj = await obj.save();
 				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
@@ -616,6 +618,8 @@ export default {
 						lastUpdateBy: CRED.employee.eid,
 						lastUpdateBwid: bwid,
 						desc: PLD.desc,
+						ksid: "",
+						searchable: true,
 					});
 					obj = await obj.save();
 				}
@@ -861,6 +865,8 @@ export default {
 					doc: oldTpl.doc,
 					tags: [{ owner: CRED.employee.eid, text: "mine", group: CRED.employee.group }],
 					hasCover: oldTpl.hasCover,
+					ksid: "",
+					searchable: true,
 				});
 				newObj = await newObj.save();
 				let newTplId = newObj.tplid;
@@ -904,6 +910,8 @@ export default {
 					tags: oldTpl.tags,
 					visi: "@" + CRED.employee.eid,
 					hasCover: oldTpl.hasCover,
+					ksid: "",
+					searchable: true,
 				});
 				newObj = await newObj.save();
 				try {
@@ -2659,7 +2667,7 @@ export default {
 				if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 					return { data: [], code: 304, etag: latestETag, headers: replyHelper.headers.nocache };
 				}
-				let filter: any = { tenant: tenant_id, ins: false };
+				let filter: any = { tenant: tenant_id, ins: false, searchable: true };
 				let myEid = CRED.employee.eid;
 				let tagsArr = PLD.tags
 					? PLD.tags.split(";").filter((x: string) => x.trim().length > 0)
@@ -2804,7 +2812,7 @@ const tenant_id = CRED.tenant._id;
 				}
 
 				let sortBy = PLD.sortby;
-				let filter: any = { tenant: tenant_id, ins: false };
+				let filter: any = { tenant: tenant_id, ins: false, searchable: true };
 				let skip = 0;
 				if (PLD.skip) skip = PLD.skip;
 				let limit = 10000;
@@ -2896,6 +2904,10 @@ const tenant_id = CRED.tenant._id;
 			await MongoSession.noTransaction(async () => {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
+				//If this is for previewing a tstpl,
+				//simply construct a Template document object
+				//and return it to browser.
+				//no DB persistance is required.
 				if (PLD.tplid.startsWith("preview_kshare_")) {
 					let tmpksid = PLD.tplid.split("preview_kshare_")[1];
 					const temporary_template = new Template({
@@ -2906,6 +2918,7 @@ const tenant_id = CRED.tenant._id;
 						ins: false,
 						doc: (await KsTpl.findOne({ ksid: tmpksid }, { doc: 1 }))["doc"],
 						ksid: tmpksid,
+						searchable: false,
 					});
 					return temporary_template;
 				} else {
@@ -2962,6 +2975,8 @@ const tenant_id = CRED.tenant._id;
 					ins: false,
 					doc: doc,
 					tags: [{ owner: myEid, text: "mine", group: myGroup }],
+					ksid: "",
+					searchable: true,
 				});
 				let filter: any = { tenant: tenant_id, tplid: tplid },
 					update = {

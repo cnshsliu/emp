@@ -39,6 +39,7 @@ export default {
 					ins: false,
 					doc: kstpl["doc"],
 					ksid: PLD.tryid,
+					searchable: false,
 				});
 				await newTemplate.save();
 				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);

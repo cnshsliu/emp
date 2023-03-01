@@ -86,6 +86,7 @@ export default {
 					ins: false,
 					doc: (await KsTpl.findOne({ ksid: ksid }, { doc: 1 }))["doc"],
 					ksid: ksid,
+					searchable: true,
 				});
 				await newTemplate.save();
 				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);

@@ -33,7 +33,8 @@ const schema = new Schema({
 	hasCover: { type: Boolean, default: false },
 	coverTag: { type: String, default: "" },
 	allowdiscuss: { type: Boolean, default: true },
-	ksid: { type: String, default: "" },
+	ksid: { type: String, default: "", index: true },
+	searchable: { type: Boolean, default: true, index: true },
 	createdAt: { type: Date, default: Date.now },
 	updatedAt: { type: Date, default: Date.now },
 });
