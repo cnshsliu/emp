@@ -253,6 +253,7 @@ const internals = {
 						forceupdate: Joi.boolean().optional().default(false),
 						lastUpdatedAt: Joi.string(),
 						bwid: Joi.string().optional(),
+						searchable: Joi.boolean().optional().default(true),
 					},
 					validator: Joi,
 				},
@@ -503,6 +504,7 @@ const internals = {
 						tplid: Joi.string().required(),
 						checkUpdatedAt: Joi.string().optional(),
 						bwid: Joi.string().optional(),
+						withDoc: Joi.boolean().optional().default(true),
 					},
 					validator: Joi,
 				},
@@ -1035,6 +1037,26 @@ const internals = {
 					}).unknown(),
 					payload: {
 						tplid: Joi.string().trim().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/workflow/destroy/yana",
+			handler: Handlers.WorkflowDestroyYana,
+			config: {
+				description: "Destroy yana workflows",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().trim().optional(),
+						wfid: Joi.string().trim().optional(),
 					},
 					validator: Joi,
 				},

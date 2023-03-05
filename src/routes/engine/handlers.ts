@@ -558,8 +558,9 @@ export default {
 					svg,
 					{
 						"Access-Control-Allow-Origin": "*",
+						"Cache-Control": "max-age=3600",
 						"Content-Type": "image/svg+xml",
-						"Content-Disposition": `attachment;filename="cover.svg"`,
+						"Content-Disposition": `attachment;filename="${encodeURIComponent("cover.svg")}"`,
 					},
 					"",
 					-1,
@@ -584,6 +585,7 @@ export default {
 					throw new EmpError("NO_CONTENT", "Template content can not be empty");
 				let bwid = PLD.bwid;
 				if (!bwid) bwid = CRED.employee.eid;
+				let searchable = PLD.searchable ?? true;
 				let forceupdate = PLD.forceupdate;
 				if (Tools.isEmpty(PLD.tplid)) {
 					throw new EmpError("NO_TPLID", "Template id can not be empty");
@@ -604,6 +606,7 @@ export default {
 								doc: PLD.doc,
 								lastUpdateBy: CRED.employee.eid,
 								lastUpdateBwid: bwid, //Browser Window ID
+								searchable: searchable,
 							},
 						},
 						options = { upsert: false, new: true };
@@ -619,7 +622,7 @@ export default {
 						lastUpdateBwid: bwid,
 						desc: PLD.desc,
 						ksid: "",
-						searchable: true,
+						searchable: searchable,
 					});
 					obj = await obj.save();
 				}
@@ -807,12 +810,11 @@ export default {
 				let newTplId = PLD.tplid;
 				tpl = await tpl.save();
 				//Move cover image
-				try {
-					fs.renameSync(
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
-					);
-				} catch (err) {}
+				await Snapshot.findOneAndUpdate(
+					{ tenant: CRED.tenant._id, tplid: oldTplId },
+					{ $set: { tplid: newTplId } },
+					{ upsert: false, new: true },
+				);
 				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
 				return { tplid: tpl.tplid };
 			}),
@@ -1541,6 +1543,37 @@ export default {
 				for (let i = 0; i < wfs.length; i++) {
 					await Engine.resetTodosETagByWfId(tenant_id, wfs[i].wfid);
 					await Engine.destroyWorkflow(tenant_id, CRED.employee, wfs[i].wfid);
+				}
+				await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
+				return "Done";
+			}),
+		);
+	},
+
+	WorkflowDestroyYana: async (req: Request, h: ResponseToolkit) => {
+		return replyHelper.buildResponse(
+			h,
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const CRED = req.auth.credentials as any;
+				const tenant_id = CRED.tenant._id;
+				let tplid = PLD.tplid;
+				let wfid = PLD.wfid;
+				if (tplid) {
+					let wfs = await Workflow.find(
+						{ tenant: tenant_id, tplid: tplid, starter: CRED.employee.eid },
+						{ _id: 0, wfid: 1 },
+					).lean();
+					for (let i = 0; i < wfs.length; i++) {
+						await Engine.resetTodosETagByWfId(tenant_id, wfs[i].wfid);
+						//最后一个参数是true，表明可以删除自己启动的，已经运行到任意节点的流程
+						//如果是false，则只能删除rehearsal，以及正式运行，切当前节点处于start的流程
+						await Engine.destroyWorkflow(tenant_id, CRED.employee, wfs[i].wfid, true);
+					}
+				} else if (wfid) {
+					await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid, true);
+				} else {
+					return "nothing to destroy";
 				}
 				await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 				return "Done";
@@ -2927,7 +2960,10 @@ const tenant_id = CRED.tenant._id;
 						filter["lastUpdateBwid"] = { $ne: PLD.bwid };
 					}
 
-					let tpl = await Template.findOne(filter, { __v: 0 }).lean();
+					let tpl = await Template.findOne(
+						filter,
+						PLD.withDoc ? { __v: 0 } : { __v: 0, doc: 0 },
+					).lean();
 					if (PLD.bwid && !tpl) {
 						return "MAYBE_LASTUPDATE_BY_YOUSELF";
 					} else if (!tpl) {
@@ -3825,10 +3861,10 @@ const tenant_id = CRED.tenant._id;
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let myId = CRED._id;
+				// let myId = CRED._id;
 				let myEid = CRED.employee.eid;
 				let myGroup = CRED.employee.group;
-				let myDomain = CRED.tenant.domain;
+				// let myDomain = CRED.tenant.domain;
 				if (myGroup !== "ADMIN") {
 					throw new EmpError("NOT_ADMIN", `Only Admin can import orgchart ${myEid} ${myGroup}`);
 				}
@@ -3839,14 +3875,14 @@ const tenant_id = CRED.tenant._id;
 				let filePath = PLD.file.path;
 
 				//filePath = "/Users/lucas/dev/emp/team_csv/orgchart.csv";
-				let csv = fs.readFileSync(filePath, "utf8");
+				// let csv = fs.readFileSync(filePath, "utf8");
 
 				const COL = { OU: 0, ACCOUNT: 1, OUCN: 1, EID: 2, POSITION: 3 };
 
 				let orgChartArr = [];
 				let currentOU = "";
-				let currentPOU = "";
-				let currentCN = "";
+				// let currentPOU = "";
+				// let currentCN = "";
 				let isOU = false;
 				let errors = [];
 
@@ -3856,10 +3892,10 @@ const tenant_id = CRED.tenant._id;
 
 				worksheet.eachRow(function (row, rowIndex) {
 					let rowSize = row.cellCount;
-					let numValues = row.actualCellCount;
+					// let numValues = row.actualCellCount;
 
 					let cols = [];
-					row.eachCell(function (cell, colIndex) {
+					row.eachCell(function (cell) {
 						if (cell.type === 6) {
 							cols.push(cell.result);
 						} else {
@@ -3992,7 +4028,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 
 				const theAccount = await User.findOne({ account: PLD.account });
 				if (!theAccount) {
@@ -4053,7 +4089,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 
 				await Employee.updateMany(
 					{ tenant: tenant_id, eid: PLD.eid },
@@ -4072,7 +4108,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 
 				await OrgChart.deleteOne({ tenant: tenant_id, ou: PLD.ou, eid: PLD.eid });
 			}),
@@ -4087,7 +4123,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 
 				await OrgChart.deleteMany({ tenant: tenant_id, eid: PLD.eid });
 				return "Done";
@@ -4099,7 +4135,7 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
@@ -4171,7 +4207,7 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
@@ -4180,7 +4216,7 @@ const tenant_id = CRED.tenant._id;
 
 				const getEntriesUnder = async function (
 					entries: any[],
-					tenant: string,
+					tenant_id: string,
 					ou: string,
 					level: number,
 				) {
@@ -4247,7 +4283,7 @@ const tenant_id = CRED.tenant._id;
 
 				const { eid, from, to } = PLD;
 
-				const existingEntry = await OrgChart.findOneAndUpdate(
+				await OrgChart.findOneAndUpdate(
 					{ tenant: tenant_id, ou: from, eid: eid },
 					{ $set: { ou: to } },
 					{ upsert: false, new: true },
@@ -4367,7 +4403,7 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				//let myEid = CRED.employee.eid;
@@ -4462,7 +4498,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				//let myEid = CRED.employee.eid;
-				let me = await User.findOne({ _id: CRED._id }, { __v: 0 }).populate("tenant").lean();
+				// let me = await User.findOne({ _id: CRED._id }, { __v: 0 }).populate("tenant").lean();
 				await Parser.checkOrgChartAdminAuthorization(CRED);
 
 				let pos = PLD.pos;
@@ -4525,7 +4561,7 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				let filter: any = { tenant: tenant_id };
@@ -4546,7 +4582,7 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				let filter: any = { tenant: tenant_id };
@@ -4760,8 +4796,8 @@ const tenant_id = CRED.tenant._id;
 				//Find the comment to be deleted.
 				let cmt = await Comment.findOne(filter, { __v: 0 });
 				//Find the objtype and objid of it's parent
-				let objtype = cmt.objtype;
-				let objid = cmt.objid;
+				// let objtype = cmt.objtype;
+				// let objid = cmt.objid;
 
 				//Delete childrens recursively.
 				await deleteFollowing(tenant_id, cmt._id);
@@ -5272,7 +5308,7 @@ const tenant_id = CRED.tenant._id;
 				let objid = PLD.objid;
 				let text = PLD.text.trim();
 
-				let tagToDel = { owner: myEid, text: text };
+				// let tagToDel = { owner: myEid, text: text };
 
 				let existingTags = [];
 				if (objtype === "template") {
