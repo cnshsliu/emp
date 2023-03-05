@@ -665,6 +665,9 @@ const __doneTodo = async function (
 		kvarsFromBrowserInput = Tools.hasValue(kvarsFromBrowserInput)
 			? JSON.parse(kvarsFromBrowserInput)
 			: {};
+  else if(!kvarsFromBrowserInput){
+    kvarsFromBrowserInput={};
+  }
 	let isoNow = Tools.toISOString(new Date());
 	if (Tools.isEmpty(todo.wfid)) {
 		throw new EmpError("WORK_WFID_IS_EMPTY", "Todo wfid is empty", {
