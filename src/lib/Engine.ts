@@ -5002,6 +5002,7 @@ const destroyWorkflow = async function (
 	tenant: string | Types.ObjectId,
 	employee: EmployeeType,
 	wfid: string,
+	anyWfStartByMe: boolean = false,
 ) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.destroyWorkflow");
 	//const myEmployee = (await Employee.findOne({ tenant: tenant, eid: myEid }, {__v:0})) as EmployeeType;
@@ -5011,9 +5012,13 @@ const destroyWorkflow = async function (
 	//管理员可以destory
 	//starter可以destroy rehearsal
 	//starter可以destroy 尚在第一个活动上的流程
+	//如果anyWfStartByMe为true，则不要求处于第一个活动上
 	if (
 		myGroup === "ADMIN" ||
-		(wf.starter === employee.eid && (wf.rehearsal || wf.pnodeid === "start"))
+		(wf.starter === employee.eid &&
+			(wf.rehearsal ||
+				(anyWfStartByMe === false && wf.pnodeid === "start") ||
+				anyWfStartByMe === true))
 	) {
 		return __destroyWorkflow(tenant, wfid).then((ret) => {});
 	} else {
