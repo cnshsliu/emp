@@ -7,6 +7,7 @@ import FilesRoutes from "../routes/files/endpoints";
 import MenuRoutes from "../routes/menu/endpoints";
 import ShareRoutes from "../routes/share/endpoints";
 import TryRoutes from "../routes/try/endpoints";
+import YanaRoutes from "../routes/yana/endpoints";
 
 const Routes = {
 	//Concatentate the routes into one array
@@ -21,6 +22,7 @@ const Routes = {
 			MenuRoutes.endpoints,
 			ShareRoutes.endpoints,
 			TryRoutes.endpoints,
+			YanaRoutes.endpoints,
 		);
 		await server.route(allRoutes);
 	},

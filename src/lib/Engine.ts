@@ -54,6 +54,22 @@ import type { DoersArray } from "./EmpTypes";
 
 import { redisClient } from "../database/redis";
 
+interface workflowStartObj {
+	rehearsal: boolean;
+	tenant: string | Types.ObjectId;
+	tplid: string;
+	starter: EmployeeType;
+	textPbo: string[];
+	wfid: string;
+	teamid: string;
+	wftitle: string;
+	parent_wf_id: string;
+	parent_work_id: string;
+	parent_vars: any;
+	runmode: string;
+	uploadedFiles: any[];
+}
+
 import type {
 	NextDef,
 	MailNextDef,
@@ -557,13 +573,10 @@ const doWork = async function (
 	//找到该Todo数据库对象
 	let todo = (await Todo.findOne(todo_filter, { __v: 0 })) as TodoType;
 	if (Tools.isEmpty(todo)) {
-		console.log(await Todo.find({ tenant: tenant }).lean());
-		console.log(todo_filter);
 		console.error(
 			`Todo "${nodeid ? nodeid : todoid}" ${nodeid ? "" : todoid}, not found, see following filter`,
 		);
 		console.error(todo_filter);
-		//return { error: "Todo Not Found" };
 		throw new EmpError("WORK_RUNNING_NOT_EXIST", `Doable work ${todoid} ${todo_filter} not found`);
 	}
 	//TODO: cache
@@ -665,9 +678,9 @@ const __doneTodo = async function (
 		kvarsFromBrowserInput = Tools.hasValue(kvarsFromBrowserInput)
 			? JSON.parse(kvarsFromBrowserInput)
 			: {};
-  else if(!kvarsFromBrowserInput){
-    kvarsFromBrowserInput={};
-  }
+	else if (!kvarsFromBrowserInput) {
+		kvarsFromBrowserInput = {};
+	}
 	let isoNow = Tools.toISOString(new Date());
 	if (Tools.isEmpty(todo.wfid)) {
 		throw new EmpError("WORK_WFID_IS_EMPTY", "Todo wfid is empty", {
@@ -4608,20 +4621,53 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  * Start a workflow
  */
 
+const startWorkflow_by_obj = async function (obj: workflowStartObj) {
+	let {
+		rehearsal,
+		tenant,
+		tplid,
+		starter,
+		textPbo,
+		teamid,
+		wfid,
+		wftitle,
+		parent_wf_id,
+		parent_work_id,
+		parent_vars,
+		runmode,
+		uploadedFiles,
+	} = obj;
+	return startWorkflow(
+		rehearsal,
+		tenant,
+		tplid,
+		starter,
+		textPbo,
+		teamid,
+		wfid,
+		wftitle,
+		parent_wf_id,
+		parent_work_id,
+		parent_vars,
+		runmode,
+		uploadedFiles,
+	);
+};
+
 const startWorkflow = async function (
 	rehearsal: boolean,
 	tenant: string | Types.ObjectId,
 	tplid: string,
 	starter: EmployeeType,
-	textPbo: string,
-	teamid: string,
+	textPbo: string[] = [],
+	teamid: string = "",
 	wfid: string,
 	wftitle: string,
-	parent_wf_id: string,
-	parent_work_id: string,
-	parent_vars: any,
-	runmode = "standalone",
-	uploadedFiles: any,
+	parent_wf_id: string = "",
+	parent_work_id: string = "",
+	parent_vars: any = {},
+	runmode: string = "standalone",
+	uploadedFiles: any = [],
 ) {
 	let filter = { tenant: tenant, tplid: tplid };
 	let theTemplate = await Template.findOne(filter, { __v: 0 });
@@ -4653,15 +4699,15 @@ const startWorkflow_with = async function (
 	tplid: string,
 	theTemplate: Emp.TemplateObj,
 	starter: EmployeeType,
-	textPbo: string,
-	teamid: string,
-	wfid: string,
+	textPbo: string[] = [],
+	teamid: string = "",
+	wfid: string = "",
 	wftitle: string,
-	parent_wf_id: string,
-	parent_work_id: string,
-	parent_vars: any,
+	parent_wf_id: string = "",
+	parent_work_id: string = "",
+	parent_vars: any = {},
 	runmode = "standalone",
-	uploadedFiles: any,
+	uploadedFiles: any = [],
 ) {
 	if (!starter.nickname) {
 		throw new EmpError("STARTER_SHOULD_BE_EMPLOYEE", "Starter should be an employee object");
@@ -7875,6 +7921,7 @@ if (isMainThread) init();
 
 export default {
 	startWorkflow,
+	startWorkflow_by_obj,
 	getNodeStatus,
 	formulaEval,
 	getUserBannedTemplate,

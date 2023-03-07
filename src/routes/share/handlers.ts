@@ -89,7 +89,7 @@ export default {
 					searchable: true,
 				});
 				await newTemplate.save();
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 
 				return { ret: "success", tplid: tplid };
 			}),

@@ -42,7 +42,7 @@ export default {
 					searchable: false,
 				});
 				await newTemplate.save();
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 
 				let wfid = shortId();
 				let wfDoc = await Engine.startWorkflow(

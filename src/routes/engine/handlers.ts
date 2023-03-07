@@ -366,7 +366,7 @@ export default {
 					searchable: true,
 				});
 				obj = await obj.save();
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 				return obj;
 			}),
 		);
@@ -484,7 +484,7 @@ export default {
 					CRED.tenant._id,
 					tplid,
 					CRED.employee.eid,
-					"https://www.metatocome.com/docs",
+					["https://www.metatocome.com/docs"],
 					"",
 					null,
 					"Metaflow Learning Guide",
@@ -626,7 +626,7 @@ export default {
 					});
 					obj = await obj.save();
 				}
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 				let edittingLog = new EdittingLog({
 					tenant: CRED.tenant._id,
 					objtype: "Template",
@@ -815,7 +815,7 @@ export default {
 					{ $set: { tplid: newTplId } },
 					{ upsert: false, new: true },
 				);
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 				return { tplid: tpl.tplid };
 			}),
 		);
@@ -835,14 +835,13 @@ export default {
 					throw new EmpError("NO_PERM", "You don't have permission to rename this template");
 				tpl.tplid = newTplId;
 				tpl = await tpl.save();
-				try {
-					fs.renameSync(
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
-					);
-				} catch (err) {}
+				await Snapshot.findOneAndUpdate(
+					{ tenant: CRED.tenant._id, tplid: oldTplId },
+					{ $set: { tplid: newTplId } },
+					{ upsert: false, new: true },
+				);
 
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 				return tpl;
 			}),
 		);
@@ -873,14 +872,17 @@ export default {
 				newObj = await newObj.save();
 				let newTplId = newObj.tplid;
 
-				try {
-					fs.copyFileSync(
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
-					);
-				} catch (err) {}
+				let oldSnapshot = await Snapshot.findOne({ tenant: CRED.tenant._id, tplid: oldTplId });
+				if (oldSnapshot) {
+					let newSnapshot = new Snapshot({
+						tenant: CRED.tenant._id,
+						tplid: oldTpl.tplid + "_copy",
+						svg: oldSnapshot.svg,
+					});
+					await newSnapshot.save();
+				}
 
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 				return newObj;
 			}),
 		);
@@ -916,13 +918,17 @@ export default {
 					searchable: true,
 				});
 				newObj = await newObj.save();
-				try {
-					fs.copyFileSync(
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, oldTplId + ".png"),
-						path.join(Tools.getTenantFolders(CRED.tenant._id).cover, newTplId + ".png"),
-					);
-				} catch (err) {}
-				await Cache.resetETag(`ETAG:TEPLDATES:${CRED.tenant._id}`);
+
+				let oldSnapshot = await Snapshot.findOne({ tenant: CRED.tenant._id, tplid: oldTplId });
+				if (oldSnapshot) {
+					let newSnapshot = new Snapshot({
+						tenant: CRED.tenant._id,
+						tplid: newTplId,
+						svg: oldSnapshot.svg,
+					});
+					await newSnapshot.save();
+				}
+				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 				return newObj;
 			}),
 		);
@@ -941,10 +947,8 @@ export default {
 				if (!(await SPC.hasPerm(CRED.employee, "template", theTpl, "delete")))
 					throw new EmpError("NO_PERM", "You don't have permission to delete this template");
 				let deletedRet = await Template.deleteOne(filter);
-				try {
-					fs.rmSync(path.join(Tools.getTenantFolders(tenant_id).cover, oldTplId + ".png"));
-				} catch (err) {}
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Snapshot.deleteOne({ tenant: tenant_id, tplid: oldTplId });
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 				return deletedRet;
 			}),
 		);
@@ -964,10 +968,8 @@ export default {
 				if (!(await SPC.hasPerm(CRED.employee, "template", theTpl, "delete")))
 					throw new EmpError("NO_PERM", "You don't have permission to delete this template");
 				const delRet = await Template.deleteOne(filter);
-				try {
-					fs.rmSync(path.join(Tools.getTenantFolders(tenant_id).cover, oldTplId + ".png"));
-				} catch (err) {}
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Snapshot.deleteOne(filter);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 				return delRet;
 			}),
 		);
@@ -989,13 +991,9 @@ export default {
 
 				let filter: any = { tenant: tenant_id, tplid: { $in: PLD.tplids } };
 				await Template.deleteMany(filter);
-				for (let i = 0; i < PLD.tplids.length; i++) {
-					try {
-						fs.rmSync(path.join(Tools.getTenantFolders(tenant_id).cover, PLD.tplids[i] + ".png"));
-					} catch (err) {}
-				}
+				await Snapshot.deleteMany(filter);
 
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 				return "Deleted";
 			}),
 		);
@@ -1543,37 +1541,6 @@ export default {
 				for (let i = 0; i < wfs.length; i++) {
 					await Engine.resetTodosETagByWfId(tenant_id, wfs[i].wfid);
 					await Engine.destroyWorkflow(tenant_id, CRED.employee, wfs[i].wfid);
-				}
-				await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
-				return "Done";
-			}),
-		);
-	},
-
-	WorkflowDestroyYana: async (req: Request, h: ResponseToolkit) => {
-		return replyHelper.buildResponse(
-			h,
-			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
-				const CRED = req.auth.credentials as any;
-				const tenant_id = CRED.tenant._id;
-				let tplid = PLD.tplid;
-				let wfid = PLD.wfid;
-				if (tplid) {
-					let wfs = await Workflow.find(
-						{ tenant: tenant_id, tplid: tplid, starter: CRED.employee.eid },
-						{ _id: 0, wfid: 1 },
-					).lean();
-					for (let i = 0; i < wfs.length; i++) {
-						await Engine.resetTodosETagByWfId(tenant_id, wfs[i].wfid);
-						//最后一个参数是true，表明可以删除自己启动的，已经运行到任意节点的流程
-						//如果是false，则只能删除rehearsal，以及正式运行，切当前节点处于start的流程
-						await Engine.destroyWorkflow(tenant_id, CRED.employee, wfs[i].wfid, true);
-					}
-				} else if (wfid) {
-					await Engine.destroyWorkflow(tenant_id, CRED.employee, wfid, true);
-				} else {
-					return "nothing to destroy";
 				}
 				await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 				return "Done";
@@ -2696,7 +2663,7 @@ export default {
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				let ifNoneMatch = req.headers["if-none-match"];
-				let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant_id}`);
+				let latestETag = Cache.getETag(`ETAG:TEMPLATES:${tenant_id}`);
 				if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 					return { data: [], code: 304, etag: latestETag, headers: replyHelper.headers.nocache };
 				}
@@ -2832,7 +2799,7 @@ const tenant_id = CRED.tenant._id;
 				let myEid = CRED.employee.eid;
 				let myGroup = CRED.employee.group;
 				let ifNoneMatch = req.headers["if-none-match"];
-				let latestETag = Cache.getETag(`ETAG:TEPLDATES:${tenant_id}`);
+				let latestETag = Cache.getETag(`ETAG:TEMPLATES:${tenant_id}`);
 				if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 					return { data: [], code: 304, headers: replyHelper.headers.nocache, etag: latestETag };
 				}
@@ -3028,7 +2995,7 @@ const tenant_id = CRED.tenant._id;
 				fs.unlink(fileInfo.path, () => {
 					console.log("Unlinked temp file:", fileInfo.path);
 				});
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 				return obj;
 			}),
 		);
@@ -3055,7 +3022,7 @@ const tenant_id = CRED.tenant._id;
 					{ $set: { doc: fromDoc.doc } },
 					{ upsert: false, new: true },
 				);
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 				return obj;
 			}),
 		);
@@ -3092,7 +3059,7 @@ const tenant_id = CRED.tenant._id;
 					throw new EmpError("NO_TPL", `Not admin or owner`);
 				}
 				tpl = await Template.findOne({ tenant: tenant_id, tplid: tplid }, { doc: 0 });
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 
 				return tpl;
 			}),
@@ -3225,7 +3192,7 @@ const tenant_id = CRED.tenant._id;
 
 				await Engine.clearUserVisiedTemplate(tenant_id);
 
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 				return tpl;
 			}),
 		);
@@ -3250,7 +3217,7 @@ const tenant_id = CRED.tenant._id;
 				);
 
 				await Engine.clearUserVisiedTemplate(tenant_id);
-				await Cache.resetETag(`ETAG:TEPLDATES:${tenant_id}`);
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 
 				return "Done";
 			}),
@@ -6441,7 +6408,7 @@ const tenant_id = CRED.tenant._id;
 					innerTpl.tplid, //template id
 					innerTpl, //TemplateObj object
 					CRED.employee, //starter
-					"", //text pbo
+					[""], //text pbo
 					"", //teamid
 					null, //wf id
 					PLD.name, //wf title
