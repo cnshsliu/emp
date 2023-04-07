@@ -2,6 +2,7 @@ import {
 	MtcCredentials,
 	PondFileInfoFromPayloadType,
 	PondFileInfoOnServerType,
+	StartWorkflowType,
 } from "../../lib/EmpTypes";
 import { expect } from "@hapi/code";
 import { Request, ResponseToolkit } from "@hapi/hapi";
@@ -479,21 +480,14 @@ export default {
 					},
 					options = { upsert: true, new: true };
 				await Template.findOneAndUpdate(filter, update, options);
-				let wfDoc = await Engine.startWorkflow(
-					false, //Rehearsal
-					CRED.tenant._id,
-					tplid,
-					CRED.employee.eid,
-					["https://www.metatocome.com/docs"],
-					"",
-					null,
-					"Metaflow Learning Guide",
-					"",
-					"",
-					{},
-					"standalone",
-					[],
-				);
+				let wfDoc = await Engine.startWorkflow({
+					rehearsal: false, //Rehearsal
+					tenant: CRED.tenant._id,
+					tplid: tplid,
+					starter: CRED.employee.eid,
+					textPbo: ["https://www.metatocome.com/docs"],
+					wftitle: "Metaflow Learning Guide",
+				});
 
 				return wfDoc;
 			}),
@@ -1271,21 +1265,18 @@ export default {
 				} else {
 					textPbo = [];
 				}
-				let wfDoc = await Engine.startWorkflow(
-					rehearsal,
-					tenant_id,
-					tplid,
-					starter,
-					textPbo,
-					teamid,
-					wfid,
-					wftitle,
-					"",
-					"",
-					kvars,
-					"standalone",
-					uploadedFiles,
-				);
+				let wfDoc = await Engine.startWorkflow({
+					rehearsal: rehearsal,
+					tenant: tenant_id,
+					tplid: tplid,
+					starter: starter,
+					textPbo: textPbo,
+					teamid: teamid,
+					wfid: wfid,
+					wftitle: wftitle,
+					parent_vars: kvars,
+					uploadedFiles: uploadedFiles,
+				});
 				await Engine.resetTodosETagByWfId(tenant_id, wfid);
 				await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 				return wfDoc;
@@ -6402,22 +6393,22 @@ const tenant_id = CRED.tenant._id;
 					endpointmode: "none",
 					allowdiscuss: true,
 				};
-				let wf = await Engine.startWorkflow_with(
-					false, //rehearsal
-					tenant_id, //tenant
-					innerTpl.tplid, //template id
-					innerTpl, //TemplateObj object
-					CRED.employee, //starter
-					[""], //text pbo
-					"", //teamid
-					null, //wf id
-					PLD.name, //wf title
-					"", //parent_wfid
-					"", //parent_work_id
-					{}, //parent_kvars
-					"standalone", //runmode
-					[], //uploadFiles
-				);
+				let wf = await Engine.startWorkflow_with({
+					rehearsal: false,
+					tenant: tenant_id as string,
+					tplid: innerTpl.tplid,
+					theTemplate: innerTpl,
+					starter: CRED.employee,
+					textPbo: [""],
+					wfid: null,
+					wftitle: PLD.name,
+					parent_wf_id: "",
+					parent_work_id: "",
+					parent_vars: {},
+					runmode: "standalone",
+					uploadedFiles: [],
+					attachments: null,
+				});
 
 				return wf;
 			}),

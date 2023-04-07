@@ -75,6 +75,14 @@ export default {
 					},
 					{ _id: 0, url: 1, pageName: 1 },
 				).lean();
+				let pmitems = personalMenuItems.map((x, i) => {
+					return { id: "__pmi__" + i, alias: x.pageName, href: x.url };
+				});
+				pmitems.push({
+					id: "__pmi__add",
+					alias: "$addCurrent",
+					href: "dispatch:addPersonal:current",
+				});
 				if (personalMenuItems.length > 0) {
 					ret.push({
 						acl: MENU_ACL_SELF,
@@ -86,13 +94,7 @@ export default {
 								alias: "$MyPersonal",
 								class: "personal_menu_item",
 								icon: "heart",
-								sub: personalMenuItems.map((x, i) => {
-									return {
-										id: "__pmi__" + i,
-										alias: x.pageName,
-										href: x.url,
-									};
-								}),
+								sub: pmitems,
 							},
 						],
 					});

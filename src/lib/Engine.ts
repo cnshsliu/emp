@@ -50,25 +50,9 @@ import Podium from "@hapi/podium";
 import EmpError from "./EmpError";
 import Const from "./Const";
 import RCL from "./RedisCacheLayer";
-import type { DoersArray } from "./EmpTypes";
+import type { DoersArray, StartWorkflowType } from "./EmpTypes";
 
 import { redisClient } from "../database/redis";
-
-interface workflowStartObj {
-	rehearsal: boolean;
-	tenant: string | Types.ObjectId;
-	tplid: string;
-	starter: EmployeeType;
-	textPbo: string[];
-	wfid: string;
-	teamid: string;
-	wftitle: string;
-	parent_wf_id: string;
-	parent_work_id: string;
-	parent_vars: any;
-	runmode: string;
-	uploadedFiles: any[];
-}
 
 import type {
 	NextDef,
@@ -4621,115 +4605,84 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  * Start a workflow
  */
 
-const startWorkflow_by_obj = async function (obj: workflowStartObj) {
-	let {
-		rehearsal,
-		tenant,
-		tplid,
-		starter,
-		textPbo,
-		teamid,
-		wfid,
-		wftitle,
-		parent_wf_id,
-		parent_work_id,
-		parent_vars,
-		runmode,
-		uploadedFiles,
-	} = obj;
-	return startWorkflow(
-		rehearsal,
-		tenant,
-		tplid,
-		starter,
-		textPbo,
-		teamid,
-		wfid,
-		wftitle,
-		parent_wf_id,
-		parent_work_id,
-		parent_vars,
-		runmode,
-		uploadedFiles,
-	);
-};
-
-const startWorkflow = async function (
-	rehearsal: boolean,
-	tenant: string | Types.ObjectId,
-	tplid: string,
-	starter: EmployeeType,
-	textPbo: string[] = [],
-	teamid: string = "",
-	wfid: string,
-	wftitle: string,
-	parent_wf_id: string = "",
-	parent_work_id: string = "",
-	parent_vars: any = {},
-	runmode: string = "standalone",
-	uploadedFiles: any = [],
-) {
-	let filter = { tenant: tenant, tplid: tplid };
+const startWorkflow = async function (obj: StartWorkflowType) {
+	let filter = { tenant: obj.tenant, tplid: obj.tplid };
 	let theTemplate = await Template.findOne(filter, { __v: 0 });
 	if (!theTemplate) {
-		throw new EmpError("TEMPLATE_NOT_FOUND", `Tempalte ${tplid} not found`);
+		throw new EmpError("TEMPLATE_NOT_FOUND", `Tempalte ${obj.tplid} not found`);
 	}
+	obj.theTemplate = theTemplate;
 
-	return await startWorkflow_with(
-		rehearsal,
-		tenant,
-		tplid,
-		theTemplate,
-		starter,
-		textPbo,
-		teamid,
-		wfid,
-		wftitle,
-		parent_wf_id,
-		parent_work_id,
-		parent_vars,
-		runmode,
-		uploadedFiles,
-	);
+	return await startWorkflow_with(obj);
 };
 
-const startWorkflow_with = async function (
-	rehearsal: boolean,
-	tenant: string | Types.ObjectId,
-	tplid: string,
-	theTemplate: Emp.TemplateObj,
+const reStartWorkflow_with_latest_tpl = async function (
+	tenant: string,
 	starter: EmployeeType,
-	textPbo: string[] = [],
-	teamid: string = "",
-	wfid: string = "",
-	wftitle: string,
-	parent_wf_id: string = "",
-	parent_work_id: string = "",
-	parent_vars: any = {},
-	runmode = "standalone",
-	uploadedFiles: any = [],
+	wfid: string,
+	eid: string,
 ) {
-	if (!starter.nickname) {
+	let wf = await RCL.getWorkflow(
+		{ tenant: tenant, wfid: wfid },
+		"Engine.restartWorkflow_with_latest_tpl",
+	);
+	let kvars = await getKVars(tenant, eid, wfid);
+	let filter = { tenant: tenant, tplid: wf.tplid };
+	let theTemplate = await Template.findOne(filter, { __v: 0 });
+	if (!theTemplate) {
+		throw new EmpError("TEMPLATE_NOT_FOUND", `Tempalte ${wf.tplid} not found`);
+	}
+	await startWorkflow_with({
+		rehearsal: wf.rehearsal,
+		tenant: wf.tenant,
+		tplid: wf.tplid,
+		theTemplate: theTemplate,
+		starter: starter,
+		textPbo: [""],
+		teamid: wf.teamid,
+		wfid: wfid,
+		wftitle: wf.wftitle,
+		parent_wf_id: wf.parent_wf_id,
+		parent_work_id: wf.parent_work_id,
+		parent_vars: kvars,
+		runmode: wf.runmode,
+		uploadedFiles: [{}],
+		attachments: wf.attachments,
+	});
+};
+
+const startWorkflow_with = async function (obj: StartWorkflowType) {
+	obj.wfid = Tools.isEmpty(obj.wfid) ? IdGenerator() : obj.wfid;
+	obj.teamid = obj.teamid || "";
+	obj.textPbo = obj.textPbo || [];
+	obj.parent_wf_id = obj.parent_wf_id || "";
+	obj.parent_work_id = obj.parent_work_id || "";
+	obj.parent_vars = obj.parent_vars || {};
+	obj.runmode = obj.runmode || "standalone";
+	obj.uploadedFiles = obj.uploadedFiles || [];
+	obj.attachments = obj.attachments || undefined;
+
+	if (!obj.starter.nickname) {
 		throw new EmpError("STARTER_SHOULD_BE_EMPLOYEE", "Starter should be an employee object");
 	}
-	if (parent_vars === null || parent_vars === undefined) {
-		parent_vars = {};
+	if (obj.parent_vars === null || obj.parent_vars === undefined) {
+		obj.parent_vars = {};
 	}
-	parent_vars["starter"] = {
+	obj.parent_vars["starter"] = {
 		label: "Starter",
-		value: starter.eid,
+		value: obj.starter.eid,
 		type: "plaintext",
 		name: "starter",
 	};
-	parent_vars["starterCN"] = {
-		value: starter.nickname,
+	obj.parent_vars["starterCN"] = {
+		value: obj.starter.nickname,
 		label: "StarterCN",
 		type: "plaintext",
 		name: "starterCN",
 	};
-	let starterStaff = await OrgChartHelper.getStaff(tenant, starter.eid);
+	let starterStaff = await OrgChartHelper.getStaff(obj.tenant, obj.starter.eid);
 	if (starterStaff) {
-		parent_vars["ou_SOU"] = {
+		obj.parent_vars["ou_SOU"] = {
 			label: "StarterOU",
 			value: starterStaff.ou,
 			type: "plaintext",
@@ -4740,95 +4693,107 @@ const startWorkflow_with = async function (
 	// let filter = { tenant: tenant, tplid: tplid };
 	// let theTemplate = await Template.findOne(filter, {__v:0});
 	let isoNow = Tools.toISOString(new Date());
-	wfid = Tools.isEmpty(wfid) ? IdGenerator() : wfid;
+	obj.wfid = Tools.isEmpty(obj.wfid) ? IdGenerator() : obj.wfid;
 
-	let varedTitle = wftitle;
-	if (Tools.isEmpty(varedTitle)) varedTitle = tplid;
+	let varedTitle = obj.wftitle;
+	if (Tools.isEmpty(varedTitle)) varedTitle = obj.tplid;
 	varedTitle = await Parser.replaceStringWithKVar(
-		tenant,
+		obj.tenant,
 		varedTitle,
-		parent_vars,
+		obj.parent_vars,
 		Const.INJECT_INTERNAL_VARS,
 	);
-	wftitle = varedTitle;
-	teamid = Tools.isEmpty(teamid) ? "" : teamid;
+	obj.wftitle = varedTitle;
+	obj.teamid = Tools.isEmpty(obj.teamid) ? "" : obj.teamid;
 	let startDoc =
 		`<div class="process">` +
-		theTemplate.doc +
-		`<div class="workflow ST_RUN" id="${wfid}" at="${isoNow}" wftitle="${wftitle}" starter="${starter.eid}" pwfid="${parent_wf_id}" pworkid="${parent_work_id}"></div>` +
+		obj.theTemplate.doc +
+		`<div class="workflow ST_RUN" id="${obj.wfid}" at="${isoNow}" wftitle="${obj.wftitle}" starter="${obj.starter.eid}" pwfid="${obj.parent_wf_id}" pworkid="${obj.parent_work_id}"></div>` +
 		"</div>";
 	//KVAR above
-	let pboat = theTemplate.pboat;
+	let pboat = obj.theTemplate.pboat;
 	if (!pboat) pboat = "ANY_RUNNING";
 	let wf = new Workflow({
-		tenant: tenant,
-		wfid: wfid,
+		tenant: obj.tenant,
+		wfid: obj.wfid,
 		pboat: pboat,
-		endpoint: theTemplate.endpoint,
-		endpointmode: theTemplate.endpointmode,
-		wftitle: wftitle,
-		teamid: teamid,
-		tplid: tplid,
-		starter: starter.eid,
+		endpoint: obj.theTemplate.endpoint,
+		endpointmode: obj.theTemplate.endpointmode,
+		wftitle: obj.wftitle,
+		teamid: obj.teamid,
+		tplid: obj.tplid,
+		starter: obj.starter.eid,
 		status: "ST_RUN",
 		doc: startDoc,
-		rehearsal: rehearsal,
+		rehearsal: obj.rehearsal,
 		version: 3,
-		runmode: runmode,
-		allowdiscuss: theTemplate.allowdiscuss,
+		runmode: obj.runmode,
+		allowdiscuss: obj.theTemplate.allowdiscuss,
 	});
-	let attachments = [...textPbo, ...uploadedFiles];
-	attachments = attachments.map((x) => {
-		if (x.serverId) {
-			x.type = "file";
-			x.author = starter.eid;
-			x.forWhat = Const.ENTITY_WORKFLOW;
-			x.forWhich = wfid;
-			x.forKey = "pbo";
-		} else {
-			let obj = {
-				type: "url",
-				author: starter.eid,
-				url: x,
-			};
-			x = obj;
-		}
-		return x;
-	});
-	wf.attachments = attachments;
+	//如果制定了attachments, 则直接使用attachments
+	//如果没有制定attachments, 则使用textPbo和uploadedFiles来进行组合
+	//因此,我们可以实现读取一个wf的attachments后,使用这些attachments来启动一个新的wf
+	//当前的场景是一个wf运行以后,template做了修改,此时,用户可以选择使用最新模板
+	//重新跑一次, 此时,就需要将之前的attachments和kvars保留下来,直接传递到新wf中.
+	if (obj.attachments) {
+		wf.attachments = obj.attachments;
+	} else {
+		let attachments = [...obj.textPbo, ...obj.uploadedFiles];
+		attachments = attachments.map((x) => {
+			if (x.serverId) {
+				x.type = "file";
+				x.author = obj.starter.eid;
+				x.forWhat = Const.ENTITY_WORKFLOW;
+				x.forWhich = obj.wfid;
+				x.forKey = "pbo";
+			} else {
+				let tmp = {
+					type: "url",
+					author: obj.starter.eid,
+					url: x,
+				};
+				x = tmp;
+			}
+			return x;
+		});
+		wf.attachments = attachments;
+	}
 	wf = await wf.save();
-	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
-	parent_vars = Tools.isEmpty(parent_vars) ? {} : parent_vars;
+	await Cache.resetETag(`ETAG:WORKFLOWS:${obj.tenant}`);
+	obj.parent_vars = Tools.isEmpty(obj.parent_vars) ? {} : obj.parent_vars;
 	await Parser.setVars(
-		tenant,
+		obj.tenant,
 		0,
-		wfid,
+		obj.wfid,
 		"parent",
 		Const.FOR_WHOLE_PROCESS,
-		parent_vars,
+		obj.parent_vars,
 		"EMP",
 		Const.VAR_IS_EFFICIENT,
 	);
 	let an = {
 		CMD: "CMD_yarkNode",
-		tenant: tenant,
-		teamid: teamid,
+		tenant: obj.tenant,
+		teamid: obj.teamid,
 		from_nodeid: "NULL",
 		from_workid: "NULL",
-		tplid: tplid,
-		wfid: wfid,
-		rehearsal: rehearsal,
+		tplid: obj.tplid,
+		wfid: obj.wfid,
+		rehearsal: obj.rehearsal,
 		selector: ".START",
 		byroute: "DEFAULT",
-		starter: starter.eid,
+		starter: obj.starter.eid,
 		round: 0,
 	};
 
 	await sendNexts([an]);
-	clearOlderRehearsal(tenant, starter.eid, Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES, "m").then(
-		(ret) => {},
-	);
-	clearOlderScripts(tenant).then((ret) => {
+	clearOlderRehearsal(
+		obj.tenant,
+		obj.starter.eid,
+		Const.GARBAGE_REHEARSAL_CLEANUP_MINUTES,
+		"m",
+	).then(() => {});
+	clearOlderScripts(obj.tenant).then(() => {
 		console.log("Old script clearing finished");
 	});
 
@@ -6384,7 +6349,12 @@ const resumeDelayTimers = async function (tenant, wfid) {
  * 如果忽略workid,则取工作流的变量
  * 如果有workID, 则取工作项的变量
  */
-const getKVars = async function (tenant: string, eid: string, wfid: string, objid: string) {
+const getKVars = async function (
+	tenant: string,
+	eid: string,
+	wfid: string,
+	objid: string = undefined,
+) {
 	let wf = await RCL.getWorkflow({ tenant: tenant, wfid: wfid }, "Engine.getKVars");
 	const theEmployee = (await Employee.findOne(
 		{ tenant: tenant, eid: eid },
@@ -7905,7 +7875,7 @@ const removeUser = async (
 };
 
 /**
- * 生成6位短信验证码
+ * 生成6位短信验证��
  * @returns
  */
 const randomNumber = () => {
@@ -7921,7 +7891,6 @@ if (isMainThread) init();
 
 export default {
 	startWorkflow,
-	startWorkflow_by_obj,
 	getNodeStatus,
 	formulaEval,
 	getUserBannedTemplate,
