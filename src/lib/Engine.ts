@@ -94,6 +94,7 @@ const CFNameMap = {
 
 const crontabsMap = {};
 let checkingTimer = false;
+let tplAutostop = [];
 
 const podium = new Podium();
 const Client: any = {};
@@ -2332,23 +2333,22 @@ Client.onSendSystemMail = async function (msg) {
 
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
-Client.onStartWorkflow = async function (msg) {
+Client.onStartWorkflow = async function (msg: any) {
 	try {
-		startWorkflow(
-			msg.rehearsal, //not rehearsal
-			msg.tenant,
-			msg.tplid, //tplid
-			msg.starter,
-			msg.pbo, //pbo
-			msg.teamid,
-			msg.wfid,
-			msg.wftitle,
-			msg.pwfid, //parent wfid
-			msg.pwftitle, //parent wf name
-			msg.pkvars, //parent kvars
-			msg.runmode, //runmode
-			msg.files,
-		).then((wf) => {
+		startWorkflow({
+			rehearsal: msg.rehearsal, //not rehearsal
+			tenant: msg.tenant,
+			tplid: msg.tplid, //tplid
+			starter: msg.starter,
+			textPbo: msg.pbo, //pbo
+			teamid: msg.teamid,
+			wfid: msg.wfid,
+			wftitle: msg.wftitle,
+			parent_wf_id: msg.pwfid, //parent wfid
+			parent_vars: msg.pkvars, //parent kvars
+			runmode: msg.runmode, //runmode
+			uploadedFiles: msg.files,
+		}).then(() => {
 			console.log(msg.sender, "started workflow for ", msg.starter, "id:", msg.wfid);
 		});
 	} catch (error) {
@@ -3261,19 +3261,21 @@ const yarkNode_internal = async function (obj: NextDef) {
 			}
 			await startWorkflow(
 				//runsub
-				wf.rehearsal,
-				obj.tenant,
-				sub_tpl_id,
-				parentStarter,
-				textPboArray,
-				teamid,
-				sub_wf_id,
-				sub_tpl_id + "-sub-" + Tools.timeStringTag(),
-				parent_wf_id,
-				parent_work_id,
-				parent_vars,
-				runmode,
-				[],
+				{
+					rehearsal: wf.rehearsal,
+					tenant: obj.tenant.toString(),
+					tplid: sub_tpl_id,
+					starter: parentStarter,
+					attachments: textPboArray,
+					teamid: teamid,
+					wfid: sub_wf_id,
+					wftitle: sub_tpl_id + "-sub-" + Tools.timeStringTag(),
+					parent_wf_id: parent_wf_id,
+					parent_work_id: parent_work_id,
+					parent_vars: parent_vars,
+					runmode: runmode,
+					uploadedFiles: [],
+				},
 			);
 			log(tenant, obj.wfid, `[Start Sub] [Success] [${runmode}] ${sub_tpl_id}`);
 		} catch (e) {
@@ -3312,7 +3314,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 		wfRoot.append(
 			`<div class="work END ST_DONE" from_nodeid="${from_nodeid}" from_workid="${from_workid}" nodeid="${nodeid}" id="${workid}"  byroute="${obj.byroute}"  round="${obj.round}" at="${isoNow}"></div>`,
 		);
-		await endAllWorks(obj.tenant, obj.wfid, tpRoot, wfRoot, "ST_DONE");
+		await endAllWorks(obj.tenant, obj.wfid, wfRoot);
 		await stopDelayTimers(obj.tenant, obj.wfid);
 		await stopWorkflowCrons(obj.tenant, obj.wfid);
 
@@ -4431,9 +4433,8 @@ const kvalue = function(key){
        }
     }
 };
-const MtcGet = function(key){
-  return kvalue(key);
-};
+const MtcGet = kvalue;
+const mtcGet = kvalue;
 const kvar = function(key, value, label){
   key = key.trim();
   key = key.replace(/ /g, "_");
@@ -4445,15 +4446,16 @@ const kvar = function(key, value, label){
     retkvars[key] = {value:value, label: label?label:key };
   }
 };
-const MtcSet = function(key, value, label){
-  kvar(key, value, label);
-};
+const MtcSet = kvar;
+const mtcSet = kvar;
 const MtcGetDecision=function(nodeid){
   return MtcGet("$decision_" + nodeid);
 };
+const mtcGetDecision = MtcGetDecision;
 const MtcSetDecision=function(nodeid, value){
   return MtcSet("$decision_"+ nodeid, value, "Decision of "+nodeid);
 };
+const mtcSetDecision = MtcSetDecision;
 const MtcDecision = function(nodeid, value){
   if(value){
     return MtcSetDecision(nodeid, value);
@@ -4461,6 +4463,7 @@ const MtcDecision = function(nodeid, value){
     return MtcGetDecision(nodeid);
   }
 };
+const mtcDecision = MtcDecision;
 const MtcPDSHasDoer = function(pds, who){
   let ret = false;
   if(pdsDoers[pds]){
@@ -4473,10 +4476,13 @@ const MtcPDSHasDoer = function(pds, who){
   }
   return ret;
 };
+const mtcPDSHasDoer = MtcPDSHasDoer;
 const MtcSendCallbackPointId=function(url, extraPayload){
   MtcAPIAgent.post(url, {...{cbpid: "${callbackId}"}, ...extraPayload});
 };
 const MtcSendCBPid = MtcSendCallbackPointId;
+const mtcSendCBPid = MtcSendCallbackPointId;
+const mtcSendCallbackPointId = MtcSendCallbackPointId;
 
 const MtcSendContext=function(url){
   let wfInfo = {tplid: tplid, wfid:wfid};
@@ -4487,6 +4493,21 @@ const MtcSendContext=function(url){
     console.error(error.message);
   }
 };
+const mtcSendContext = MtcSendContext;
+
+const mtcPost = function(url, payload){
+  try{
+    payload.context = {tenant: "${tenant}", eid: "${starter}", tplid: "${tplid}", wfid:"${wfid}"};
+    MtcAPIAgent.post(url, payload);
+  }catch(error){
+    console.error(error.message);
+  }
+};
+
+const mtcPostData = function(payload){
+  mtcPost("http://127.0.0.1:5008/data/set", payload);
+}
+
 async function runcode() {
   try{
   let ___ret___={};
@@ -4606,6 +4627,9 @@ runcode().then(async function (x) {if(typeof x === 'object') console.log(JSON.st
  */
 
 const startWorkflow = async function (obj: StartWorkflowType) {
+	debugger;
+	console.log("starting workflow:");
+	console.log(JSON.stringify(obj, null, 2));
 	let filter = { tenant: obj.tenant, tplid: obj.tplid };
 	let theTemplate = await Template.findOne(filter, { __v: 0 });
 	if (!theTemplate) {
@@ -4616,7 +4640,7 @@ const startWorkflow = async function (obj: StartWorkflowType) {
 	return await startWorkflow_with(obj);
 };
 
-const reStartWorkflow_with_latest_tpl = async function (
+const restartWorkflow_with_latest_tpl = async function (
 	tenant: string,
 	starter: EmployeeType,
 	wfid: string,
@@ -4632,6 +4656,13 @@ const reStartWorkflow_with_latest_tpl = async function (
 	if (!theTemplate) {
 		throw new EmpError("TEMPLATE_NOT_FOUND", `Tempalte ${wf.tplid} not found`);
 	}
+	let old_wfid = wfid;
+	let old_wf = await RCL.getWorkflow({ tenant: tenant, wfid: old_wfid }, "Engine.restartWorkflow");
+	if (!SystemPermController.hasPerm(starter, Const.ENTITY_WORKFLOW, old_wf, "update"))
+		throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
+	await stopWorkflow(tenant, starter, old_wfid);
+	await resetTodosETagByWfId(tenant, old_wfid);
+	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
 	await startWorkflow_with({
 		rehearsal: wf.rehearsal,
 		tenant: wf.tenant,
@@ -4640,7 +4671,6 @@ const reStartWorkflow_with_latest_tpl = async function (
 		starter: starter,
 		textPbo: [""],
 		teamid: wf.teamid,
-		wfid: wfid,
 		wftitle: wf.wftitle,
 		parent_wf_id: wf.parent_wf_id,
 		parent_work_id: wf.parent_work_id,
@@ -5829,11 +5859,11 @@ const __getWorkflowWorksHistory = async function (
 				status: tmpRet[i].status,
 				decision: tmpRet[i].decision,
 			});
-			// 如果一个活动为DONE， 而整体为IGNORE，则把整体设为DONE
+			// 如���一个活动为DONE， 而整体为IGNORE，则把整体设为DONE
 			if (tmpRet[i].status === "ST_DONE" && ret[existing_index].status === "ST_IGNORE") {
 				ret[existing_index].status = "ST_DONE";
 			}
-			//又一个还在RUN，则整个work为RUN
+			//又一个还在RUN，则�������������������������������������������work为RUN
 			if (tmpRet[i].status === "ST_RUN") {
 				ret[existing_index].status = "ST_RUN";
 			}
@@ -6799,8 +6829,12 @@ const init = once(async function () {
 	checkingTimer = false;
 	await Crontab.updateMany({}, { $set: { scheduled: false } });
 	await rescheduleCrons();
+	await collectTplAutostop();
 	setInterval(() => {
 		checkDelayTimer();
+	}, 1000);
+	setInterval(() => {
+		checkAutostop();
 	}, 1000);
 }, EmpContext);
 
@@ -7401,25 +7435,48 @@ const checkDelayTimer = async function () {
 	}
 };
 
+const collectTplAutostop = async function () {
+	tplAutostop = await Template.find({ autostop: { $gt: 0 } }, { tplid: 1, autostop: 1 }).lean();
+	console.log("collectTplAutostop", tplAutostop);
+};
+
+const checkAutostop = async function () {
+	for (let t = 0; t < tplAutostop.length; t++) {
+		let theMoment = moment().subtract(tplAutostop[t].autostop, "minutes");
+		let wfFilter = {
+			tplid: tplAutostop[t].tplid,
+			updatedAt: { $lt: new Date(theMoment.toDate()) },
+			status: { $in: ["ST_RUN", "ST_PAUSE"] },
+		};
+		const wfs = await Workflow.find(wfFilter);
+		if (wfs.length > 0) {
+			for (let i = 0; i < wfs.length; i++) {
+				let employee_starter = await Employee.findOne({
+					tenant: wfs[i].tenant,
+					eid: wfs[i].starter,
+				});
+				await stopWorkflow(wfs[i].tenant, employee_starter as EmployeeType, wfs[i].wfid);
+				console.log("Stop", tplAutostop[t].tplid, wfs[i].wfid, wfs[i].wftitle);
+			}
+		}
+	}
+};
+
 /**
  * endAllWorks = async() 结束全部工作项: 将工作流中所有运行中的节点设为ST_END
  *
  */
-const endAllWorks = async function (
-	tenant: string | Types.ObjectId,
-	wfid: string,
-	tpRoot: any,
-	wfRoot: any,
-	wfstatus: string,
-) {
+const endAllWorks = async function (tenant: string | Types.ObjectId, wfid: string, wfRoot: any) {
 	let workSelector = ".work.ST_RUN";
-	wfRoot.find(workSelector).each(async function (i, el) {
-		let work = cheerio(el);
-		if (work.hasClass("ADHOC") === false) {
-			work.removeClass("ST_RUN");
-			work.addClass("ST_END");
-		}
-	});
+	if (wfRoot) {
+		wfRoot.find(workSelector).each(async function (i, el) {
+			let work = cheerio(el);
+			if (work.hasClass("ADHOC") === false) {
+				work.removeClass("ST_RUN");
+				work.addClass("ST_END");
+			}
+		});
+	}
 	await Todo.updateMany(
 		{
 			tenant: tenant,
@@ -7875,7 +7932,7 @@ const removeUser = async (
 };
 
 /**
- * 生成6位短信验证��
+ * 生成6���短信验证��
  * @returns
  */
 const randomNumber = () => {
@@ -7924,6 +7981,7 @@ export default {
 	workflowGetList,
 	destroyWorkflow,
 	restartWorkflow,
+	restartWorkflow_with_latest_tpl,
 	stopWorkflow,
 	clearOlderRehearsal,
 	startWorkflow_with,
@@ -7954,4 +8012,5 @@ export default {
 	randomNumber,
 	rescheduleCrons,
 	removeUser,
+	collectTplAutostop,
 };

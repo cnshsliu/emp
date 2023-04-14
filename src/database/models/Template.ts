@@ -35,6 +35,7 @@ const schema = new Schema({
 	allowdiscuss: { type: Boolean, default: true },
 	ksid: { type: String, default: "", index: true },
 	searchable: { type: Boolean, default: true, index: true },
+	autostop: { type: Number, default: 0 },
 	createdAt: { type: Date, default: Date.now },
 	updatedAt: { type: Date, default: Date.now },
 });

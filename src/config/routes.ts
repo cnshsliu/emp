@@ -8,6 +8,7 @@ import MenuRoutes from "../routes/menu/endpoints";
 import ShareRoutes from "../routes/share/endpoints";
 import TryRoutes from "../routes/try/endpoints";
 import YanaRoutes from "../routes/yana/endpoints";
+import DataRoutes from "../routes/data/endpoints";
 
 const Routes = {
 	//Concatentate the routes into one array

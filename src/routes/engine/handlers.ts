@@ -1592,6 +1592,17 @@ export default {
 							status: await Engine.restartWorkflow(tenant_id, CRED.employee, wfid),
 						};
 						break;
+					case "restartWithLatestTpl":
+						ret = {
+							wfid: wfid,
+							status: await Engine.restartWorkflow_with_latest_tpl(
+								tenant_id,
+								CRED.employee,
+								wfid,
+								CRED.employee.eid,
+							),
+						};
+						break;
 					case "destroy":
 						ret = {
 							wfid: wfid,
@@ -3053,6 +3064,36 @@ const tenant_id = CRED.tenant._id;
 				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 
 				return tpl;
+			}),
+		);
+	},
+
+	TemplateSetAutostop: async (req: Request, h: ResponseToolkit) => {
+		return replyHelper.buildResponse(
+			h,
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const CRED = req.auth.credentials as any;
+				const tenant_id = CRED.tenant._id;
+				let myEid = CRED.employee.eid;
+
+				let tplid = PLD.tplid;
+
+				let filter: any = { tenant: tenant_id, tplid: tplid };
+				let myGroup = CRED.employee.group;
+				if (myGroup !== "ADMIN") filter["author"] = myEid;
+				let tpl = await Template.findOneAndUpdate(
+					filter,
+					{ $set: { autostop: PLD.autostop } },
+					{ upsert: false, new: true },
+				);
+				if (!tpl) {
+					throw new EmpError("NO_TPL", `Not admin or owner`);
+				}
+				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
+
+        await Engine.collectTplAutostop();
+				return "Done";
 			}),
 		);
 	},

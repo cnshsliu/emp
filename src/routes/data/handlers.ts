@@ -1,0 +1,34 @@
+"use strict";
+import MongoSession from "../../lib/MongoSession";
+import replyHelper from "../../lib/ReplyHelpers";
+import { Request, ResponseToolkit } from "@hapi/hapi";
+import { Data } from "../../database/models/Data";
+
+export default {
+	SetData: async (req: Request, h: ResponseToolkit) => {
+		return h.response(
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const { context, key, data } = PLD;
+				if (!context.tenant) return "tenant is missing";
+				if (!key) return "key is missing";
+				await new Data({ tenant: context.tenant, context, key: key, data: data }).save();
+			}),
+		);
+	},
+
+	GetData: async (req: Request, h: ResponseToolkit) => {
+		return replyHelper.buildResponse(
+			h,
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const CRED = req.auth.credentials as any;
+				const tenant_id = CRED.tenant._id;
+				const { query } = PLD;
+				if (!query.key) return "query.key is required but misssing";
+				query.tenant = tenant_id;
+				return await Data.find(query);
+			}),
+		);
+	},
+};

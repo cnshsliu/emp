@@ -17,12 +17,14 @@ interface stepType {
 }
 interface BrainType {
 	name: string;
+	autostop?: number; //if > 0, then the process will be canceled if the latest task is staled for this minutes.
 	cells: string;
 }
 
 const brains: Record<string, BrainType> = {
 	"yana-001": {
 		name: "Yana001",
+		autostop: 1,
 		cells: `您好，{nickname}，我是亚娜，欢迎使用 Yarknode。
 下面，我来跟您介绍如何使用 Yarknode。
 
@@ -68,12 +70,11 @@ goto:/workflow
 
 const buildTemplate = (yanaid: string, employee: { nickname: string }) => {
 	let brain = brains[yanaid];
+	let autostop = brain.autostop ?? 0;
 	let xml = "";
 	brain.cells = brain.cells.replace("{nickname}", employee.nickname);
 	let tmp = brain.cells.split("\n");
 	let stepSerial = 0;
-	let stepId = `step-${stepSerial}`;
-	let stepContents: string[] = [];
 	let steps = [] as stepType[];
 	let currentStep: stepType = {
 		stepId: "",
@@ -124,7 +125,7 @@ const buildTemplate = (yanaid: string, employee: { nickname: string }) => {
 	}
 	xml += `<div class="link" from="${steps[steps.length - 1].stepId}" to="end"></div>`;
 	xml += `</div>`;
-	return { xml, steps };
+	return { xml, steps, autostop };
 };
 
 export default {
@@ -136,7 +137,7 @@ export default {
 
 				const tenant_id = CRED.tenant._id;
 
-				const { xml, steps } = buildTemplate(PLD.yanaid, CRED.employee);
+				const { xml, steps, autostop } = buildTemplate(PLD.yanaid, CRED.employee);
 				// console.log(xml);
 				let tplid = CRED.employee.eid + "_" + PLD.yanaid;
 
@@ -165,28 +166,30 @@ export default {
 							ins: false,
 							visi: "@" + CRED.employee.eid,
 							ksid: "",
+							autostop: autostop,
 						},
 					},
 					{ upsert: true, new: true },
 				);
+				await Engine.collectTplAutostop();
 
 				let wfid = IdGenerator();
 
-				let wfDoc = await Engine.startWorkflow(
-					false,
-					CRED.tenant._id.toString(),
-					tplid,
-					CRED.employee,
-					[],
-					"",
-					wfid,
-					"Yana-" + PLD.yanaid,
-					"",
-					"",
-					{},
-					"standalone",
-					[],
-				);
+				let wfDoc = await Engine.startWorkflow({
+					rehearsal: false,
+					tenant: CRED.tenant._id.toString(),
+					tplid: tplid,
+					starter: CRED.employee,
+					attachments: [],
+					teamid: "",
+					wfid: wfid,
+					wftitle: "Yana-" + PLD.yanaid,
+					parent_wf_id: "",
+					parent_work_id: "",
+					parent_vars: {},
+					runmode: "standalone",
+					uploadedFiles: [],
+				});
 				await Engine.resetTodosETagByWfId(tenant_id, wfid);
 				await Cache.resetETag(`ETAG:WORKFLOWS:${tenant_id}`);
 				return { tplid: template.tplid, wfid: wfDoc.wfid, steps: steps };

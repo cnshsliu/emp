@@ -36,15 +36,15 @@ const schema = new Schema(
 	},
 	{ timestamps: true },
 );
-schema.pre("find", function () {
-	_startTime = Date.now();
-});
+// schema.pre("find", function () {
+// 	_startTime = Date.now();
+// });
 
-schema.post("find", function () {
-	if (_startTime != null) {
-		console.log("Runtime find Workflow in Milliseconds: ", Date.now() - _startTime);
-	}
-});
+// schema.post("find", function () {
+// 	if (_startTime != null) {
+// 		console.log("Runtime find Workflow in Milliseconds: ", Date.now() - _startTime);
+// 	}
+// });
 
 type extraFields = {
 	starterCN?: string;

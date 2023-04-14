@@ -571,6 +571,26 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/template/set/autostop",
+			handler: Handlers.TemplateSetAutostop,
+			config: {
+				description: "Set template autostop",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						tplid: Joi.string().required(),
+						autostop: Joi.number().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/template/set/prop",
 			handler: Handlers.TemplateSetProp,
 			config: {
