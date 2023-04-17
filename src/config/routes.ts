@@ -24,6 +24,7 @@ const Routes = {
 			ShareRoutes.endpoints,
 			TryRoutes.endpoints,
 			YanaRoutes.endpoints,
+			DataRoutes.endpoints,
 		);
 		await server.route(allRoutes);
 	},

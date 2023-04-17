@@ -8,9 +8,11 @@ const schema = new Schema({
 		eid: String,
 		tplid: String,
 		wfid: String,
+		workid: String,
+		todoid: String,
 	},
 	key: { type: String, required: [true, "不能为空"], index: true },
-	data: { type: String, required: true },
+	data: { type: Object },
 });
 
 export type DataType = HydratedDocument<InferSchemaType<typeof schema>>;

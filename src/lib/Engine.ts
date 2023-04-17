@@ -5726,6 +5726,7 @@ const __getWorkFullInfo = async function (
 const _getFreeJumpNodes = (wfIO: CheerioAPI, tpRoot: any, tpNode: any): NodeBriefType[] => {
 	let ret: NodeBriefType[] = [];
 	let tplfjdef = tpRoot.attr("freejump")?.trim();
+  //if tplfjderf == yes, add all nodes to freejump_nodes
 	if (tplfjdef === "yes") {
 		tpRoot.find(".node.ACTION").each(function (i, el) {
 			let jq = wfIO(this);
@@ -5737,6 +5738,7 @@ const _getFreeJumpNodes = (wfIO: CheerioAPI, tpRoot: any, tpNode: any): NodeBrie
 			});
 		});
 	} else {
+    //else, plase matched node text to freejump_nodes
 		let fjdef = tpNode.attr("freejump")?.trim();
 		if (fjdef) {
 			let re = new RegExp(fjdef);
