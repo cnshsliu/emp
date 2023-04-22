@@ -34,6 +34,7 @@ type extraFields = {
 	mdcontent: string;
 	mdcontent2: string;
 	transition: boolean;
+	showChildren: boolean;
 	children: any[];
 	upnum: number;
 	downnum: number;

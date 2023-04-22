@@ -45,21 +45,15 @@ export default {
 				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 
 				let wfid = shortId();
-				let wfDoc = await Engine.startWorkflow(
-					false,
-					CRED.tenant._id,
-					newTemplate.tplid,
-					CRED.employee,
-					"",
-					"",
-					wfid,
-					kstpl.name,
-					"",
-					"",
-					{},
-					"standalone",
-					[],
-				);
+				let wfDoc = await Engine.startWorkflow({
+					rehearsal: false,
+					tenant: CRED.tenant._id,
+					tplid: newTemplate.tplid,
+					starter: CRED.employee,
+					wfid: wfid,
+					wftitle: kstpl.name,
+					runmode: "standalone",
+				});
 				await Engine.resetTodosETagByWfId(CRED.tenant._id, wfid);
 				await Cache.resetETag(`ETAG:WORKFLOWS:${CRED.tenant._id}`);
 				return wfDoc;

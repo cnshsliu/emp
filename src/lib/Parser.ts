@@ -113,7 +113,7 @@ const Parser = {
 
 	userGetVars: async function (
 		tenant: string | Types.ObjectId,
-		checkVisiForWhom: string,
+		checkVisiForEid: string,
 		wfid: string,
 		objid: string,
 		doers = [],
@@ -175,7 +175,7 @@ const Parser = {
 		//如果formWhom不是EMP，而是邮箱，则需要检查visi
 		//EMP是用在代表系统， 系统应该都可以看到全部
 		//只有当不是EMP时，执行后续检查
-		if (checkVisiForWhom !== "EMP") {
+		if (checkVisiForEid !== "EMP") {
 			//处理kvar的可见行 visi,
 			//
 			//
@@ -188,7 +188,7 @@ const Parser = {
 				//如果没有定义，visi，则公开
 				let hasVisi = Tools.hasValue(valueDef.visi);
 				if (hasVisi) {
-					if (checkVisiForWhom === Const.VISI_FOR_NOBODY) {
+					if (checkVisiForEid === Const.VISI_FOR_NOBODY) {
 						delete retResult[key];
 					} else {
 						//检查具体用户是否在visi中
@@ -196,14 +196,14 @@ const Parser = {
 							tenant,
 							"",
 							valueDef.visi, //pds of visi  。 这里的visi可以是@lucas@steve，也可以是[somebody],因为后面带入了 retResult
-							checkVisiForWhom,
+							checkVisiForEid,
 							wfid,
 							null, //wfRoot
 							null, //wfIO
 							retResult, //当前的kvars
 						);
 						let visiPeople = tmp.map((x) => x.eid);
-						if (visiPeople.includes(checkVisiForWhom) === false) {
+						if (visiPeople.includes(checkVisiForEid) === false) {
 							delete retResult[key];
 						}
 					}
@@ -219,7 +219,7 @@ const Parser = {
 						).lean();
 						if (cell) {
 							//如果cell的用户不是当前用户，则删除
-							if (cell.author !== checkVisiForWhom) {
+							if (cell.author !== checkVisiForEid) {
 								delete retResult[key];
 							}
 						}
@@ -427,6 +427,7 @@ const Parser = {
 			ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
 			return ret;
 		}
+		debugger;
 		if (wfRoot) {
 			//search inner team
 			let innerTeamDef = {};
@@ -724,8 +725,8 @@ const Parser = {
 		pds: string,
 		referredEid: string,
 		wfid: string,
-		wfRoot: any,
 		wfIO: CheerioAPI,
+		wfRoot: any,
 		kvars: any,
 		insertDefault: boolean = true,
 	): Promise<DoersArray> {

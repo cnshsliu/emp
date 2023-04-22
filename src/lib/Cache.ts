@@ -15,15 +15,15 @@ import LRU from "lru-cache";
 
 const lruCache = new LRU({ max: 10000 });
 
-import type { CoverInfo, AvatarInfo, SmtpInfo } from "./EmpTypes";
-const PERM_EXPIRE_SECONDS = 60;
+import type { CoverInfo, AvatarInfo, SmtpInfo, TenantIdType } from "./EmpTypes";
+// const PERM_EXPIRE_SECONDS = 60;
 
 const internals = {
 	/**
 	 * 设置 eid -> nickname 映射缓存
 	 */
 	setEmployeeName: async function (
-		tenant: string | Types.ObjectId,
+		tenant: TenantIdType,
 		eid: string,
 		nickname: string = null,
 		expire: number = 60,
@@ -46,7 +46,7 @@ const internals = {
 	},
 
 	setEmployeeNotify: async function (
-		tenant: string | Types.ObjectId,
+		tenant: TenantIdType,
 		eid: string,
 		expire: number = 60,
 	): Promise<string> {
@@ -60,7 +60,7 @@ const internals = {
 
 	/* 根据eid从缓存去的用户名称 */
 	getEmployeeName: async function (
-		tenant: string | Types.ObjectId,
+		tenant: TenantIdType,
 		eid: string,
 		where: string = "unknown",
 	): Promise<string> {
@@ -86,16 +86,13 @@ const internals = {
 		return ret;
 	},
 
-	shouldNotifyViaEmail: async function (tenant: string | Types.ObjectId, doer: string) {
+	shouldNotifyViaEmail: async function (tenant: TenantIdType, doer: string) {
 		let ew = await internals.getEmployeeNotifyConfig(tenant, doer);
 		return ew && ew.indexOf("e") >= 0;
 	},
 
 	/* 根据eid去的用户的提醒发送设置 */
-	getEmployeeNotifyConfig: async function (
-		tenant: string | Types.ObjectId,
-		eid: string,
-	): Promise<any> {
+	getEmployeeNotifyConfig: async function (tenant: TenantIdType, eid: string): Promise<any> {
 		const key = `NOTIFY:${tenant}:${eid}`;
 		let ew = lruCache.get(key);
 		if (ew) {
@@ -109,10 +106,7 @@ const internals = {
 	},
 
 	/* 从缓存去的用户的签名档 */
-	getEmployeeSignature: async function (
-		tenant: string | Types.ObjectId,
-		eid: string,
-	): Promise<string> {
+	getEmployeeSignature: async function (tenant: TenantIdType, eid: string): Promise<string> {
 		let key = `SIGNATURE:${tenant}:${eid}`;
 		let signature = lruCache.get(key) as string;
 		if (signature) {
@@ -168,10 +162,7 @@ const internals = {
 		}
 	},
 
-	getTplCoverInfo: async function (
-		tenant: string | Types.ObjectId,
-		tplid: string,
-	): Promise<CoverInfo> {
+	getTplCoverInfo: async function (tenant: TenantIdType, tplid: string): Promise<CoverInfo> {
 		let key = "TPLCOVER:" + tplid;
 		let cached = lruCache.get(key) as CoverInfo;
 		if (cached) {
@@ -197,10 +188,7 @@ const internals = {
 		lruCache.delete(key);
 	},
 
-	getEmployeeAvatarInfo: async function (
-		tenant: string | Types.ObjectId,
-		eid: string,
-	): Promise<AvatarInfo> {
+	getEmployeeAvatarInfo: async function (tenant: TenantIdType, eid: string): Promise<AvatarInfo> {
 		let key = `AVATAR:${tenant}:${eid}`;
 		let cached = lruCache.get(key) as AvatarInfo;
 		if (!cached) {
@@ -234,7 +222,7 @@ const internals = {
 	 * @param {string} eid
 	 * @returns {Promise<string>}
 	 */
-	getEmployeeOU: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
+	getEmployeeOU: async function (tenant: TenantIdType, eid: string): Promise<string> {
 		//TODO: where is the updateing?
 		let key = `OU:${tenant}:${eid}`;
 		let ouCode = lruCache.get(key) as string;
@@ -262,7 +250,7 @@ const internals = {
 		return true;
 	},
 
-	getEmployeeGroup: async function (tenant: string | Types.ObjectId, eid: string): Promise<string> {
+	getEmployeeGroup: async function (tenant: TenantIdType, eid: string): Promise<string> {
 		let key = `USRGRP:${tenant}:${eid}`;
 		let mygroup = lruCache.get(key) as string;
 		if (!mygroup) {
@@ -282,7 +270,7 @@ const internals = {
 		return mygroup;
 	},
 
-	getOrgTimeZone: async function (tenant: string | Types.ObjectId): Promise<string> {
+	getOrgTimeZone: async function (tenant: TenantIdType): Promise<string> {
 		let key = "OTZ:" + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
@@ -297,7 +285,7 @@ const internals = {
 		return ret;
 	},
 
-	getOrgSmtp: async function (tenant: string | Types.ObjectId): Promise<SmtpInfo> {
+	getOrgSmtp: async function (tenant: TenantIdType): Promise<SmtpInfo> {
 		let key = "SMTP:" + tenant;
 		let ret = lruCache.get(key) as SmtpInfo;
 		if (!ret) {
@@ -322,11 +310,11 @@ const internals = {
 		return ret;
 	},
 
-	delOrgTags: async function (tenant: string | Types.ObjectId): Promise<void> {
+	delOrgTags: async function (tenant: TenantIdType): Promise<void> {
 		await internals.removeOrgRelatedCache(tenant, "ORGTAGS");
 	},
 
-	getOrgTags: async function (tenant: string | Types.ObjectId): Promise<string> {
+	getOrgTags: async function (tenant: TenantIdType): Promise<string> {
 		let key = "ORGTAGS:" + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
@@ -342,7 +330,7 @@ const internals = {
 		return ret;
 	},
 
-	getTenantDomain: async function (tenant: string | Types.ObjectId): Promise<string> {
+	getTenantDomain: async function (tenant: TenantIdType): Promise<string> {
 		let key = "TNTD:" + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
@@ -370,7 +358,7 @@ const internals = {
 	},
 
 	removeKeyByEid: async function (
-		tenant: string | Types.ObjectId,
+		tenant: TenantIdType,
 		eid: string,
 		cacheType: string = null,
 	): Promise<string> {
@@ -389,10 +377,7 @@ const internals = {
 		return eid;
 	},
 
-	removeOrgRelatedCache: async function (
-		tenant: string | Types.ObjectId,
-		cacheType: string,
-	): Promise<string> {
+	removeOrgRelatedCache: async function (tenant: TenantIdType, cacheType: string): Promise<string> {
 		if (cacheType) lruCache.delete(cacheType + ":" + tenant);
 		else {
 			lruCache.delete("OTZ:" + tenant);

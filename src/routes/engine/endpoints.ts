@@ -804,6 +804,7 @@ const internals = {
 						//pbotype:   text | file | all,
 						// 当前，当用api调用时，仅支持text方式
 						pbotype: Joi.string().optional().default("text"),
+						stepid: Joi.string().required(),
 					},
 					validator: Joi,
 				},
@@ -922,7 +923,12 @@ const internals = {
 					}).unknown(),
 					payload: {
 						wfid: Joi.string().required(),
-						attachments: Joi.array().items({ serverId: Joi.string().required() }),
+						attachments: Joi.array().items(
+							Joi.object({
+								type: Joi.string().required(),
+								author: Joi.string().required(),
+							}).unknown(),
+						),
 					},
 					validator: Joi,
 				},

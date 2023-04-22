@@ -1,10 +1,10 @@
-import Mongoose from "mongoose";
-//The document structure definition
+"user strict";
+import { Schema, InferSchemaType, model, HydratedDocument } from "mongoose";
 
 //Same fields as Parse.com
-const schema = new Mongoose.Schema(
+const schema = new Schema(
 	{
-		tenant: { type: Mongoose.Schema.Types.ObjectId, ref: "Tenant" },
+		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		round: { type: Number, default: 0 },
 		wfid: { type: String, required: [true, "不能为空"], index: true },
 		workid: { type: String, required: [true, "不能为空"], index: true },
@@ -20,4 +20,6 @@ const schema = new Mongoose.Schema(
 	{ timestamps: true },
 );
 
-export default Mongoose.model("Work", schema);
+export type WorkType = HydratedDocument<InferSchemaType<typeof schema>>;
+
+export const Work = model("Work", schema);

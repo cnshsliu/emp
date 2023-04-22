@@ -1,3 +1,4 @@
+import { CheerioAPI } from "cheerio";
 import { UserType } from "../database/models/User";
 import { EmployeeType } from "../database/models/Employee";
 import { TenantType } from "../database/models/Tenant";
@@ -7,6 +8,60 @@ export type AvatarInfo = {
 	path: string;
 	media: string;
 	etag: string;
+};
+
+export type WorkflowAttachmentEntryTextType = {
+	type: "text";
+	author: string;
+	text: string;
+};
+
+export type WorkflowAttachmentEntryFileType = {
+	type: "file";
+	author: string;
+	forWhat: "workflow";
+	forWhich: string;
+	forKey: string;
+};
+
+export type WorkflowAttachmentEntryType =
+	| WorkflowAttachmentEntryTextType
+	| WorkflowAttachmentEntryFileType;
+
+export type VoteControlType = {
+	vote: string;
+	vote_any: string;
+	vote_failto: string;
+	vote_percent: number;
+	userDecision: string;
+};
+export type TenantIdType = string | Types.ObjectId;
+export type ReplaceUserMsgType = {
+	action: string;
+	objtype: string;
+	tenant: TenantIdType;
+	from: string;
+	admin: string;
+	to: string;
+	tranx: string;
+	todo: string[];
+	tpl: string[];
+};
+
+export type EmailMsgType = {
+	tenant: TenantIdType;
+	recipients: string | string[];
+	cc: string | string[];
+	bcc: string | string[];
+	subject: string;
+	html: string;
+	reason: string;
+};
+export type CommentContextType = {
+	wfid?: string;
+	workid?: string;
+	todoid?: string;
+	biztitle?: string;
 };
 
 export type SmtpInfo = {
@@ -62,10 +117,11 @@ export type MailNextDef = {
 };
 
 export type ProcNextParams = {
-	tenant: string | Types.ObjectId;
+	tenant: TenantIdType;
 	teamid: string;
 	tplid: string;
 	wfid: string;
+	wfIO: CheerioAPI;
 	tpRoot: any;
 	wfRoot: any;
 	this_nodeid: string;
@@ -216,6 +272,7 @@ export type PondFileInfoFromPayloadType = {
 	contentType: string;
 	realName: string;
 	stepid: string;
+	type?: string;
 };
 
 export type PondFileInfoOnServerType = {

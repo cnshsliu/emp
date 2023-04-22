@@ -2,9 +2,12 @@ import {
 	MtcCredentials,
 	PondFileInfoFromPayloadType,
 	PondFileInfoOnServerType,
-	StartWorkflowType,
+	WorkflowAttachmentEntryType,
+	WorkflowAttachmentEntryTextType,
+	WorkflowAttachmentEntryFileType,
 } from "../../lib/EmpTypes";
 import { expect } from "@hapi/code";
+import AccessControl from "../../lib/AccessControl";
 import { Request, ResponseToolkit } from "@hapi/hapi";
 import assert from "assert";
 import Parser from "../../lib/Parser";
@@ -28,7 +31,7 @@ import { Crontab } from "../../database/models/Crontab";
 import Webhook from "../../database/models/Webhook";
 import { EdittingLog } from "../../database/models/EdittingLog";
 import { Todo } from "../../database/models/Todo";
-import Work from "../../database/models/Work";
+import { Work } from "../../database/models/Work";
 import Route from "../../database/models/Route";
 import List from "../../database/models/List";
 import { Cell, CellType } from "../../database/models/Cell";
@@ -484,7 +487,7 @@ export default {
 					rehearsal: false, //Rehearsal
 					tenant: CRED.tenant._id,
 					tplid: tplid,
-					starter: CRED.employee.eid,
+					starter: CRED.employee,
 					textPbo: ["https://www.metatocome.com/docs"],
 					wftitle: "Metaflow Learning Guide",
 				});
@@ -1002,6 +1005,15 @@ export default {
 				const tenant_id = CRED.tenant._id;
 				let myEid = CRED.employee.eid;
 				let withDoc = PLD.withdoc;
+
+				let myGroup = CRED.employee.group;
+
+				if (
+					myGroup !== "ADMIN" &&
+					(await AccessControl.isDoerInWorkflow(tenant_id, CRED.employee.eid, PLD.wfid)) === false
+				) {
+					throw new EmpError("No permisisons", "You are not in this workflow");
+				}
 				let wf = await RCL.getWorkflow(
 					{ tenant: tenant_id, wfid: PLD.wfid },
 					"engine/handler.WorkflowRead",
@@ -1011,7 +1023,7 @@ export default {
 				if (wf) {
 					let retWf = JSON.parse(JSON.stringify(wf));
 					retWf.beginat = retWf.createdAt;
-					retWf.history = await Engine.getWfHistory(tenant_id, myEid, PLD.wfid, wf);
+					retWf.history = await Engine.getWfHistory(tenant_id, myEid, PLD.wfid);
 					if (withDoc === false) delete retWf.doc;
 					if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
 					retWf.starterCN = await Cache.getEmployeeName(tenant_id, wf.starter, "WorkflowRead");
@@ -1075,13 +1087,13 @@ export default {
 							ret = wf.attachments;
 							break;
 						case "text":
-							ret = ret.filter((x: any) => {
-								return typeof x === "string";
+							ret = ret.filter((x: WorkflowAttachmentEntryTextType) => {
+								return x.type === "text";
 							});
 							break;
 						case "file":
-							ret = ret.filter((x: any) => {
-								return typeof x !== "string";
+							ret = ret.filter((x: WorkflowAttachmentEntryFileType) => {
+								return x.type === "file";
 							});
 							break;
 					}
@@ -1100,13 +1112,9 @@ export default {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let newPbo = PLD.pbo;
 				let pbotype = PLD.pbotype;
 				if (pbotype !== "text") {
-					throw new EmpError("NOT_SUPPORT", "Only texttype pbo is supported at this moment");
-				}
-				if (!Array.isArray(newPbo)) {
-					newPbo = [newPbo];
+					throw new EmpError("NOT_SUPPORT", "Only text type pbo is supported at this moment");
 				}
 				let wf = await RCL.getWorkflow(
 					{ tenant: tenant_id, wfid: PLD.wfid },
@@ -1115,13 +1123,16 @@ export default {
 				if (wf) {
 					if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "update")))
 						throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
-
 					//保留文件型attachments， 去除所有text类型attachments
-					wf.attachments = wf.attachments.filter((x: any) => {
-						return x.serverId ? true : false;
-					});
 					//将新的text类型attachments放到最前面;
-					wf.attachments.unshift(...newPbo);
+					[].concat(PLD.pbo).map((x: string) => {
+						wf.attachments.push({
+							type: "text",
+							author: CRED.employee.eid,
+							stepid: PLD.stepid,
+							text: x,
+						});
+					});
 					await Workflow.findOneAndUpdate(
 						{ tenant: tenant_id, wfid: PLD.wfid },
 						{ $set: { attachments: wf.attachments } },
@@ -1135,6 +1146,61 @@ export default {
 					wf = await RCL.getWorkflow(
 						{ tenant: tenant_id, wfid: PLD.wfid },
 						"engine/handler.WorkflowSetPbo",
+					);
+					return wf.attachments;
+				} else {
+					throw new EmpError("NOT_FOUND", "Workflow not found");
+				}
+			}),
+		);
+	},
+
+	WorkflowClearPbo: async (req: Request, h: ResponseToolkit) => {
+		return replyHelper.buildResponse(
+			h,
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const CRED = req.auth.credentials as any;
+				const tenant_id = CRED.tenant._id;
+				let pbotype = PLD.pbotype;
+				if (pbotype !== "text") {
+					throw new EmpError("NOT_SUPPORT", "Only text type pbo is supported at this moment");
+				}
+				let wf = await RCL.getWorkflow(
+					{ tenant: tenant_id, wfid: PLD.wfid },
+					"engine/handler.WorkflowCleatPbo",
+				);
+				if (wf) {
+					if (!(await SPC.hasPerm(CRED.employee, "workflow", wf, "update")))
+						throw new EmpError("NO_PERM", "You don't have permission to modify this workflow");
+					//保留文件型attachments， 去除所有text类型attachments
+					//将新的text类型attachments放到最前面;
+					switch (PLD.type) {
+						case "all":
+							wf.attachments = [];
+							break;
+						case "text":
+							wf.attachments = wf.attachments.filter((x: WorkflowAttachmentEntryType) => {
+								return x.type === "file";
+							});
+						case "file":
+							wf.attachments = wf.attachments.filter((x: WorkflowAttachmentEntryType) => {
+								return x.type === "text";
+							});
+					}
+					await Workflow.findOneAndUpdate(
+						{ tenant: tenant_id, wfid: PLD.wfid },
+						{ $set: { attachments: wf.attachments } },
+						{ upsert: false, new: true },
+					);
+					await RCL.resetCache(
+						{ tenant: tenant_id, wfid: PLD.wfid },
+						"engine/handler.WorkflowClearPbo",
+						RCL.CACHE_ELEVEL_REDIS,
+					);
+					wf = await RCL.getWorkflow(
+						{ tenant: tenant_id, wfid: PLD.wfid },
+						"engine/handler.WorkflowClearPbo",
 					);
 					return wf.attachments;
 				} else {
@@ -1299,6 +1365,7 @@ export default {
 					pondfiles = pondfiles.map((x: PondFileInfoFromPayloadType) => {
 						x.author = CRED.employee.eid;
 						x.forKey = PLD.forKey;
+						x.type = "file";
 						return x;
 					});
 					attachFiles = pondfiles.filter((x: any) => x.forKey.startsWith("csv_") === false);
@@ -1352,17 +1419,14 @@ export default {
 				//TODO: to test it.
 				for (let i = 0; i < attachmentsToDelete.length; i++) {
 					let tobeDel = attachmentsToDelete[i];
-					if (typeof tobeDel === "string") {
-						wfAttachments = wfAttachments.filter((x: any) => {
-							return x !== tobeDel;
-						});
-					} else {
-						let tmp = [];
-						for (let i = 0; i < wfAttachments.length; i++) {
-							if (
-								wfAttachments[i].serverId === tobeDel.serverId &&
-								(canDeleteAll || wfAttachments[i].author === myEid)
-							) {
+					let tmp = [];
+					for (let i = 0; i < wfAttachments.length; i++) {
+						if (
+							((tobeDel.type === "file" && wfAttachments[i].serverId === tobeDel.serverId) ||
+								(tobeDel.type === "text" && wfAttachments[i].text === tobeDel.text)) &&
+							(canDeleteAll || wfAttachments[i].author === myEid)
+						) {
+							if (tobeDel.type === "file") {
 								try {
 									let fileInfo = Tools.getPondServerFile(
 										tenant_id,
@@ -1370,15 +1434,13 @@ export default {
 										wfAttachments[i].serverId,
 									);
 									fs.unlinkSync(fileInfo.fullPath);
-								} catch (e) {
-									//console.error(e);
-								}
-							} else {
-								tmp.push(wfAttachments[i]);
+								} catch (e) {}
 							}
+						} else {
+							tmp.push(wfAttachments[i]);
 						}
-						wfAttachments = tmp;
 					}
+					wfAttachments = tmp;
 				}
 
 				wf = await RCL.updateWorkflow(
@@ -2061,21 +2123,34 @@ export default {
 				if (PLD.skip) skip = PLD.skip;
 				let limit = 10000;
 				if (PLD.limit) limit = PLD.limit;
-				if (PLD.pattern) {
+				let patternFilter = {};
+				if (PLD.pattern.trim()) {
+					let pattern = PLD.pattern.trim();
 					if (PLD.pattern.startsWith("wf:")) {
 						let wfid =
 							PLD.pattern.indexOf(" ") > 0
 								? PLD.pattern.substring(3, PLD.pattern.indexOf(" "))
 								: PLD.pattern.substring(3);
-						let pattern =
+						pattern =
 							PLD.pattern.indexOf(" ") > 0
 								? PLD.pattern.substring(PLD.pattern.indexOf(" ") + 1)
 								: "";
 						filter.wfid = wfid;
-						filter["title"] = { $regex: `.*${pattern}.*` };
-					} else {
-						filter["title"] = { $regex: `.*${PLD.pattern}.*` };
 					}
+
+					let buildTextQuery = (pattern: string) => {
+						//const regexPatterns = pattern.split(" ").map((word) => new RegExp(word, "i"));
+						const regexPatterns = pattern.split(" ").map((word) => `.*${word}.*`);
+
+						const query = {
+							$and: regexPatterns.map((regex) => ({ title: { $regex: regex } })),
+						};
+						console.log(query);
+						return query;
+					};
+					patternFilter = buildTextQuery(pattern);
+					//filter["title"] = buildTextQuery(pattern);
+					// filter["title"] = { $regex: `.*${pattern}.*` };
 				}
 				if (Tools.hasValue(PLD.tplid)) filter.tplid = PLD.tplid;
 				else {
@@ -2161,9 +2236,9 @@ export default {
 					filter["doer"] = myEid;
 				}
 
-				let total = await Todo.find(filter, { __v: 0 }).countDocuments();
 				let ret = await Todo.aggregate([
 					{ $match: filter },
+          { $match: patternFilter},
 					{
 						//lastdays， 当前活动已经持续了多少天，如果是ST_RUN或者ST_PAUSE，跟当前时间相比；
 						//否则，用updatedAt - createdAt
@@ -2187,6 +2262,7 @@ export default {
 					{ $skip: skip },
 					{ $limit: limit },
 				]);
+				let total = ret.length;
 				for (let i = 0; i < ret.length; i++) {
 					if (PLD.showpostponed === false) {
 						//如果不显示postponed，也就是搜索结果要么是没有postpone，
@@ -2231,7 +2307,9 @@ export default {
 				const CRED = req.auth.credentials as any;
 				let myEid = CRED.employee.eid;
 				//如果有wfid，则找只属于这个wfid工作流的workitems
-				let workitem = await Engine.getWorkInfo(CRED.tenant._id, myEid, PLD.todoid);
+				let myGroup = CRED.employee.group;
+				debugger;
+				let workitem = await Engine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
 				return workitem;
 			}),
 		);
@@ -2309,8 +2387,9 @@ export default {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				let myEid = CRED.employee.eid;
+				let myGroup = CRED.employee.group;
 				//如果有wfid，则找只属于这个wfid工作流的workitems
-				let workitem = await Engine.getWorkInfo(CRED.tenant._id, myEid, PLD.todoid);
+				let workitem = await Engine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
 				let html = "<div class='container'>";
 				html += "Work:" + workitem.title;
 				html += "KVars:" + JSON.stringify(workitem.kvars);
@@ -2332,7 +2411,6 @@ export default {
 					PLD.todoid,
 					CRED.tenant._id,
 					PLD.doer,
-					PLD.wfid,
 					PLD.route,
 					PLD.kvars,
 					PLD.comment,
@@ -2431,7 +2509,6 @@ export default {
 					todo.todoid,
 					CRED.tenant._id,
 					PLD.doer,
-					PLD.wfid,
 					PLD.route,
 					PLD.kvars,
 					PLD.comment,
@@ -3092,7 +3169,7 @@ const tenant_id = CRED.tenant._id;
 				}
 				await Cache.resetETag(`ETAG:TEMPLATES:${tenant_id}`);
 
-        await Engine.collectTplAutostop();
+				await Engine.collectTplAutostop();
 				return "Done";
 			}),
 		);
@@ -3969,7 +4046,7 @@ const tenant_id = CRED.tenant._id;
 						ou: "root",
 						eid: OUEID,
 						account: CRED.tenant.owner,
-						cn: "组织顶层",
+						cn: "组织顶���",
 						position: "",
 						line: 0,
 					});
@@ -5041,7 +5118,7 @@ const tenant_id = CRED.tenant._id;
 				}
 				if (category.includes("I_AM_IN")) {
 					let todoGroup = await Todo.aggregate([
-						{ $match: { doer: myEid } },
+						{ $match: { tenant: tenant_id, doer: myEid } },
 						{ $group: { _id: "$wfid", count: { $sum: 1 } } },
 					]);
 					wfIamIn = todoGroup.map((x) => x._id);
@@ -5057,6 +5134,7 @@ const tenant_id = CRED.tenant._id;
 					// 在查找 comment时，  I_AM_QED 缺省需要包含 I_STARTED
 				}
 
+				//  对管理员来说，如果是全部课件，则直接搜索所有的comment
 				if (iamAdmin && category.length === 1 && category[0] === "ALL_VISIED") {
 					let filter_all = q
 						? {
@@ -5075,7 +5153,9 @@ const tenant_id = CRED.tenant._id;
 						.limit(pageSize)
 						.lean();
 				} else {
-					wfIds = [...wfIamVisied, ...wfIStarted, ...wfIamIn, ...wfIamQed];
+					//非管理员，要返回这些workflow中的comments
+					//wfIds = [...wfIamVisied, ...wfIStarted, ...wfIamIn, ...wfIamQed];
+					wfIds = [...wfIStarted, ...wfIamIn];
 					wfIds = [...new Set(wfIds)];
 					let filter_wfid = q
 						? {
@@ -5095,6 +5175,31 @@ const tenant_id = CRED.tenant._id;
 						.skip(pageSer * 20)
 						.limit(pageSize)
 						.lean();
+					let cmtsIds = cmts.map((x) => x._id);
+					console.log(cmtsIds);
+
+					let filter_people = q
+						? {
+								tenant: tenant_id,
+								_id: { $nin: cmtsIds },
+								objtype: "TODO",
+								people: myUid,
+								content: new RegExp(`.*${q}.*`),
+						  }
+						: {
+								tenant: tenant_id,
+								_id: { $nin: cmtsIds },
+								objtype: "TODO",
+								people: myUid,
+						  };
+
+					let qedComments = await Comment.find(filter_people, { __v: 0 })
+						.sort("-updatedAt")
+						.skip(pageSer * 20)
+						.limit(pageSize)
+						.lean();
+					total += qedComments.length;
+					cmts = cmts.concat(qedComments);
 				}
 
 				for (let i = 0; i < cmts.length; i++) {
@@ -5159,7 +5264,7 @@ const tenant_id = CRED.tenant._id;
 					}
 				}
 
-				////清空 被评价的 TODO和comment已不存在的comment
+				////��空 被���价的 TODO和comment已不存在的comment
 				let tmp = await Comment.find({ tenant: tenant_id }, { __v: 0 });
 				for (let i = 0; i < tmp.length; i++) {
 					if (tmp[i].objtype === "TODO") {
@@ -5843,6 +5948,16 @@ const tenant_id = CRED.tenant._id;
 				const tenant_id = CRED.tenant._id;
 				//let myEid = CRED.employee.eid;
 				let wfid = req.params.wfid;
+
+				let myGroup = CRED.employee.group;
+
+				if (
+					myGroup !== "ADMIN" &&
+					(await AccessControl.isDoerInWorkflow(tenant_id, CRED.employee.eid, wfid)) === false
+				) {
+					throw new EmpError("No permisisons", "You are not in this workflow");
+				}
+
 				let serverId = req.params.serverId;
 				let wf = await RCL.getWorkflow(
 					{ tenant: tenant_id, wfid },
@@ -5865,6 +5980,12 @@ const tenant_id = CRED.tenant._id;
 					throw new EmpError("FILE_NOT_FOUND", "Attachment file not found");
 				}
 				var readStream = fs.createReadStream(pondServerFile.fullPath);
+
+				//TODO: 根据worfklwoid 和 eid， 判断用户是否在这个worfklow中，
+				//根据是否有todo发到这个用户即可进行判断
+				//也许Engine中已经有了这个方法
+				//当然，最好放到新文件中2，Engine已经太大了
+				//TODO： 限制DISUSS只被参与者访问
 				return replyHelper.buildReturn(readStream, {
 					"cache-control": "no-cache",
 					Pragma: "no-cache",
@@ -6063,7 +6184,7 @@ const tenant_id = CRED.tenant._id;
 						let firstRow = -1;
 						let rows = cell.cells;
 						for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-							// 标题行钱可能有空行，前面一句跳过空行后，第一行不为空的行为firstRow
+							// 标题行钱可能有���行，前面一句跳过空行后，第一行不为空的行为firstRow
 							if (firstRow < 0) firstRow = rowIndex;
 							let cols = rows[rowIndex];
 							if (Tools.nbArray(cols) === false) {
