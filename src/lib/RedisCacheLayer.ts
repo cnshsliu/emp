@@ -104,8 +104,8 @@ const delWorkflow = async (wfFilter: WfFilter, fromFunc: string) => {
 
 const resetCache = async (wfFilter: WfFilter, fromFunc: string, level: number) => {
 	const wfCacheKey = await genRedisKey(wfFilter);
-	level >= 1 && lruCache.delete(wfCacheKey);
-	level >= 2 && (await redisClient.del(wfCacheKey));
+	level >= CACHE_ELEVEL_MEM && lruCache.delete(wfCacheKey);
+	level >= CACHE_ELEVEL_REDIS && (await redisClient.del(wfCacheKey));
 };
 
 export default {

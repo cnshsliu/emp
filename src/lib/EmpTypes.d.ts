@@ -198,6 +198,7 @@ export type workflowInfo = {
 	kvars: any;
 	kvarsArr: any[];
 	starter: string;
+	starterCN: string;
 	wftitle: string;
 	pwfid: string;
 	pworkid: string;
@@ -207,6 +208,7 @@ export type workflowInfo = {
 	doneat: string;
 	allowdiscuss: boolean;
 	history: any[];
+	pbostatus: boolean;
 };
 export type workFullInfo = {
 	kvars: any;
@@ -215,11 +217,13 @@ export type workFullInfo = {
 	workid: string;
 	todoid: string;
 	orkid: string;
+	wftitle: string;
 	title: string;
 	cellInfo: string;
 	allowdiscuss: boolean;
 	status: string;
 	wfstarter: string;
+	wfstarterCN: string;
 	rehearsal: boolean;
 	createdAt: string;
 	updatedAt: string;
@@ -290,6 +294,7 @@ export type StartWorkflowType = {
 	starter: any;
 	theTemplate?: any;
 	textPbo?: string[];
+	pbostatus: string;
 	teamid?: string;
 	wfid?: string;
 	parent_wf_id?: string;

@@ -26,7 +26,7 @@ export default {
 				const tenant_id = CRED.tenant._id;
 				const { query } = PLD;
 				if (!query.key) return "query.key is required but misssing";
-				query.tenant = tenant_id;
+				console.log(JSON.stringify(query, null, 2));
 				return await Data.find(query);
 			}),
 		);

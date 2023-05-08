@@ -50,6 +50,7 @@ export default {
 					tenant: CRED.tenant._id,
 					tplid: newTemplate.tplid,
 					starter: CRED.employee,
+					pbostatus: "__init__",
 					wfid: wfid,
 					wftitle: kstpl.name,
 					runmode: "standalone",

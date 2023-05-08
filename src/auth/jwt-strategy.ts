@@ -87,7 +87,7 @@ const JwtAuth = {
 				account = user.account;
 				await redisClient.set(credentials_redisKey, JSON.stringify(result.credentials));
 				await redisClient.expire(credentials_redisKey, 10 * 60 * 60);
-				console.log("Refreshed credentials from database successfully");
+				//	console.log("Refreshed credentials from database successfully");
 			} else {
 				result = { isValid: false, credentials: {} };
 				await redisClient.del(credentials_redisKey);

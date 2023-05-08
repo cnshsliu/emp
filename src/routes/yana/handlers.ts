@@ -179,6 +179,7 @@ export default {
 					rehearsal: false,
 					tenant: CRED.tenant._id.toString(),
 					tplid: tplid,
+					pbostatus: "__init__",
 					starter: CRED.employee,
 					attachments: [],
 					teamid: "",

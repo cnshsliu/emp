@@ -45,11 +45,12 @@ import TempSubset from "../../database/models/TempSubset";
 import OrgChart from "../../database/models/OrgChart";
 import OrgChartAdmin from "../../database/models/OrgChartAdmin";
 import SavedSearch from "../../database/models/SavedSearch";
-import { Site } from "../../database/models/Site";
 import OrgChartHelper from "../../lib/OrgChartHelper";
 import replyHelper from "../../lib/ReplyHelpers";
 import Tools from "../../tools/tools.js";
 import Engine from "../../lib/Engine";
+import WorkEngine from "../../lib/WorkEngine";
+import CommentEngine from "../../lib/CommentEngine";
 import SPC from "../../lib/SystemPermController";
 import EmpError from "../../lib/EmpError";
 import lodash from "lodash";
@@ -252,85 +253,76 @@ async function setTeamMembersName(tenant_id: string | Mongoose.Types.ObjectId, t
 	}
 	return team;
 }
-async function AutoRegisterOrgChartUser(
-	tenant: string,
-	administrator: any,
-	staffs: any[],
-	defaultPassword: string,
-) {
-	throw new EmpError(
-		"NOT_WORK_NOW",
-		"因account全局唯一，不再使用 email区别用户，不能再自动注册用户",
-	);
-	//TODO:  email去重, orgchart不用去重，但register user时需要去重
-	/*
-  for (let i = 0; i < staffs.length; i++) {
-    let staff_email = staffs[i].eid;
-    let staff_cn = staffs[i].cn;
-    //If user already registered, if yes, send invitation, if not, register this user and add this user to my current org automatically.
-    let existing_staff_user = await User.findOne({ email: staff_email }, { __v: 0 });
-    //If this email is already registered, send enter org invitation
-    if (existing_staff_user) {
-      if (existing_staff_user.username !== staff_cn) {
-        await User.updateOne({ email: staff_email }, { $set: { username: staff_cn } });
-      }
-      if (existing_staff_user.tenant.toString() !== administrator.tenant._id.toString()) {
-        //如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
-        let frontendUrl = Tools.getFrontEndUrl();
-        var mailbody = `<p>${administrator.username} (email: ${administrator.email}) </p> <br/> invite you to join his organization, <br/>
-       Please login to Metatocome to accept <br/>
-      <a href='${frontendUrl}'>${frontendUrl}</a>`;
-        Engine.sendTenantMail(
-          tenant_id,
-          staff_email,
-          `[MTC] Invitation from ${administrator.username}`,
-          mailbody,
-          "Invitation",
-        ).then();
-      }
-    } else {
-      //If this email is not registered, auto register and auto enter org
-      //1. Create personal tenant.
-      let staffTenant = new Tenant({
-        site: administrator.site,
-        name: staff_cn + " Personal Org",
-        orgmode: false,
-        owner: staff_email,
-        css: "",
-        timezone: administrator.tenant.timezone,
-      });
-      staffTenant = await staffTenant.save();
-      try {
-        let staffUser = new User({
-          site: administrator.site,
-          username: staff_cn,
-          tenant: administrator.tenant._id,
-          password: Crypto.encrypt(defaultPassword),
-          email: staff_email,
-          emailVerified: true,
-          group: "DOER",
-          avatar: "",
-          ew: true,
-          ps: 20,
-        });
-        staffUser = await staffUser.save();
-      } catch (e) {
-        staffTenant.delete();
-      }
-    }
-  } //for
- */
-}
 
-const CheckKsAdminPermission = async (cred: any) => {
-	if (cred.employee.group !== "ADMIN" || cred.tenant.domain !== (await Cache.getKsAdminDomain()))
-		throw new EmpError(
-			"KS_DOMAIN_ADMIN_IS_REQUIRED",
-			`Only ks admin domain [${await Cache.getKsAdminDomain()}] administrators are allowed for this operation, yours: ${
-				cred.tenant.domain
-			}`,
-		);
-};
+// async function AutoRegisterOrgChartUser(
+// 	tenant: string,
+// 	administrator: any,
+// 	staffs: any[],
+// 	defaultPassword: string,
+// ) {
+// 	throw new EmpError(
+// 		"NOT_WORK_NOW",
+// 		"因account全局唯一，不再使用 email区别用户，不能再自动注册用户",
+// 	);
+// 	//TODO:  email去重, orgchart不用去重，但register user时需要去重
+// 	/*
+//   for (let i = 0; i < staffs.length; i++) {
+//     let staff_email = staffs[i].eid;
+//     let staff_cn = staffs[i].cn;
+//     //If user already registered, if yes, send invitation, if not, register this user and add this user to my current org automatically.
+//     let existing_staff_user = await User.findOne({ email: staff_email }, { __v: 0 });
+//     //If this email is already registered, send enter org invitation
+//     if (existing_staff_user) {
+//       if (existing_staff_user.username !== staff_cn) {
+//         await User.updateOne({ email: staff_email }, { $set: { username: staff_cn } });
+//       }
+//       if (existing_staff_user.tenant.toString() !== administrator.tenant._id.toString()) {
+//         //如果用户已经存在，且其tenant不是当前tenant，则发送邀请加入组的通知邮件
+//         let frontendUrl = Tools.getFrontEndUrl();
+//         var mailbody = `<p>${administrator.username} (email: ${administrator.email}) </p> <br/> invite you to join his organization, <br/>
+//        Please login to Metatocome to accept <br/>
+//       <a href='${frontendUrl}'>${frontendUrl}</a>`;
+//         Engine.sendTenantMail(
+//           tenant_id,
+//           staff_email,
+//           `[MTC] Invitation from ${administrator.username}`,
+//           mailbody,
+//           "Invitation",
+//         ).then();
+//       }
+//     } else {
+//       //If this email is not registered, auto register and auto enter org
+//       //1. Create personal tenant.
+//       let staffTenant = new Tenant({
+//         site: administrator.site,
+//         name: staff_cn + " Personal Org",
+//         orgmode: false,
+//         owner: staff_email,
+//         css: "",
+//         timezone: administrator.tenant.timezone,
+//       });
+//       staffTenant = await staffTenant.save();
+//       try {
+//         let staffUser = new User({
+//           site: administrator.site,
+//           username: staff_cn,
+//           tenant: administrator.tenant._id,
+//           password: Crypto.encrypt(defaultPassword),
+//           email: staff_email,
+//           emailVerified: true,
+//           group: "DOER",
+//           avatar: "",
+//           ew: true,
+//           ps: 20,
+//         });
+//         staffUser = await staffUser.save();
+//       } catch (e) {
+//         staffTenant.delete();
+//       }
+//     }
+//   } //for
+//  */
+// }
 
 export default {
 	TemplateCreate: async (req: Request, h: ResponseToolkit) => {
@@ -489,6 +481,7 @@ export default {
 					tplid: tplid,
 					starter: CRED.employee,
 					textPbo: ["https://www.metatocome.com/docs"],
+					pbostatus: "__init__",
 					wftitle: "Metaflow Learning Guide",
 				});
 
@@ -867,7 +860,7 @@ export default {
 					searchable: true,
 				});
 				newObj = await newObj.save();
-				let newTplId = newObj.tplid;
+				// let newTplId = newObj.tplid;
 
 				let oldSnapshot = await Snapshot.findOne({ tenant: CRED.tenant._id, tplid: oldTplId });
 				if (oldSnapshot) {
@@ -960,7 +953,7 @@ export default {
 				const tenant_id = CRED.tenant._id;
 				let filter: any = { tenant: tenant_id, tplid: PLD.tplid };
 
-				let oldTplId = PLD.tplid;
+				// let oldTplId = PLD.tplid;
 				const theTpl = await Template.findOne(filter, { doc: 0 });
 				if (!(await SPC.hasPerm(CRED.employee, "template", theTpl, "delete")))
 					throw new EmpError("NO_PERM", "You don't have permission to delete this template");
@@ -1023,7 +1016,7 @@ export default {
 				if (wf) {
 					let retWf = JSON.parse(JSON.stringify(wf));
 					retWf.beginat = retWf.createdAt;
-					retWf.history = await Engine.getWfHistory(tenant_id, myEid, PLD.wfid);
+					retWf.history = await WorkEngine.getWfHistory(tenant_id, myEid, PLD.wfid);
 					if (withDoc === false) delete retWf.doc;
 					if (retWf.status === "ST_DONE") retWf.doneat = retWf.updatedAt;
 					retWf.starterCN = await Cache.getEmployeeName(tenant_id, wf.starter, "WorkflowRead");
@@ -1337,6 +1330,7 @@ export default {
 					tplid: tplid,
 					starter: starter,
 					textPbo: textPbo,
+					pbostatus: "__init__",
 					teamid: teamid,
 					wfid: wfid,
 					wftitle: wftitle,
@@ -2061,7 +2055,7 @@ export default {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 				let filter = PLD.filter;
 				return await Engine.workflowGetLatest(tenant_id, CRED.employee, filter);
 			}),
@@ -2124,7 +2118,7 @@ export default {
 				let limit = 10000;
 				if (PLD.limit) limit = PLD.limit;
 				let patternFilter = {};
-				if (PLD.pattern.trim()) {
+				if (PLD.pattern?.trim()) {
 					let pattern = PLD.pattern.trim();
 					if (PLD.pattern.startsWith("wf:")) {
 						let wfid =
@@ -2231,14 +2225,15 @@ export default {
 					];
 				}
 
+				//TODO: footprint需要真的是footprint， 根据用户访问的TODO来记录下来
 				if (PLD.status === "ST_FOOTPRINT") {
-					filter["status"] = { $in: ["ST_DONE", "ST_RUN"] };
-					filter["doer"] = myEid;
+					filter["viewedAt"] = { $exists: true };
+					sortByJson = { viewedAt: -1 };
 				}
 
 				let ret = await Todo.aggregate([
 					{ $match: filter },
-          { $match: patternFilter},
+					{ $match: patternFilter },
 					{
 						//lastdays， 当前活动已经持续了多少天，如果是ST_RUN或者ST_PAUSE，跟当前时间相比；
 						//否则，用updatedAt - createdAt
@@ -2283,18 +2278,68 @@ export default {
 						tenant_id,
 						"context.workid": ret[i].workid,
 					});
+					ret[i].kvarsArr = Parser.kvarsToArray(
+						await Engine.getKVars(tenant_id, doer, ret[i].wfid),
+					);
+					ret[i].wfstarterCN = await Cache.getEmployeeName(tenant_id, ret[i].wfstarter);
 				}
 				console.log(
 					`[Work Search] ${myEid} Count:[${total}] Reason[${reason}] filter: ${JSON.stringify(
 						filter,
 					)} sortBy: ${JSON.stringify(sortByJson)} limit: ${limit}`,
 				);
+				//借用户每次搜索TODO的时机，清理一下过期的rehearsal
 				Engine.clearOlderRehearsal(tenant_id, myEid, 24);
 				return {
 					data: { total, objs: ret, version: Const.VERSION },
 					headers: replyHelper.headers.nocache,
 					etag: latestETag,
 				};
+			}),
+		);
+	},
+
+	WorkGetNewerIds: async (req: Request, h: ResponseToolkit) => {
+		return replyHelper.buildResponse(
+			h,
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const CRED = req.auth.credentials as any;
+				let myEid = CRED.employee.eid;
+				let doer = PLD.doer ? PLD.doer : myEid;
+				//如果有wfid，则找只属于这个wfid工作流的workitems
+				let filter = {};
+				filter["$and"] = [
+					{ tenant: CRED.tenant._id, status: "ST_RUN", newer: true },
+					{
+						$or: [
+							{ rehearsal: false, doer: doer },
+							{ rehearsal: true, wfstarter: myEid },
+						],
+					},
+					{
+						$or: [
+							{ postpone: 0 },
+							{
+								$and: [
+									{ postpone: { $gt: 0 } },
+									{
+										$expr: {
+											$gt: [
+												{
+													$dateDiff: { startDate: "$postponedAt", endDate: "$$NOW", unit: "day" },
+												},
+												"$postpone",
+											],
+										},
+									},
+								],
+							},
+						],
+					},
+				];
+				let todoids = await Todo.find(filter, { todoid: 1, _id: 0 }).lean();
+				return todoids;
 			}),
 		);
 	},
@@ -2308,8 +2353,11 @@ export default {
 				let myEid = CRED.employee.eid;
 				//如果有wfid，则找只属于这个wfid工作流的workitems
 				let myGroup = CRED.employee.group;
-				debugger;
-				let workitem = await Engine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
+				let workitem = await WorkEngine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
+				console.log("==============");
+				console.log(workitem.wftitle);
+				console.log(workitem.wf);
+				console.log("==============");
 				return workitem;
 			}),
 		);
@@ -2389,7 +2437,7 @@ export default {
 				let myEid = CRED.employee.eid;
 				let myGroup = CRED.employee.group;
 				//如果有wfid，则找只属于这个wfid工作流的workitems
-				let workitem = await Engine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
+				let workitem = await WorkEngine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
 				let html = "<div class='container'>";
 				html += "Work:" + workitem.title;
 				html += "KVars:" + JSON.stringify(workitem.kvars);
@@ -2574,7 +2622,7 @@ export default {
 			await MongoSession.noTransaction(async () => {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 				return await Engine.revokeWork(
 					CRED.employee,
 					CRED.tenant._id,
@@ -3918,7 +3966,7 @@ const tenant_id = CRED.tenant._id;
 
 	OrgChartListAdmin: async (req: Request, h: ResponseToolkit) => {
 		try {
-			const PLD = req.payload as any;
+			// const PLD = req.payload as any;
 			const CRED = req.auth.credentials as any;
 			expect(CRED.employee.group).to.equal("ADMIN");
 			let tenant_id = CRED.tenant._id.toString();
@@ -4731,7 +4779,7 @@ const tenant_id = CRED.tenant._id;
 				let options: any = {};
 				options.decision = PLD.decision ? PLD.decision : "DEFAULT";
 				if (lodash.isEmpty(PLD.kvars) === false) options.kvars = PLD.kvars;
-				let ret = await Engine.doCallback(tenant_id, cbp, options);
+				await Engine.doCallback(tenant_id, cbp, options);
 				return cbp._id.toString();
 			}),
 		);
@@ -4836,9 +4884,9 @@ const tenant_id = CRED.tenant._id;
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 				let wfid = PLD.wfid;
-				let todoid = PLD.todoid;
+				// let todoid = PLD.todoid;
 
 				let ifNoneMatch = req.headers["if-none-match"];
 				let latestETag = Cache.getETag(`ETAG:WF:FORUM:${tenant_id}:${wfid}`);
@@ -4846,7 +4894,7 @@ const tenant_id = CRED.tenant._id;
 					return replyHelper.build304([], latestETag);
 				}
 
-				let comments = await Engine.loadWorkflowComments(tenant_id, wfid);
+				let comments = await CommentEngine.loadWorkflowComments(tenant_id, wfid);
 				return replyHelper.buildReturnWithEtag(comments, latestETag);
 			}),
 		);
@@ -4858,7 +4906,7 @@ const tenant_id = CRED.tenant._id;
 			await MongoSession.noTransaction(async () => {
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
-				let deleteFollowing = async (tenant: string, objid: Mongoose.Types.ObjectId) => {
+				let deleteFollowing = async (_tenant: string, objid: Mongoose.Types.ObjectId) => {
 					let filter: any = { tenant: tenant_id, objid: objid };
 					let cmts = await Comment.find(filter, { _id: 1 });
 					for (let i = 0; i < cmts.length; i++) {
@@ -4917,7 +4965,7 @@ const tenant_id = CRED.tenant._id;
 		);
 	},
 
-	CommentDelNewTimeout: async (req: Request, h: ResponseToolkit) => {
+	CommentDelNewTimeout: async (_req: Request, h: ResponseToolkit) => {
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
@@ -4937,8 +4985,13 @@ const tenant_id = CRED.tenant._id;
 				if (PLD.objtype === "TODO") {
 					let todo = await Todo.findOne({ tenant: tenant_id, todoid: PLD.objid }, { __v: 0 });
 					if (todo) {
-						let thisComment = await Engine.postCommentForTodo(tenant_id, myEid, todo, PLD.content);
-						let comments = await Engine.getComments(
+						let thisComment = await CommentEngine.postCommentForTodo(
+							tenant_id,
+							myEid,
+							todo,
+							PLD.content,
+						);
+						let comments = await CommentEngine.getComments(
 							tenant_id,
 							"TODO",
 							PLD.objid,
@@ -4964,14 +5017,14 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				let myEid = CRED.employee.eid;
-				let thisComment = await Engine.postCommentForComment(
+				let thisComment = await CommentEngine.postCommentForComment(
 					tenant_id,
 					myEid,
 					PLD.cmtid, //被该条评论所评论的评论ID
 					PLD.content,
 					PLD.threadid,
 				);
-				let comments = await Engine.getComments(
+				let comments = await CommentEngine.getComments(
 					tenant_id,
 					"COMMENT",
 					PLD.cmtid,
@@ -5001,7 +5054,7 @@ const tenant_id = CRED.tenant._id;
 				let thisCmt = await Comment.findOne({ tenant: tenant_id, _id: PLD.cmtid }, { __v: 0 });
 				if (thisCmt) {
 					//寻找当前Comment的父对象更多的comment
-					let comments = await Engine.getComments(
+					let comments = await CommentEngine.getComments(
 						tenant_id,
 						thisCmt.objtype,
 						thisCmt.objid,
@@ -5085,7 +5138,7 @@ const tenant_id = CRED.tenant._id;
 				let cmts = [];
 				let total = 0;
 
-				let filter: any = { tenant: tenant_id };
+				// let _filter: any = { tenant: tenant_id };
 
 				//I_AM_IN 包含 I_STARTED
 				if (category.includes("I_AM_IN")) {
@@ -5233,7 +5286,7 @@ const tenant_id = CRED.tenant._id;
 						cmtid: cmts[i]._id,
 						upordown: "DOWN",
 					});
-					let tmpret = await Engine.splitMarked(tenant_id, cmts[i]);
+					let tmpret = await Tools.splitMarked(tenant_id, cmts[i]);
 					cmts[i].mdcontent = tmpret.mdcontent;
 					cmts[i].mdcontent2 = tmpret.mdcontent2;
 
@@ -5256,7 +5309,7 @@ const tenant_id = CRED.tenant._id;
 								"commentSearch",
 							);
 							cmts[i].latestReply[r].mdcontent2 = (
-								await Engine.splitMarked(tenant_id, cmts[i].latestReply[r])
+								await Tools.splitMarked(tenant_id, cmts[i].latestReply[r])
 							)["mdcontent2"];
 						}
 					} else {
@@ -5568,10 +5621,8 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let myEid = CRED.employee.eid;
 
 				let ret = (await Cache.getOrgTags(tenant_id)).split(";");
 
@@ -5601,7 +5652,7 @@ const tenant_id = CRED.tenant._id;
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 				let myGroup = CRED.employee.group;
 				if (myGroup !== "ADMIN") {
 					throw new EmpError("NOT_ADMIN", "Only Administrators can change doer");
@@ -5741,7 +5792,7 @@ const tenant_id = CRED.tenant._id;
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 
@@ -5833,11 +5884,11 @@ const tenant_id = CRED.tenant._id;
 		);
 	},
 
-	DemoAPI: async (req: Request, h: ResponseToolkit) => {
+	DemoAPI: async (_req: Request, h: ResponseToolkit) => {
 		return replyHelper.buildResponse(
 			h,
 			await MongoSession.noTransaction(async () => {
-				const PLD = req.payload as any;
+				// const PLD = req.payload as any;
 				return {
 					intv: 100,
 					stringv: "hello",
@@ -5851,7 +5902,7 @@ const tenant_id = CRED.tenant._id;
 			h,
 			await MongoSession.noTransaction(async () => {
 				const PLD = req.payload as any;
-				const CRED = req.auth.credentials as any;
+				// const CRED = req.auth.credentials as any;
 				let receiver = process.env.DEMO_ENDPOINT_EMAIL_RECEIVER;
 				receiver ||= "lucas@xihuanwu.com";
 				console.log("Mailman to ", receiver);
@@ -6057,7 +6108,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				let myEid = CRED.employee.eid;
-				let wecomBot = await Webhook.deleteOne({
+				await Webhook.deleteOne({
 					tenant: tenant_id,
 					owner: myEid,
 					webhook: "wecombot_todo",
@@ -6239,7 +6290,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				//let myEid = CRED.employee.eid;
-				let myGroup = CRED.employee.group;
+				// let myGroup = CRED.employee.group;
 				await Parser.checkOrgChartAdminAuthorization(CRED);
 
 				let orgChartEntries = await OrgChart.find(
@@ -6264,7 +6315,7 @@ const tenant_id = CRED.tenant._id;
 				const PLD = req.payload as any;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
-				let myEid = CRED.employee.eid;
+				// let myEid = CRED.employee.eid;
 				let myGroup = CRED.employee.group;
 				assert.equal(myGroup, "ADMIN", new EmpError("NOT_ADMIN", "You are not admin"));
 
@@ -6550,7 +6601,7 @@ const tenant_id = CRED.tenant._id;
 				let innerTpl: Emp.TemplateObj = {
 					tplid: `Flexible tpl of ${myEid}`,
 					pboat: "ANY_RUNNING",
-					doc: `<div class="template"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left:300px; top:300px;" role="@${toWhom}" wecom="false" transferable="no" sr="no" sb="no" rvk="no" adhoc="yes" cmt="yes"><p>${PLD.name}</p><div class="kvars">e30=</div><div class="instruct">6K+35Zyo6L+Z6YeM54G15rS75Y+R6LW35LiA5Yiw5aSa5Liq54us56uL5bel5L2c5Lu75Yqh44CCCuWcqOehruWumuaVtOS4quS6i+mhue+8iOmhueebru+8ieWujOaIkOS7peWQju+8jOaCqOWPr+S7peWFs+mXreW9k+WJjeeBtea0u+S6i+mhue+8iOivt+azqOaEj++8jOWFs+mXreW9k+WJjeW3peS9nOS7u+WKoeWQju+8jOaJgOacieW3suWPkeWHuuS9huacquWujOaIkOeahOeLrOeri+W3peS9nOS7u+WKoeS5n+WwhuiHquWKqOWkseaViO+8iQ==</div><code>Ly8gcmVhZCBIeXBlcmZsb3cgRGV2ZWxvcGVyJ3MgR3VpZGUgZm9yIGRldGFpbHMKcmV0PSdERUZBVUxUJzs=</code></div><div class="node END" id="end" style="left: 600px; top: 240px; z-index: 0;"><p>END</p> </div><div class="link" from="start" to="hellohyperflow"  >link</div><div class="link" from="hellohyperflow" to="end" case="关闭本灵活事项" >link</div></div>`,
+					doc: `<div class="template"><div class="node START" id="start" style="left:200px; top:200px;"><p>START</p></div><div class="node ACTION" id="hellohyperflow" style="left:300px; top:300px;" role="@${toWhom}" wecom="false" transferable="no" sr="no" sb="no" rvk="no" adhoc="yes" cmt="yes"><p>${PLD.name}</p><div class="kvars">e30=</div><div class="instruct">6K+35Zyo6L+Z6YeM54G15rS75Y+R6LW35LiA5Yiw5aSa5Liq54us56uL5bel5L2c5Lu75Yqh44CCCuWcqOehruWumuaVtOS4quS6i+mhue+8iOmhueebru+8ieWujOaIkOS7peWQju+8jOaCqOWPr+S7peWFs+mXreW9k+WJjeeBtea0u+S6i+mhue+8iOivt+azqOaEj++8jOWFs+mXreW9k+WJjeW3peS9nOS7u+WKoeWQju+8jOaJgOacieW3suWPkeWHuuS9huacquWujOaIkOeahOeLrOeri+W3peS9nOS7u+WKoeS5n+WwhuiHquWKqOWkseaViO+8iQ==</div><code>Ly8gcmVhZCBIeXBlcmZsb3cgRGV2ZWxvcGVyJ3MgR3VpZGUgZm9yIGRldGFpbHMKcmV0PSdERUZBVUxUJzs=</code></div><div class="node END" id="end" style="left: 600px; top: 240px; z-index: 0;"><p>END</p> </div><div class="link" from="start" to="hellohyperflow"  >link</div><div class="link" from="hellohyperflow" to="end" case="关闭���灵活事项" >link</div></div>`,
 					endpoint: "",
 					endpointmode: "none",
 					allowdiscuss: true,
@@ -6562,6 +6613,7 @@ const tenant_id = CRED.tenant._id;
 					theTemplate: innerTpl,
 					starter: CRED.employee,
 					textPbo: [""],
+					pbostatus: "__init__",
 					wfid: null,
 					wftitle: PLD.name,
 					parent_wf_id: "",
@@ -6577,7 +6629,7 @@ const tenant_id = CRED.tenant._id;
 		);
 	},
 
-	SiteInfo: async (req: Request, h: ResponseToolkit) => {
+	SiteInfo: async (_req: Request, h: ResponseToolkit) => {
 		const ret = await Cache.getSiteInfo();
 		return h.response(ret);
 	},
@@ -6759,8 +6811,8 @@ const tenant_id = CRED.tenant._id;
 		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as any;
 		try {
-			const tenant_id = CRED.tenant._id;
-			const myEid = CRED.employee.eid;
+			// const tenant_id = CRED.tenant._id;
+			// const myEid = CRED.employee.eid;
 
 			console.log(`${CRED.employee.eid}: ${PLD.msg}`);
 
@@ -6779,7 +6831,7 @@ const tenant_id = CRED.tenant._id;
 				const CRED = req.auth.credentials as any;
 				const tenant_id = CRED.tenant._id;
 				let myEid = CRED.employee.eid;
-				let q = PLD.q;
+				// let q = PLD.q;
 
 				let ifNoneMatch = req.headers["if-none-match"];
 				let latestETag = Cache.getETag(`ETAG:FORUM:${tenant_id}`);
@@ -6788,19 +6840,19 @@ const tenant_id = CRED.tenant._id;
 				}
 
 				let wfIds = [];
-				let wfIamVisied = [];
+				// let wfIamVisied = [];
 				let wfIStarted = [];
 				let wfIamIn = [];
-				let wfIamQed = [];
+				// let wfIamQed = [];
 
 				//let myUid = Tools.getEmailPrefix(myEid);
-				let myUid = myEid;
-				let iamAdmin = CRED.employee.group === "ADMIN";
+				// let myUid = myEid;
+				// let iamAdmin = CRED.employee.group === "ADMIN";
 
-				let wfInfos = [];
-				let total = 0;
+				// let wfInfos = [];
+				// let total = 0;
 
-				let filter: any = { tenant: tenant_id };
+				// let filter: any = { tenant: tenant_id };
 
 				//我启动的进程
 				wfIStarted = await Workflow.find(

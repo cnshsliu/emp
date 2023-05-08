@@ -1514,6 +1514,25 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/work/getNewerIds",
+			handler: Handlers.WorkGetNewerIds,
+			config: {
+				description: "Get newer todos' ids",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						doer: Joi.string().optional().allow(""),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/work/do",
 			handler: Handlers.WorkDo,
 			config: {

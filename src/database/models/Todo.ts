@@ -5,6 +5,8 @@ import { Schema, InferSchemaType, model, HydratedDocument } from "mongoose";
 const schema = new Schema(
 	{
 		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
+		newer: { type: Schema.Types.Boolean, default: true },
+		viewedAt: { type: Date },
 		round: { type: Number, default: 0 },
 		todoid: { type: String, required: [true, "不能为空"], index: true },
 		wfid: { type: String, required: [true, "不能为空"], index: true },

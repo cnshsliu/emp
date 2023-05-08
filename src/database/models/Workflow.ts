@@ -20,6 +20,7 @@ const schema = new Schema(
 		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		teamid: { type: String, required: false, default: "" },
 		tplid: { type: String, required: [true, "不能为空"], index: true },
+		pbostatus: { type: String, required: false, default: "" },
 		status: { type: String, required: [true, "不能为空"], index: true },
 		starter: { type: String, required: [true, "不能为空"], index: true },
 		doc: { type: String, required: true },

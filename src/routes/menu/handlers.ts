@@ -83,23 +83,21 @@ export default {
 					alias: "$addCurrent",
 					href: "dispatch:addPersonal:current",
 				});
-				if (personalMenuItems.length > 0) {
-					ret.push({
-						acl: MENU_ACL_SELF,
-						eid: CRED.employee.eid,
-						mg: "EID_PERSONAL",
-						def: [
-							{
-								id: "__pmi__",
-								alias: "$MyPersonal",
-								class: "personal_menu_item",
-								icon: "heart",
-								sub: pmitems,
-							},
-						],
-					});
-				}
 				ret.push(...(await Menu.find({ $where: whereFilter }).lean()));
+				ret.push({
+					acl: MENU_ACL_SELF,
+					eid: CRED.employee.eid,
+					mg: "EID_PERSONAL",
+					def: [
+						{
+							id: "__pmi__",
+							alias: "$MyPersonal",
+							class: "personal_menu_item",
+							icon: "heart",
+							sub: pmitems,
+						},
+					],
+				});
 				return ret;
 			}),
 		);

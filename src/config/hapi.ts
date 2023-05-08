@@ -144,11 +144,12 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 				);
 				user = (<any>decoded).email;
 			}
-			console.debug(
-				`${request.method.toUpperCase()} ${request.path} ${
-					(<ResponseObject>request.response).statusCode
-				} ${request.method.toUpperCase() === "POST" ? JSON.stringify(request.payload) : ""}`,
-			);
+			if (request.path.indexOf("getNewerIds") < 0)
+				console.debug(
+					`${request.method.toUpperCase()} ${request.path} ${
+						(<ResponseObject>request.response).statusCode
+					} ${request.method.toUpperCase() === "POST" ? JSON.stringify(request.payload) : ""}`,
+				);
 		});
 		theHapiServer.server_initialized = true;
 		return theHapiServer.server;

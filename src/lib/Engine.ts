@@ -2,10 +2,13 @@ import { Cheerio, CheerioAPI, Element } from "cheerio";
 import { Types, ClientSession } from "mongoose";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
 import cronEngine from "node-cron";
-import { marked as Marked } from "marked";
 import Parser from "./Parser";
 import Mutex from "./Mutex";
 import moment from "moment";
+import DelegationEngine from "./DelegateEngine";
+import MessageEngine from "./MessageEngine";
+import WorkEngine from "./WorkEngine";
+import CommentEngine from "./CommentEngine";
 import { Template } from "../database/models/Template";
 import { User } from "../database/models/User";
 import { Employee, EmployeeType } from "../database/models/Employee";
@@ -15,16 +18,13 @@ import OrgChart from "../database/models/OrgChart";
 import JoinApplication from "../database/models/JoinApplication";
 import List from "../database/models/List";
 import { Workflow, WorkflowType } from "../database/models/Workflow";
-import Handlebars from "handlebars";
-import SanitizeHtml from "sanitize-html";
 import { Todo, TodoType } from "../database/models/Todo";
 import { Crontab, CrontabType } from "../database/models/Crontab";
-import Webhook from "../database/models/Webhook";
 import { Work, WorkType } from "../database/models/Work";
+import { Data } from "../database/models/Data";
 import Route from "../database/models/Route";
 import CbPoint from "../database/models/CbPoint";
-import { Comment, CommentType } from "../database/models/Comment";
-import Thumb from "../database/models/Thumb";
+import { Comment } from "../database/models/Comment";
 import Delegation from "../database/models/Delegation";
 import KVar from "../database/models/KVar";
 import { Cell } from "../database/models/Cell";
@@ -55,9 +55,7 @@ import type {
 	MailNextDef,
 	ProcNextParams,
 	ErrorReturn,
-	HistoryTodoEntryType,
 	workFullInfo,
-	NodeBriefType,
 	ActionDef,
 	SmtpInfo,
 	CommentContextType,
@@ -114,9 +112,9 @@ const Client: any = {};
 // 			} else if (message.cmd && message.cmd === "worker_sendTenantMail") {
 // 				let smtp = await Cache.getOrgSmtp(message.msg.tenant);
 // 				message.msg.smtp = smtp;
-// 				await callSendMailWorker(message.msg);
+// 				await MessageEngine.callSendMailWorker(message.msg);
 // 			} else if (message.cmd && message.cmd === "worker_sendSystemMail") {
-// 				await callSendMailWorker(message.msg);
+// 				await MessageEngine.callSendMailWorker(message.msg);
 // 			} else if (message.msg && message.cmd === "worker_reset_etag") {
 // 				await Cache.resetETag(message.msg);
 // 			} else if (message.msg && message.cmd === "worker_del_etag") {
@@ -133,47 +131,6 @@ const Client: any = {};
 // 		});
 // 	});
 // };
-
-//
-// msg: {endpoint: URL,data: JSON}
-const callWebApiPosterWorker = async function (msg: object) {
-	msg = JSON.parse(JSON.stringify(msg));
-	return new Promise((resolve, reject) => {
-		const worker = new Worker(path.dirname(__filename) + "/worker/WebApiPosterWorker.js", {
-			env: SHARE_ENV,
-			workerData: msg,
-		});
-		worker.on("message", resolve);
-		worker.on("error", reject);
-		worker.on("exit", (code) => {
-			if (code !== 0) reject(new Error(`WebApiPosterWorker Worker stopped with exit code ${code}`));
-		});
-	});
-};
-
-const callSendMailWorker = async function (msg: object) {
-	try {
-		msg = JSON.parse(JSON.stringify(msg));
-		return new Promise((resolve, reject) => {
-			try {
-				const worker = new Worker(path.dirname(__filename) + "/worker/SendMailWorker.js", {
-					env: SHARE_ENV,
-					workerData: msg,
-				});
-				worker.on("message", resolve);
-				worker.on("error", reject);
-				worker.on("exit", (code) => {
-					if (code !== 0) reject(new Error(`SendMailWorker Worker stopped with exit code ${code}`));
-				});
-			} catch (error) {
-				console.error(error);
-				console.log(JSON.stringify(msg));
-			}
-		});
-	} catch (err) {
-		console.error(err);
-	}
-};
 
 /**
  * Ensure the function fn to be run only once
@@ -518,6 +475,9 @@ const runScheduled = async function (
 		//current selector, current node
 		wf.cselector = nexts.map((x) => x.selector);
 	}
+	if (wfRoot.attr("pbostatus")) {
+		wf.pbostatus = wfRoot.attr("pbostatus");
+	}
 	wf.doc = wfIO.html();
 	await wf.save();
 	//将Nexts数组中的消息BODY依次发送出去
@@ -621,7 +581,7 @@ const hasPermForWork = async function (
 			}
 		} else {
 			//否则，doerEid当前有委托给我，则返回真
-			let delegationToMe = await delegationToMeToday(tenant_id, myEid);
+			let delegationToMe = await DelegationEngine.delegationToMeToday(tenant_id, myEid);
 
 			let delegators = [];
 			delegators = delegationToMe.map((x) => x.delegator);
@@ -705,7 +665,7 @@ const __doneTodo = async function (
 	/*
   if (workNode.hasClass("ST_RUN") === false) {
     try {
-      let st = getStatusFromClass(workNode);
+      let st = Tools.getStatusFromClass(workNode);
       todo.status = st;
       if (st === "ST_DONE") {
         todo.doneat = isoNow;
@@ -839,7 +799,7 @@ const __doneTodo = async function (
 				Const.VAR_IS_EFFICIENT, //efficient
 			);
 		}
-		comment = sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, comment);
+		comment = Tools.sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, comment);
 		if (comment.indexOf("[") >= 0) {
 			comment = await Parser.replaceStringWithKVar(
 				tenant,
@@ -1058,6 +1018,9 @@ const __doneTodo = async function (
 				//current selector, current node
 				wfUpdate["cselector"] = wf.cselector;
 			}
+			if (wfRoot.attr("pbostatus")) {
+				wfUpdate["pbostatus"] = wfRoot.attr("pbostatus");
+			}
 		}
 		//////////////////////////////////////////////////
 		// END -- 处理这个非ADHOC 节点
@@ -1136,7 +1099,8 @@ const __doneTodo = async function (
 	//参数输入区里的comment同时添加为讨论区的comment
 	////////////////////////////////////////////////////
 	try {
-		if (comment && comment.trim().length > 0) await postCommentForTodo(tenant, doer, todo, comment);
+		if (comment && comment.trim().length > 0)
+			await CommentEngine.postCommentForTodo(tenant, doer, todo, comment);
 	} catch (err) {
 		console.error(err);
 	}
@@ -1197,12 +1161,12 @@ const __doneTodo = async function (
 		};
 		console.log("//////////////////////////////////////////////////");
 		console.log(`[CALL ENDPOINT] ${endpoint}`);
-		callWebApiPosterWorker({ url: endpoint, data: data })
+		MessageEngine.callWebApiPosterWorker({ url: endpoint, data: data })
 			.then((res) => {
 				console.log(res);
 			})
 			.catch((err) => {
-				console.error("Error from callWebApiPosterWorker" + err.message);
+				console.error("Error from MessageEngine.callWebApiPosterWorker" + err.message);
 			});
 
 		console.log("//////////////////////////////////////////////////");
@@ -1212,7 +1176,7 @@ const __doneTodo = async function (
 	for (const key of Object.keys(kvarsFromBrowserInput)) {
 		let valueDef: Emp.KVarDef = kvarsFromBrowserInput[key];
 		if (valueDef?.type === "textarea") {
-			let tmp = splitComment(valueDef.value as string);
+			let tmp = Tools.splitComment(valueDef.value as string);
 			someone = tmp.filter((x) => x.startsWith("@"));
 		}
 	}
@@ -1224,7 +1188,7 @@ const __doneTodo = async function (
 	}
 	if (recipients.length > 0) {
 		recipients = [...new Set(recipients)];
-		sendTenantMail(
+		MessageEngine.sendTenantMail(
 			tenant,
 			recipients,
 			`MTC Notification: you are mentiond in ${todo.title} `,
@@ -1385,7 +1349,7 @@ const procWeComBot = async function (
 						let botIndex = Tools.getRandomInt(0, botKeys.length - 1);
 						let botKey = botKeys[botIndex];
 						let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-						callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
+						MessageEngine.callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
 							.then(() => {
 								log(
 									tenant,
@@ -1462,233 +1426,6 @@ ${kvarsMD}
 	return markdownMsg;
 };
 
-const setPeopleFromContent = async function (
-	tenant: Types.ObjectId | string,
-	content: string,
-	people: string[],
-	eids: string[],
-) {
-	let tmp = Tools.getEidsFromText(content);
-	for (let i = 0; i < tmp.length; i++) {
-		let toWhomEid = tmp[i];
-		let receiverCN = await Cache.getEmployeeName(tenant, toWhomEid, "setPeopleFromContent");
-		if (receiverCN !== "USER_NOT_FOUND") {
-			people.push(tmp[i]);
-			eids.push(toWhomEid);
-		}
-	}
-	eids = [...new Set(eids)];
-	people = [...new Set(people)];
-	people = people.map((p) => Tools.getEmailPrefix(p));
-	return [people, eids];
-};
-
-//对每个@somebody存储，供somebody反向查询comment
-const postCommentForTodo = async function (
-	tenant: Types.ObjectId | string,
-	doer: string,
-	todo: TodoType,
-	content: string,
-) {
-	if (content.trim().length === 0) return;
-	let eids = [todo.wfstarter];
-	let people = [Tools.getEmailPrefix(todo.wfstarter)];
-	let doerCN = await Cache.getEmployeeName(tenant, doer, "postCommentForTodo");
-	[people, eids] = await setPeopleFromContent(tenant, content, people, eids);
-	let msg = {
-		tenant: todo.tenant,
-		doer: doer,
-		doerCN: doerCN,
-		subject: (todo.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
-		mail_body: `Hello [receiverCN],<br/><br/>Comment for you: 
-    <br/>
-    <br/>
-    ${content}
-    <br/>
-    <br/>
-        From: ${doerCN}<br/>
-        Click to see it on task: <a href="${frontendUrl}/work/${todo.todoid}?anchor=ANCHOR">${todo.title}</a> <br/>
-        Process: <a href="${frontendUrl}/workflow/${todo.wfid}">${todo.wftitle}</a><br/>
-        <br/><a href="${frontendUrl}/comment">View all comments left for you </a><br/><br/><br/> Metatocome`,
-	};
-	let theWf = await Workflow.findOne({ tenant: tenant, wfid: todo.wfid }, { wftitle: 1 });
-	let context: CommentContextType = {
-		wfid: todo.wfid,
-		workid: todo.workid,
-		todoid: todo.todoid,
-		biztitle: theWf.wftitle,
-	};
-	let ret = await __postComment(
-		tenant,
-		doer,
-		todo.doer,
-		"TODO", //被评论的对象是一个TODO
-		todo.todoid, //被评论对象的ID
-		content,
-		context,
-		people,
-		eids,
-		todo.rehearsal,
-		msg,
-	);
-	ret.todoTitle = todo.title;
-	ret.todoDoer = todo.doer;
-	ret.todoDoerCN = await Cache.getEmployeeName(tenant, todo.doer, "postCommentForTodo");
-	return ret;
-};
-
-const postCommentForComment = async function (
-	tenant: Types.ObjectId | string,
-	doer: string,
-	cmtid: string,
-	content: string,
-	threadid: string,
-) {
-	let cmt = await Comment.findOne({ tenant: tenant, _id: cmtid }, { __v: 0 });
-
-	let theTodo = await Todo.findOne(
-		{ tenant: tenant, todoid: cmt.context.todoid },
-		{ __v: 0 },
-	).lean();
-	let people = cmt.people;
-	people.push(cmt.who);
-	let eids: string[] = people;
-	let doerCN = await Cache.getEmployeeName(tenant, doer, "postCommentForComment");
-	[people, eids] = await setPeopleFromContent(tenant, content, people, eids);
-	let msg = {
-		tenant: tenant,
-		doer: doer,
-		doerCN: doerCN,
-		subject: (cmt.rehearsal ? "MTC Comment Rehearsal: " : "MTC Comment: ") + `from ${doerCN}`,
-		mail_body: `Hello [receiverCN],<br/><br/>Comment for you: <br/>${content}<br/> From: ${doerCN}<br/> 
-        Click to see it on task: <a href="${frontendUrl}/work/${
-			cmt.context.todoid
-		}?anchor=ANCHOR">${theTodo ? theTodo.title : "The Task"} </a> <br/>
-        Process: <a href="${frontendUrl}/workflow/${cmt.context.wfid}">${
-			theTodo ? theTodo.wftitle : "The Workflow"
-		}</a><br/>
-    <br/><br/> Metatocome`,
-	};
-	return await __postComment(
-		tenant,
-		doer,
-		cmt.who,
-		"COMMENT",
-		cmtid, //被该条评论 所评论的评论的ID
-		content,
-		cmt.context, //继承上一个comment的业务上下文
-		people,
-		eids,
-		cmt.rehearsal,
-		msg,
-		threadid,
-	);
-};
-
-const __postComment = async function (
-	tenant: Types.ObjectId | string,
-	doer: string,
-	toWhom: string,
-	objtype: string,
-	objid: string,
-	content: string,
-	context: CommentContextType,
-	thePeople: string[],
-	eids: string[] = [],
-	rehearsal: boolean,
-	emailMsg: { subject: string; mail_body: string } | null = null,
-	threadid: string | null = null,
-): Promise<CommentType> {
-	console.log("__postCommment will send email to ", eids);
-	try {
-		//找里面的 @somebody， regexp是@后面跟着的连续非空字符
-		let comment: CommentType = null;
-		comment = new Comment({
-			tenant: tenant,
-			rehearsal: rehearsal,
-			who: doer,
-			towhom: toWhom,
-			objtype: objtype,
-			objid: objid,
-			people: thePeople,
-			content: content,
-			context: context,
-			threadid: threadid ? threadid : "",
-		}) as CommentType;
-		comment = (await comment.save()) as CommentType;
-		await Cache.resetETag(`ETAG:WF:FORUM:${tenant}:${comment.context.wfid}`);
-		await Cache.resetETag(`ETAG:FORUM:${tenant}`);
-		//对TODO的comment是thread级Comment，需要将其threadid设置为其自身的_id
-		if (comment.objtype === "TODO") {
-			comment.threadid = comment._id.toString();
-			comment = await comment.save();
-		} else if (threadid) {
-			//对Comment的Comment需要将其thread  Comment的 updatedAt进行更新
-			//以便其排到前面
-			await Comment.findOneAndUpdate(
-				{ tenant: tenant, _id: comment.threadid },
-				{ updatedAt: new Date(0) },
-				{ upsert: false, new: true },
-			);
-		}
-		//TODO: send TIMEOUT seconds later, then check if still exists, if not, don't send email
-		if (emailMsg) {
-			setTimeout(async () => {
-				let theComment = await Comment.findOne({ tenant: tenant, _id: comment._id }, { __v: 0 });
-				if (theComment) {
-					for (let i = 0; i < eids.length; i++) {
-						if (eids[i] === doer) {
-							console.log("Bypass: comment's author email to him/herself");
-							continue;
-						}
-						let receiverCN = await Cache.getEmployeeName(tenant, eids[i], "__postComment");
-						if (receiverCN === "USER_NOT_FOUND") continue;
-						let subject = emailMsg.subject.replace("[receiverCN]", receiverCN);
-						let body = emailMsg.mail_body.replace("[receiverCN]", receiverCN);
-						//ANCHOR, use to scroll to attached comment by comment id.
-						body = body.replace("ANCHOR", "tcmt_" + comment._id.toString());
-
-						sendTenantMail(
-							tenant, //not rehearsal
-							rehearsal ? doer : eids[i],
-							subject,
-							body,
-							"COMMENT_MAIL",
-						).then(() => {
-							console.log(
-								"Mailer send email to ",
-								rehearsal ? doer + "(" + eids[i] + ")" : eids[i],
-								"subject:",
-								subject,
-							);
-						});
-					}
-				} else {
-					console.log("Don't send comment email, since HAS been deleted");
-				}
-			}, (Const.DEL_NEW_COMMENT_TIMEOUT + 5) * 1000);
-		}
-		comment = JSON.parse(JSON.stringify(comment)) as CommentType;
-		comment.whoCN = await Cache.getEmployeeName(tenant, comment.who, "__postComment");
-		comment.towhomCN = await Cache.getEmployeeName(tenant, toWhom, "__postComment");
-		comment.splitted = splitComment(comment.content);
-		let tmpret = await splitMarked(tenant, comment);
-		comment.mdcontent = tmpret.mdcontent;
-		comment.mdcontent2 = tmpret.mdcontent2;
-		let people = [];
-		let eids = [];
-		[people, eids] = await setPeopleFromContent(tenant, comment.content, people, eids);
-		comment.people = people;
-		comment.transition = true;
-		comment.children = [];
-		comment.upnum = 0;
-		comment.downnum = 0;
-		return comment;
-	} catch (err) {
-		console.error(err);
-	}
-};
-
 const convertDoersToHTMLMessage = (doers: DoersArray): string => {
 	let ret = "";
 	for (let i = 0; i < doers.length; i++) {
@@ -1707,7 +1444,7 @@ const sendCCMessage = async (
 ): Promise<void> => {
 	for (let i = 0; i < cced.length; i++) {
 		try {
-			sendTenantMail(
+			MessageEngine.sendTenantMail(
 				tenant, //not rehearsal
 				rehearsal ? starter : cced[i].eid,
 				subject,
@@ -1781,6 +1518,9 @@ const doCallback = async function (tenant: string, cbp: any, payload: any) {
 		wfUpdate["pworkid"] = wf.pworkid;
 		wfUpdate["cselector"] = wf.cselector;
 	}
+	if (wfRoot.attr("pbostatus")) {
+		wfUpdate["pbostatus"] = wfRoot.attr("pbostatus");
+	}
 	wf = await RCL.updateWorkflow(
 		{ tenant: tenant, wfid: wf.wfid },
 		{ $set: wfUpdate },
@@ -1834,7 +1574,7 @@ const revokeWork = async function (
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
 	let info: workFullInfo = {} as workFullInfo;
-	info = await __getWorkFullInfoRevocableAndReturnable(
+	info = await WorkEngine.__getWorkFullInfoRevocableAndReturnable(
 		tenant,
 		tpRoot,
 		wfRoot,
@@ -1869,7 +1609,7 @@ const revokeWork = async function (
 				[],
 				Const.VAR_IS_EFFICIENT,
 			);
-			comment = sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, comment);
+			comment = Tools.sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, comment);
 			if (comment.indexOf("[") >= 0) {
 				comment = await Parser.replaceStringWithKVar(
 					tenant,
@@ -1888,7 +1628,7 @@ const revokeWork = async function (
 		//let afw = followingWorks.eq(i);
 		let afw = followingActions[i].work;
 		/*
-    afw.removeClass(getStatusFromClass(afw)).addClass("ST_REVOKED");
+    afw.removeClass(Tools.getStatusFromClass(afw)).addClass("ST_REVOKED");
     await Todo.updateMany(
       { tenant: tenant, wfid: wfid, workid: afw.attr("id"), status: "ST_RUN" },
       { $set: { status: "ST_REVOKED" } }
@@ -1972,7 +1712,7 @@ const revokeWork = async function (
 	);
 	try {
 		if (comment.trim().length > 0)
-			await postCommentForTodo(tenant, theEmployee.eid, old_todo, comment);
+			await CommentEngine.postCommentForTodo(tenant, theEmployee.eid, old_todo, comment);
 	} catch (err) {}
 
 	await sendNexts(nexts);
@@ -2144,7 +1884,14 @@ const sendback = async function (
 	let tpRoot = wfIO(".template");
 	let wfRoot = wfIO(".workflow");
 	let info: workFullInfo = {} as workFullInfo;
-	info = await __getWorkFullInfoRevocableAndReturnable(tenant, tpRoot, wfRoot, wfid, todo, info);
+	info = await WorkEngine.__getWorkFullInfoRevocableAndReturnable(
+		tenant,
+		tpRoot,
+		wfRoot,
+		wfid,
+		todo,
+		info,
+	);
 	if (info.returnable === false) {
 		throw new EmpError("WORK_NOT_RETURNABLE", "Todo is not returnable", {
 			wfid,
@@ -2183,7 +1930,7 @@ const sendback = async function (
 			};
 			nexts.push(msgToSend);
 		} else {
-			from_workNode.removeClass(getStatusFromClass(from_workNode)).addClass("ST_RETURNED");
+			from_workNode.removeClass(Tools.getStatusFromClass(from_workNode)).addClass("ST_RETURNED");
 		}
 	}
 
@@ -2200,7 +1947,7 @@ const sendback = async function (
 				[],
 				Const.VAR_IS_EFFICIENT, //efficient
 			);
-			comment = sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, comment);
+			comment = Tools.sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, comment);
 			if (comment.indexOf("[") >= 0) {
 				comment = await Parser.replaceStringWithKVar(
 					tenant,
@@ -2262,7 +2009,8 @@ const sendback = async function (
 	);
 
 	try {
-		if (comment.trim().length > 0) await postCommentForTodo(tenant, doer, todo, comment);
+		if (comment.trim().length > 0)
+			await CommentEngine.postCommentForTodo(tenant, doer, todo, comment);
 	} catch (err) {}
 
 	await sendNexts(nexts);
@@ -2303,7 +2051,7 @@ const parseContent = async function (
 	withInternal: boolean,
 ) {
 	if (Tools.hasValue(inputStr) === false) return "";
-	let ret = sanitizeHtmlAndHandleBar(kvars, Parser.base64ToCode(inputStr));
+	let ret = Tools.sanitizeHtmlAndHandleBar(kvars, Parser.base64ToCode(inputStr));
 	if (ret.indexOf("[") >= 0) {
 		//null位置的参数是以e字符串数组，包含k=v;k=v的定义
 		ret = await Parser.replaceStringWithKVar(tenant, ret, kvars, withInternal);
@@ -2314,7 +2062,7 @@ const parseContent = async function (
 Client.onSendTenantMail = async function (msg: EmailMsgType) {
 	try {
 		let smtp = await Cache.getOrgSmtp(msg.tenant);
-		callSendMailWorker({
+		MessageEngine.callSendMailWorker({
 			smtp: smtp,
 			recipients: msg.recipients,
 			cc: msg.cc,
@@ -2330,7 +2078,7 @@ Client.onSendTenantMail = async function (msg: EmailMsgType) {
 
 Client.onSendSystemMail = async function (msg: EmailMsgType) {
 	try {
-		callSendMailWorker({
+		MessageEngine.callSendMailWorker({
 			smtp: "System",
 			recipients: msg.recipients,
 			subject: msg.subject,
@@ -2352,6 +2100,7 @@ Client.onStartWorkflow = async function (msg: any) {
 			tplid: msg.tplid, //tplid
 			starter: msg.starter,
 			textPbo: msg.pbo, //pbo
+			pbostatus: "__init__",
 			teamid: msg.teamid,
 			wfid: msg.wfid,
 			wftitle: msg.wftitle,
@@ -2845,7 +2594,13 @@ const yarkNode_internal = async function (obj: NextDef) {
 								subject: mail_subject,
 								body: mail_body,
 							});
-							await sendTenantMail(tenant, recipient, mail_subject, mail_body, "INFORM_MAIL_CSV");
+							await MessageEngine.sendTenantMail(
+								tenant,
+								recipient,
+								mail_subject,
+								mail_body,
+								"INFORM_MAIL_CSV",
+							);
 						} catch (error) {
 							console.error(error);
 						}
@@ -2891,7 +2646,13 @@ const yarkNode_internal = async function (obj: NextDef) {
 								subject: mail_subject,
 								body: mail_body,
 							});
-							await sendTenantMail(tenant, recipient, mail_subject, mail_body, "INFORM_MAIL");
+							await MessageEngine.sendTenantMail(
+								tenant,
+								recipient,
+								mail_subject,
+								mail_body,
+								"INFORM_MAIL",
+							);
 						} catch (emailError) {
 							console.error(emailError);
 						}
@@ -3268,6 +3029,7 @@ const yarkNode_internal = async function (obj: NextDef) {
 					tplid: sub_tpl_id,
 					starter: parentStarter,
 					attachments: textPboArray,
+					pbostatus: "__init__",
 					teamid: teamid,
 					wfid: sub_wf_id,
 					wftitle: sub_tpl_id + "-sub-" + Tools.timeStringTag(),
@@ -3428,7 +3190,13 @@ const yarkNode_internal = async function (obj: NextDef) {
 			}
 			mail_body += extra_body;
 
-			await sendTenantMail(tenant, sendEmailTo, subject, mail_body, "WORKFLOW_COMPLETE_MAIL");
+			await MessageEngine.sendTenantMail(
+				tenant,
+				sendEmailTo,
+				subject,
+				mail_body,
+				"WORKFLOW_COMPLETE_MAIL",
+			);
 		}
 		//END of END node
 	} else if (tpNode.hasClass("ACTION")) {
@@ -3673,6 +3441,9 @@ ${convertDoersToHTMLMessage(cced)}
 	}
 	//End of all node type processing
 
+	if (wfRoot.attr("pbostatus")) {
+		wfUpdate["pbostatus"] = wfRoot.attr("pbostatus");
+	}
 	wfUpdate["doc"] = wfIO.html();
 	if (nexts.length > 0) {
 		//当前工作的 前node
@@ -3827,6 +3598,7 @@ const createTodo = async function (obj: any) {
 				let todo = new Todo({
 					todoid: todoid,
 					tenant: obj.tenant,
+					newer: true,
 					round: obj.round,
 					doer: doer,
 					tplid: obj.tplid,
@@ -3852,7 +3624,7 @@ const createTodo = async function (obj: any) {
 				await todo.save();
 				await Cache.resetETag(`ETAG:TODOS:${doer}`);
 
-				await informUserOnNewTodo({
+				await MessageEngine.informUserOnNewTodo({
 					tenant: obj.tenant,
 					doer: doer,
 					todoid: todoid,
@@ -3871,49 +3643,6 @@ const createTodo = async function (obj: any) {
 			console.error(error);
 		}
 	} //for
-};
-
-const sanitizeHtmlAndHandleBar = function (all_kvars: any, txt: string) {
-	let ret = txt;
-	let template = Handlebars.compile(txt);
-	ret = template(all_kvars);
-	ret = SanitizeHtml(ret, {
-		allowedTags: [
-			"b",
-			"i",
-			"em",
-			"strong",
-			"a",
-			"blockquote",
-			"li",
-			"ol",
-			"ul",
-			"br",
-			"code",
-			"span",
-			"sub",
-			"sup",
-			"table",
-			"thead",
-			"th",
-			"tbody",
-			"img",
-			"video",
-			"source",
-			"tr",
-			"td",
-			"p",
-			"div",
-			"h1",
-			"h2",
-			"h3",
-			"h4",
-		],
-		allowedAttributes: {
-			"*": ["*"],
-		},
-	});
-	return ret;
 };
 
 /**
@@ -4145,7 +3874,7 @@ const transferWork = async function (
 		return whomEmployee;
 	}
 
-	await informUserOnNewTodo({
+	await MessageEngine.informUserOnNewTodo({
 		tenant: tenant,
 		doer: newDoer,
 		todoid: todoid,
@@ -4159,174 +3888,6 @@ const transferWork = async function (
 	});
 
 	return whomEmployee;
-};
-
-const sendTenantMail = async function (
-	tenant: string | Types.ObjectId,
-	recipients: string | string[],
-	subject: string,
-	mail_body: string,
-	reason = "DEFAULT",
-) {
-	console.log(
-		`\t==>sendTenantMail ${reason} to`,
-		recipients,
-		"in ",
-		isMainThread ? "Main Thread" : "Child Thread",
-	);
-	try {
-		let msg = {
-			CMD: "CMD_sendTenantMail",
-			tenant: tenant,
-			recipients: recipients,
-			cc: "",
-			bcc: "",
-			subject: subject,
-			html: Parser.codeToBase64(mail_body),
-			reason: reason,
-			smtp: {} as SmtpInfo,
-		};
-		if (isMainThread) {
-			let smtp = await Cache.getOrgSmtp(msg.tenant);
-			msg.smtp = smtp;
-			await callSendMailWorker(msg);
-		} else {
-			parentPort.postMessage({ cmd: "worker_sendTenantMail", msg: msg });
-		}
-	} catch (error) {
-		console.error(error);
-	}
-};
-
-const sendSystemMail = async function (
-	recipients: string | string[],
-	subject: string,
-	mail_body: string,
-	reason = "DEFAULT",
-) {
-	console.log(
-		`\t==>sendSystemMail ${reason} to`,
-		recipients,
-		"in ",
-		isMainThread ? "Main Thread" : "Child Thread",
-	);
-	try {
-		let msg = {
-			CMD: "CMD_sendSystemMail",
-			recipients: recipients,
-			subject: subject,
-			html: Parser.codeToBase64(mail_body),
-			smtp: "System",
-		};
-		if (isMainThread) {
-			await callSendMailWorker(msg);
-		} else {
-			//注意，不能在sendMailWorker中调用 sendSystemMail， 会造成死循环
-			parentPort.postMessage({ cmd: "worker_sendSystemMail", msg: msg });
-		}
-	} catch (error) {
-		console.error(error);
-	}
-};
-
-const informUserOnNewTodo = async function (inform: any) {
-	console.log("\t==>informUserOnNewTodo in ", isMainThread ? "Main Thread" : "Child Thread");
-	try {
-		let sendEmailTo = inform.rehearsal ? inform.wfstarter : inform.doer;
-		console.log("\t==>sendEmailTo", sendEmailTo);
-		let withEmail = await Cache.shouldNotifyViaEmail(inform.tenant, sendEmailTo);
-		let cn = await Cache.getEmployeeName(inform.tenant, inform.doer, "informUserOnNewTodo");
-		let mail_body = `Hello, ${cn}, new task is comming in:
-<br/><a href="${frontendUrl}/work/${inform.todoid}">${inform.title} </a><br/>
-in Workflow: <br/>
-${inform.wftitle}<br/>
-started by ${inform.wfstarter}
-<br/><br/>
-
-${inform.cellInfo}
-
-  If you email client does not support html, please copy follow URL address into your browser to access it: ${frontendUrl}/work/${inform.todoid}</a>
-<br/>
-<br/>The task's title is<br/>
-${inform.title}
-
-<br/><br/>
-
-Metatocome`;
-
-		let subject = `[New task] ${inform.title}`;
-		let extra_body = "";
-		if (inform.rehearsal) {
-			subject = "Rehearsal: " + subject;
-			extra_body = `
-<br/>
-This mail should go to ${inform.doer} but send to you because this is rehearsal';
-`;
-		}
-		mail_body += extra_body;
-
-		if (withEmail) {
-			await sendTenantMail(inform.tenant, sendEmailTo, subject, mail_body, "NEWTODO_MAIL");
-		}
-
-		let markdownMsg = {
-			msgtype: "markdown",
-			markdown: {
-				content: `# ${cn}
-
-          ## ${inform.rehearsal ? "Rehearsal: " : ""}${inform.title}
-          
-          [Goto task](${frontendUrl}/work/${inform.todoid})
-          (${frontendUrl}/work/${inform.todoid})
-
-          WeCom may cut part of the above URL making it works not as expected.
-          If you encounter difficulty to view task in WeCom internal browser, please open it in your phone's browser
-
-          The full url is:
-
-          ${frontendUrl}/work/${inform.todoid}
-
-          Of couse, you may also open MTC in your desktop browser to get the full functionalities
-
-          `,
-			},
-		};
-		let bots = await Webhook.find(
-			{
-				tenant: inform.tenant,
-				owner: inform.doer,
-				webhook: "wecombot_todo",
-				tplid: { $in: ["All", inform.tplid] },
-				key: { $exists: true },
-				$expr: { $eq: [{ $strLenCP: "$key" }, 36] },
-			},
-			{ _id: 0, key: 1 },
-		).lean();
-		let botKeys = bots.map((bot) => bot.key);
-		botKeys = [...new Set(botKeys)];
-		let botsNumber = botKeys.length;
-		for (let botIndex = 0; botIndex < botsNumber; botIndex++) {
-			try {
-				let botKey = botKeys[botIndex];
-				let wecomAPI = `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=${botKey}`;
-				callWebApiPosterWorker({ url: wecomAPI, data: markdownMsg })
-					.then(() => {
-						log(
-							inform.tenant,
-							inform.wfid,
-							`Wreck Bot WORK_DONE ${botKey}, ${botIndex}/${botsNumber}`,
-						);
-					})
-					.catch((err) => {
-						console.error("Error from callWebApiPosterWorker" + err.message);
-					});
-			} catch (e) {
-				console.error(e);
-			}
-		}
-	} catch (err) {
-		console.error(err);
-	}
 };
 
 //TODO: get succeed eid from cache
@@ -4701,6 +4262,7 @@ const restartWorkflow_with_latest_tpl = async function (
 		theTemplate: theTemplate,
 		starter: starter,
 		textPbo: [""],
+		pbostatus: "__init__",
 		teamid: wf.teamid,
 		wftitle: wf.wftitle,
 		parent_wf_id: wf.parent_wf_id,
@@ -4906,7 +4468,7 @@ const clearOlderScripts = async function (tenant: TenantIdType) {
 		fs.readdirSync(srcPath).filter((file) => fs.statSync(path.join(srcPath, file)).isFile());
 
 	try {
-		//取得runtime/tenant/下的所有wfid目录
+		//取���runtime/tenant/下的���有wfid目录
 		let directories = getDirectories(emp_tenant_folder);
 		let nowMs = new Date().getTime();
 		for (let i = 0; i < directories.length; i++) {
@@ -4984,7 +4546,7 @@ const stopWorkflow = async function (
 		stopDelayTimers(tenant, wfid);
 		ret = "ST_STOP";
 	} else {
-		ret = getStatusFromClass(wfRoot);
+		ret = Tools.getStatusFromClass(wfRoot);
 	}
 	await resetTodosETagByWfId(tenant, wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
@@ -5155,6 +4717,12 @@ const __destroyWorkflow = async function (tenant: string | Types.ObjectId, wfid:
 		console.log("\tDestroy Comment: ", err.message);
 	}
 	try {
+		process.stdout.write("\tDestroy Data\r");
+		await Data.deleteMany({ tenant: tenant, "context.wfid": wfid });
+	} catch (err) {
+		console.log("\tDestroy Data: ", err.message);
+	}
+	try {
 		process.stdout.write("\tDestroy code folder\r");
 		fs.rmSync(`${process.env.EMP_RUNTIME_FOLDER}/${tenant}/${wfid}`, {
 			recursive: true,
@@ -5258,114 +4826,6 @@ const workflowGetLatest = async function (
 	}
 };
 
-const getWorkInfo = async function (
-	tenant: string | Types.ObjectId,
-	eid: string,
-	myGroup: string,
-	todoid: string,
-) {
-	//查找TODO，可以找到任何人的TODO
-	let todo_filter: any;
-	if (myGroup !== "ADMIN") {
-		todo_filter = { tenant: tenant, todoid: todoid, doer: eid };
-	} else {
-		todo_filter = { tenant: tenant, todoid: todoid };
-	}
-	let todo = await Todo.findOne(todo_filter, { __v: 0 });
-	if (!todo) {
-		throw new EmpError("WORK_NOT_EXIST", "Todo not exist");
-	}
-	let peopleInBrowser = eid;
-	let shouldDoer = todo.doer;
-	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	// Extremely important  BEGIN
-	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-	if (shouldDoer !== peopleInBrowser) {
-		if (todo.cellInfo.trim().length > 0) {
-			todo.cellInfo = "";
-		}
-	}
-	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	// Extremely important  END
-	//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	let shouldEmployee = (await Employee.findOne(
-		{
-			tenant: tenant,
-			eid: shouldDoer,
-		},
-		{ __v: 0 },
-	)) as EmployeeType;
-	if (!SystemPermController.hasPerm(shouldEmployee, "work", todo, "read"))
-		throw new EmpError("NO_PERM", "You don't have permission to read this work");
-	try {
-		let wf = await RCL.getWorkflow({ tenant: tenant, wfid: todo.wfid }, "Engine.getWorkInfo");
-		if (!wf) {
-			await Todo.deleteOne(todo_filter);
-
-			throw new EmpError("NO_WF", "Workflow does not exist");
-		}
-		let wfIO = await Parser.parse(wf.doc);
-		let tpRoot = wfIO(".template");
-		let wfRoot = wfIO(".workflow");
-
-		return await __getWorkFullInfo(
-			tenant,
-			peopleInBrowser,
-			wf,
-			wfIO,
-			tpRoot,
-			wfRoot,
-			todo.wfid,
-			todo,
-		);
-	} catch (error) {
-		if (error.name === "WF_NOT_FOUND") {
-			await Todo.updateMany(
-				{ tenant: tenant, wfid: todo.wfid, status: "ST_RUN" },
-				{ $set: { status: "ST_IGNORE" } },
-			);
-			throw new EmpError("NO_WF", "Workflow does not exist");
-		}
-	}
-};
-
-const getWfHistory = async function (tenant: string, eid: string, wfid: string) {
-	return await __getWorkflowWorksHistory(tenant, eid, wfid);
-};
-
-const splitComment = function (str: string) {
-	//确保@之前有空格
-	str = str.replace(/([\S])@/g, "$1 @");
-	//确保@ID之后有空格
-	str = str.replace(/@(\w+)/g, "@$1 ");
-	//按空字符分割
-	let tmp = str.split(/\s/);
-	if (Array.isArray(tmp)) return tmp;
-	else return [];
-};
-//为MD中的@eid添加<span>
-const splitMarked = async function (tenant: string | Types.ObjectId, cmt: CommentType) {
-	let mdcontent = Marked.parse(cmt.content, {});
-	let splittedMd = splitComment(mdcontent);
-	let people = [];
-	let eids = [];
-	[people, eids] = await setPeopleFromContent(tenant, cmt.content, people, eids);
-	for (let c = 0; c < splittedMd.length; c++) {
-		if (splittedMd[c].startsWith("@")) {
-			if (people.includes(splittedMd[c].substring(1))) {
-				splittedMd[c] = `<span class="comment_uid">${await Cache.getEmployeeName(
-					tenant,
-					splittedMd[c].substring(1),
-					"splitMarked",
-				)}(${splittedMd[c]})</span>`;
-			}
-		}
-	}
-	let mdcontent2 = splittedMd.join(" ");
-	return { mdcontent, mdcontent2 };
-};
-
 /**
  * 取单一todo的变量值，可以是空，没有输入的
  * todo的变量值没有输入，只有一种情况，那就是在procNext中处理ACTION类型时，从模版中去到的数据，模版中可能有缺省值，也可能没有值。所以，取单一工作项的参数值，需要使用any
@@ -5388,503 +4848,6 @@ const getWorkKVars = async function (tenant: TenantIdType, eid: string, todo: To
 	Parser.mergeValueFrom(ret.kvars, existingVars);
 
 	ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
-	return ret;
-};
-
-const getComments = async function (
-	tenant: TenantIdType,
-	objtype: string,
-	objid: string,
-	depth: number = -1,
-	skip: number = -1,
-) {
-	//对objtype+objid的comment可能是多个
-	let cmtCount = await Comment.countDocuments({ tenant, objtype, objid });
-	if (cmtCount === 0) {
-		return [];
-	}
-	let cmts: CommentType[] = [];
-	if (skip >= 0 && depth >= 0) {
-		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
-			.sort({ createdAt: -1 })
-			.limit(depth)
-			.skip(skip)
-			.lean();
-	} else if (depth >= 0) {
-		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
-			.sort({ createdAt: -1 })
-			.limit(depth)
-			.lean();
-	} else if (skip >= 0) {
-		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
-			.sort({ createdAt: -1 })
-			.skip(skip)
-			.lean();
-	} else {
-		cmts = await Comment.find({ tenant, objtype, objid }, { __v: 0 })
-			.sort({ createdAt: -1 })
-			.lean();
-	}
-	if (cmts) {
-		for (let i = 0; i < cmts.length; i++) {
-			cmts[i].whoCN = await Cache.getEmployeeName(tenant, cmts[i].who, "getComments");
-			cmts[i].towhomCN = await Cache.getEmployeeName(tenant, cmts[i].towhom, "getComments");
-			cmts[i].splitted = splitComment(cmts[i].content);
-			let tmpret = await splitMarked(tenant, cmts[i]);
-			cmts[i].mdcontent = tmpret.mdcontent;
-			cmts[i].mdcontent2 = tmpret.mdcontent2;
-			cmts[i].showChildren = true;
-			cmts[i].upnum = await Thumb.countDocuments({
-				tenant,
-				cmtid: cmts[i]._id,
-				upordown: "UP",
-			});
-			cmts[i].downnum = await Thumb.countDocuments({
-				tenant,
-				cmtid: cmts[i]._id,
-				upordown: "DOWN",
-			});
-			//每个 comment 自身还会有被评价
-			let children = await getComments(tenant, "COMMENT", cmts[i]._id.toString(), depth);
-			if (children.length > 0) {
-				cmts[i]["children"] = children;
-				cmts[i].showChildren = true;
-			} else {
-				cmts[i]["children"] = [];
-				cmts[i].showChildren = false;
-			}
-			cmts[i].transition = false;
-		}
-
-		return cmts;
-	} else {
-		return [];
-	}
-};
-
-const loadWorkflowComments = async function (tenant: TenantIdType, wfid: string) {
-	let cmts = [];
-	let workComments = (await Comment.find(
-		{
-			tenant: tenant,
-			"context.wfid": wfid,
-			objtype: "TODO",
-		},
-		{
-			__v: 0,
-		},
-		{ sort: "-updatedAt" },
-	).lean()) as CommentType[];
-	for (let i = 0; i < workComments.length; i++) {
-		let todo = await Todo.findOne(
-			{
-				tenant,
-				wfid: workComments[i].context.wfid,
-				todoid: workComments[i].context.todoid,
-			},
-			{ _id: 0, title: 1, doer: 1 },
-		);
-		if (todo) {
-			workComments[i].todoTitle = todo.title;
-			workComments[i].todoDoer = todo.doer;
-			workComments[i].todoDoerCN = await Cache.getEmployeeName(
-				tenant,
-				todo.doer,
-				"loadWorkflowComments",
-			);
-		}
-		workComments[i].upnum = await Thumb.countDocuments({
-			tenant,
-			cmtid: workComments[i]._id,
-			upordown: "UP",
-		});
-		workComments[i].downnum = await Thumb.countDocuments({
-			tenant,
-			cmtid: workComments[i]._id,
-			upordown: "DOWN",
-		});
-	}
-
-	cmts = workComments;
-
-	for (let i = 0; i < cmts.length; i++) {
-		cmts[i].whoCN = await Cache.getEmployeeName(tenant, cmts[i].who, "loadWorkflowComments");
-		cmts[i].splitted = splitComment(cmts[i].content);
-		let tmpret = await splitMarked(tenant, cmts[i]);
-		cmts[i].mdcontent = tmpret.mdcontent;
-		cmts[i].mdcontent2 = tmpret.mdcontent2;
-		let people = [];
-		let eids = [];
-		[people, eids] = await setPeopleFromContent(tenant, cmts[i].content, people, eids);
-		cmts[i].people = people;
-		//每个 comment 自身还会有被评价
-		let children = await getComments(tenant, "COMMENT", cmts[i]._id);
-		cmts[i]["children"] = children;
-		cmts[i].showChildren = true;
-		cmts[i].transition = i === 0;
-	}
-	return cmts;
-};
-
-const __getWorkFullInfoRevocableAndReturnable = async function (
-	tenant: TenantIdType,
-	tpRoot: Cheerio<Element>,
-	wfRoot: Cheerio<Element>,
-	wfid: string,
-	todo: TodoType,
-	ret: workFullInfo,
-) {
-	//////////////////////////////////////
-	//////////////////////////////////////
-	let tpNode = tpRoot.find("#" + todo.nodeid);
-	let workNode = wfRoot.find("#" + todo.workid);
-
-	ret.withsb = Tools.blankToDefault(tpNode.attr("sb"), "no") === "yes"; //with Sendback-able?
-	ret.withrvk = Tools.blankToDefault(tpNode.attr("rvk"), "no") === "yes"; //with Revocable ?
-
-	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
-	ret.parallel_actions = _getParallelActions(wfRoot, workNode);
-
-	if (todo.nodeid === "ADHOC") {
-		ret.revocable = false;
-		ret.returnable = false;
-	} else {
-		if (ret.withsb || ret.withrvk) {
-			//sb:Sendback, rvk: Revoke;
-			//一个工作项可以被退回，仅当它没有同步节点，且状态为运行中
-			if (ret.withsb) {
-				//sb: Sendback; rvk: Revoke;
-				ret.returnable =
-					ret.parallel_actions.length === 0 &&
-					todo.status === "ST_RUN" &&
-					ret.from_nodeid !== "start";
-			} else {
-				ret.returnable = false;
-			}
-
-			if (ret.withrvk) {
-				let all_following_are_running = true;
-				if (ret.following_actions.length === 0) {
-					all_following_are_running = false;
-				} else {
-					for (let i = 0; i < ret.following_actions.length; i++) {
-						if (
-							ret.following_actions[i].nodeType === "ACTION" &&
-							ret.following_actions[i].status !== "ST_RUN"
-						) {
-							all_following_are_running = false;
-							break;
-						}
-					}
-				}
-
-				//revocable only when all following actions are RUNNING, NOT DONE.
-				ret.revocable =
-					workNode.hasClass("ACTION") &&
-					todo.status === "ST_DONE" &&
-					all_following_are_running &&
-					(await notRoutePassTo(tenant, wfid, todo.workid, "NODETYPE", ["AND"]));
-			} else {
-				ret.withrvk = false;
-			}
-		} else {
-			ret.revocable = false;
-			ret.returnable = false;
-		}
-	}
-
-	return ret;
-};
-
-const __getWorkFullInfo = async function (
-	tenant: string | Types.ObjectId,
-	peopleInBrowser: string,
-	theWf: any,
-	wfIO: CheerioAPI,
-	tpRoot: any,
-	wfRoot: any,
-	wfid: string,
-	todo: any,
-) {
-	//////////////////////////////////////
-	// Attention: TodoOwner确定设为todo.doer？
-	// 应该是对的，之前只在rehearsal下设，是不对的
-	//////////////////////////////////////
-	//if (todo.rehearsal) TodoOwner = todo.doer;
-	let TodoOwner = todo.doer;
-	//////////////////////////////////////
-	//////////////////////////////////////
-	let tpNode = tpRoot.find("#" + todo.nodeid);
-	let workNode = wfRoot.find("#" + todo.workid);
-	let ret: workFullInfo = {} as workFullInfo;
-	ret.kvars = await Parser.userGetVars(tenant, TodoOwner, todo.wfid, todo.workid, [], [], "any");
-	//这里为待输入数据
-	for (const [key, _] of Object.entries(ret.kvars)) {
-		//待输入数据中去除内部数据
-		if (key[0] === "$") {
-			delete ret.kvars[key];
-		}
-	}
-	//workflow: 全部节点数据，
-	//[],[], 白名单和黑名单都为空
-	//yes 为取efficient数据
-	let ALL_VISIED_KVARS = await Parser.userGetVars(
-		tenant,
-		TodoOwner,
-		wfid,
-		Const.FOR_WHOLE_PROCESS,
-		[],
-		[],
-		Const.VAR_IS_EFFICIENT,
-	);
-	// 将 第二个参数的值， merge到第一个参数的键上
-	Parser.mergeValueFrom(ret.kvars, ALL_VISIED_KVARS);
-	//将kvars数据转换为array,方便前端处理
-	ret.kvarsArr = Parser.kvarsToArray(ret.kvars);
-	ret.todoid = todo.todoid;
-	ret.tenant = todo.tenant;
-	ret.doer = todo.doer;
-	ret.doerCN = await Cache.getEmployeeName(tenant, todo.doer, "__getWorkFullInfo");
-	ret.wfid = todo.wfid;
-	ret.nodeid = todo.nodeid;
-	ret.byroute = todo.byroute;
-	ret.workid = todo.workid;
-	ret.title = todo.title;
-	ret.cellInfo = todo.cellInfo;
-	ret.allowdiscuss = todo.allowdiscuss;
-	if (TodoOwner !== peopleInBrowser) {
-		ret.cellInfo = "";
-	}
-	if (ret.title.indexOf("[") >= 0) {
-		ret.title = await Parser.replaceStringWithKVar(
-			tenant,
-			ret.title,
-			ALL_VISIED_KVARS,
-			Const.INJECT_INTERNAL_VARS,
-		);
-	}
-	ret.status = todo.status;
-	ret.wfstarter = todo.wfstarter;
-	ret.wfstatus = todo.wfstatus;
-	ret.rehearsal = todo.rehearsal;
-	ret.createdAt = todo.createdAt;
-	ret.allowpbo = Tools.blankToDefault(tpNode.attr("pbo"), "no") === "yes";
-	ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "yes") === "yes";
-	ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "yes") === "yes";
-	ret.updatedAt = todo.updatedAt;
-	ret.from_workid = workNode.attr("from_workid");
-	ret.from_nodeid = workNode.attr("from_nodeid");
-	ret.doneat = workNode.attr("doneat");
-	ret.sr = tpNode.attr("sr");
-	ret.transferable = todo.transferable;
-	ret.role = workNode.attr("role");
-	ret.role = Tools.isEmpty(ret.role) ? "DEFAULT" : ret.role === "undefined" ? "DEFAULT" : ret.role;
-	ret.doer_string = workNode.attr("doer");
-	//ret.comments = await getComments(tenant, "TODO", todo.todoid, Const.COMMENT_LOAD_NUMBER);
-	ret.comment =
-		Tools.isEmpty(todo.comment) || Tools.isEmpty(todo.comment.trim())
-			? []
-			: [
-					{
-						doer: todo.doer,
-						comment: todo.comment.trim(),
-						cn: await Cache.getEmployeeName(tenant, todo.doer, "__getWorkFullInfo"),
-						splitted: splitComment(todo.comment.trim()),
-					},
-			  ];
-	//取当前节点的vars。 这些vars应该是在yarkNode时，从对应的模板节点上copy过来
-	ret.wf = {
-		wfid: theWf.wfid,
-		endpoint: theWf.endpoint,
-		endpointmode: theWf.endpointmode,
-		tplid: theWf.tplid,
-		kvars: ALL_VISIED_KVARS,
-		kvarsArr: [],
-		starter: wfRoot.attr("starter"),
-		wftitle: wfRoot.attr("wftitle"),
-		pwfid: wfRoot.attr("pwfid"),
-		pworkid: wfRoot.attr("pworkid"),
-		attachments: theWf.attachments,
-		status: getWorkflowStatus(wfRoot),
-		beginat: wfRoot.attr("at"),
-		doneat: getWorkflowDoneAt(wfRoot),
-		allowdiscuss: theWf.allowdiscuss,
-		history: [],
-	};
-	ret.wf.kvarsArr = Parser.kvarsToArray(ret.wf.kvars);
-
-	if (todo.nodeid !== "ADHOC") {
-		let tmpInstruction = Parser.base64ToCode(getInstruct(tpRoot, todo.nodeid));
-		tmpInstruction = sanitizeHtmlAndHandleBar(ALL_VISIED_KVARS, tmpInstruction);
-		if (tmpInstruction.indexOf("[") >= 0) {
-			tmpInstruction = await Parser.replaceStringWithKVar(
-				tenant,
-				tmpInstruction,
-				ALL_VISIED_KVARS,
-				Const.INJECT_INTERNAL_VARS,
-			);
-		}
-		ret.instruct = Parser.codeToBase64(tmpInstruction);
-	} else {
-		//Adhoc task has it's own instruction
-		ret.instruct = Parser.codeToBase64(Marked.parse(todo.instruct, {}));
-	}
-
-	//the 3rd param, true: removeOnlyDefault:  如果只有一个DEFAULT，返回空数组
-	ret.routingOptions = getRoutingOptions(wfIO, tpRoot, todo.nodeid, true);
-	ret.from_actions = _getFromActions(wfIO, tpRoot, wfRoot, workNode);
-	//ret.following_actions = _getFollowingActions(tpRoot, wfRoot, workNode);
-	ret.following_actions = await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, workNode);
-	ret.parallel_actions = _getParallelActions(wfRoot, workNode);
-	ret.freejump_nodes = _getFreeJumpNodes(wfIO, tpRoot, tpNode);
-
-	const tmp = await __getWorkFullInfoRevocableAndReturnable(
-		tenant,
-		tpRoot,
-		wfRoot,
-		wfid,
-		todo,
-		ret,
-	);
-	ret.revocable = tmp.revocable;
-	ret.returnable = tmp.returnable;
-
-	ret.wf.history = await __getWorkflowWorksHistory(tenant, TodoOwner, wfid);
-	ret.version = Const.VERSION;
-
-	return ret;
-};
-
-const _getFreeJumpNodes = (wfIO: CheerioAPI, tpRoot: any, tpNode: any): NodeBriefType[] => {
-	let ret: NodeBriefType[] = [];
-	let tplfjdef = tpRoot.attr("freejump")?.trim();
-	//if tplfjderf == yes, add all nodes to freejump_nodes
-	if (tplfjdef === "yes") {
-		tpRoot.find(".node.ACTION").each(function (_: number, el: Element) {
-			let jq = wfIO(el);
-			if (jq.attr("id") === tpNode.attr("id")) return;
-			let title = jq.find("p").first().text().trim();
-			ret.push({
-				nodeid: jq.attr("id"),
-				title: title,
-			});
-		});
-	} else {
-		//else, plase matched node text to freejump_nodes
-		let fjdef = tpNode.attr("freejump")?.trim();
-		if (fjdef) {
-			let re = new RegExp(fjdef);
-			tpRoot.find(".node.ACTION").each(function (_: number, el: Element) {
-				let jq = wfIO(el);
-				if (jq.attr("id") === tpNode.attr("id")) return;
-				let title = jq.find("p").first().text().trim();
-				if (title.match(re)) {
-					ret.push({
-						nodeid: jq.attr("id"),
-						title: title,
-					});
-				}
-			});
-		}
-	}
-
-	return ret;
-};
-
-const __getWorkflowWorksHistory = async function (
-	tenant: string | Types.ObjectId,
-	eid: string,
-	wfid: string,
-): Promise<any[]> {
-	let ret: HistoryTodoEntryType[] = [];
-	let tmpRet: HistoryTodoEntryType[] = [];
-	//let todo_filter = { tenant: tenant, wfid: wfid, status: /ST_DONE|ST_RETURNED|ST_REVOKED/ };
-	//let todo_filter = { tenant: tenant, wfid: wfid, status: { $ne: "ST_RUN" } };
-	let todo_filter = { tenant: tenant, wfid: wfid };
-	let todos = await Todo.find(todo_filter, { __v: 0 }).sort({ updatedAt: -1 });
-	for (let i = 0; i < todos.length; i++) {
-		let hasPersonCNInTitle = false;
-		//替换Var之前的原始Title
-		if (todos[i].origtitle && todos[i].origtitle.indexOf("doerCN") > 0) {
-			hasPersonCNInTitle = true;
-		}
-
-		let todoEntry: HistoryTodoEntryType = {} as HistoryTodoEntryType;
-		let doerCN = await Cache.getEmployeeName(tenant, todos[i].doer, "__getWorkflowWorksHistory");
-		todoEntry.workid = todos[i].workid;
-		todoEntry.todoid = todos[i].todoid;
-		todoEntry.nodeid = todos[i].nodeid;
-		todoEntry.title = todos[i].title;
-		if (hasPersonCNInTitle) {
-			todoEntry.title = todoEntry.title.replace(doerCN, "***");
-		}
-		todoEntry.status = todos[i].status;
-		todoEntry.doer = todos[i].doer;
-		todoEntry.doerCN = doerCN;
-		todoEntry.doneby = todos[i].doneby;
-		todoEntry.doneat = todos[i].doneat;
-		if (todos[i].decision) todoEntry.decision = todos[i].decision;
-		let kvars = await Parser.userGetVars(
-			tenant,
-			eid,
-			todos[i].wfid,
-			todos[i].workid,
-			[],
-			[],
-			Const.VAR_IS_EFFICIENT,
-		);
-		todoEntry.kvarsArr = Parser.kvarsToArray(kvars);
-		todoEntry.kvarsArr = todoEntry.kvarsArr.filter((x) => x.ui && x.ui.includes("input"));
-		tmpRet.push(todoEntry);
-	}
-	//把相同workid聚合起来
-	let tmp = [];
-	for (let i = 0; i < tmpRet.length; i++) {
-		let existing_index = tmp.indexOf(tmpRet[i].workid);
-		//如果一个workid不存在，则这是一个新的Todo
-		if (existing_index < 0) {
-			//组织这个work的doers（多个用户）
-			tmpRet[i].doers = [];
-			tmpRet[i].doers.push({
-				eid: tmpRet[i].doer,
-				cn: await Cache.getEmployeeName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
-				signature: await Cache.getEmployeeSignature(tenant, tmpRet[i].doer),
-				todoid: tmpRet[i].todoid,
-				doneat: tmpRet[i].doneat,
-				status: tmpRet[i].status,
-				decision: tmpRet[i].decision,
-			});
-			let work = await Work.findOne({ tenant: tenant, workid: tmpRet[i].workid }, { __v: 0 });
-			tmpRet[i].workDecision = work && work.decision ? work.decision : "";
-			ret.push(tmpRet[i]);
-			tmp.push(tmpRet[i].workid);
-		} else {
-			if (tmpRet[i].comment && tmpRet[i].comment.length > 0)
-				ret[existing_index].comment = [...ret[existing_index].comment, ...tmpRet[i].comment];
-			/*
-      if (tmpRet[i].comments && tmpRet[i].comments.length > 0) {
-        ret[existing_index].comments = [...ret[existing_index].comments, ...tmpRet[i].comments];
-      }
-      */
-			ret[existing_index].doers.push({
-				eid: tmpRet[i].doer,
-				cn: await Cache.getEmployeeName(tenant, tmpRet[i].doer, "__getWorkflowWorksHistory"),
-				signature: await Cache.getEmployeeSignature(tenant, tmpRet[i].doer),
-				todoid: tmpRet[i].todoid,
-				doneat: tmpRet[i].doneat,
-				status: tmpRet[i].status,
-				decision: tmpRet[i].decision,
-			});
-			// ����������一个活动为DONE， 而整���为IGNORE，则���整体设为DONE
-			if (tmpRet[i].status === "ST_DONE" && ret[existing_index].status === "ST_IGNORE") {
-				ret[existing_index].status = "ST_DONE";
-			}
-			//又一个还在RUN，则�������������������������������������������work为RUN
-			if (tmpRet[i].status === "ST_RUN") {
-				ret[existing_index].status = "ST_RUN";
-			}
-		}
-	}
 	return ret;
 };
 
@@ -5927,7 +4890,7 @@ const _getFollowingActions = function (
 		let tmpWork = workNode.nextAll(workSelector);
 		if (tmpWork.length > 0) {
 			tmpWork = tmpWork.eq(0);
-			let st = getStatusFromClass(tmpWork);
+			let st = Tools.getStatusFromClass(tmpWork);
 			if (tmpWork.hasClass("ACTION")) {
 				let action = {
 					nodeid: tmpWork.attr("nodeid"),
@@ -5958,184 +4921,6 @@ const _getFollowingActions = function (
 				ret = ret.concat(
 					_getFollowingActions(wfIO, tpRoot, wfRoot, tmpWork, withWork, decentlevel + 1),
 				);
-			}
-		}
-	});
-	return ret;
-};
-
-const _getRoutedPassedWorks = async function (
-	tenant: string | Types.ObjectId,
-	tpRoot: any,
-	wfRoot: any,
-	workNode: any,
-	withWork = false,
-	decentlevel = 0,
-): Promise<ActionDef[]> {
-	if (Tools.isEmpty(workNode)) return [];
-	let tplNodeId = workNode.attr("nodeid");
-	let workid = workNode.attr("id");
-	if (Tools.isEmpty(tplNodeId)) return [];
-	let ret = [];
-	let routes = await Route.find(
-		{
-			tenant: tenant,
-			wfid: wfRoot.attr("id"),
-			from_workid: workid,
-			status: "ST_PASS",
-		},
-		{ __v: 0 },
-	);
-	for (let i = 0; i < routes.length; i++) {
-		let workSelector = `.work[id="${routes[i].to_workid}"]`;
-		let routedWork = workNode.nextAll(workSelector);
-		if (routedWork.length < 1) {
-			continue;
-		}
-		routedWork = routedWork.eq(0);
-		let st = getStatusFromClass(routedWork);
-		if (routedWork.hasClass("ACTION")) {
-			let action = {
-				nodeid: routedWork.attr("nodeid"),
-				workid: routedWork.attr("id"),
-				nodeType: "ACTION",
-				route: Tools.emptyThenDefault(routedWork.attr("route"), "DEFAULT"),
-				byroute: Tools.emptyThenDefault(routedWork.attr("byroute"), "DEFAULT"),
-				status: st,
-			};
-			withWork && (action["work"] = routedWork);
-			ret.push(action);
-		} else if (
-			st === "ST_DONE" &&
-			routedWork.hasClass("ACTION") === false &&
-			routedWork.hasClass("END") === false
-			//非END的逻辑节点
-		) {
-			let action = {
-				nodeid: routedWork.attr("nodeid"),
-				workid: routedWork.attr("id"),
-				nodeType: Parser.getNodeType(routedWork),
-				route: Tools.emptyThenDefault(routedWork.attr("route"), "DEFAULT"),
-				byroute: Tools.emptyThenDefault(routedWork.attr("byroute"), "DEFAULT"),
-				status: st,
-			};
-			withWork && (action["work"] = routedWork);
-			ret.push(action);
-			ret = ret.concat(
-				await _getRoutedPassedWorks(tenant, tpRoot, wfRoot, routedWork, withWork, decentlevel + 1),
-			);
-		}
-	}
-	return ret;
-};
-
-const _getParallelActions = function (
-	wfRoot: Cheerio<Element>,
-	workNode: Cheerio<Element>,
-): ActionDef[] {
-	if (Tools.isEmpty(workNode)) return [];
-	let ret = [];
-	let parallel_id = workNode.attr("prl_id");
-	if (parallel_id) {
-		let workSelector = `.work[prl_id="${parallel_id}"]`;
-		let tmpWorks = wfRoot.find(workSelector);
-		for (let i = 0; i < tmpWorks.length; i++) {
-			let tmpWork = tmpWorks.eq(i);
-			let st = getStatusFromClass(tmpWork);
-			if (tmpWork.hasClass("ST_END") === false) {
-				ret.push({
-					nodeid: tmpWork.attr("nodeid"),
-					workid: tmpWork.attr("id"),
-					route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
-					byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
-					status: st,
-				});
-			}
-		}
-	}
-	return ret;
-};
-
-//workid 没有运行到某些节点dests
-const notRoutePassTo = async function (
-	tenant: TenantIdType,
-	wfid: string,
-	workid: string,
-	checkType: "NODETYPE" | "WORKID" | "NODEID",
-	dests: string[],
-) {
-	return !(await isRoutePassTo(tenant, wfid, workid, checkType, dests));
-};
-//workid 运行到某些节点dests
-const isRoutePassTo = async function (
-	tenant: TenantIdType,
-	wfid: string,
-	workid: string,
-	checkType: "NODETYPE" | "WORKID" | "NODEID",
-	dests: string[],
-) {
-	if (["NODETYPE", "WORKID", "NODEID"].includes(checkType) === false)
-		throw new EmpError("NOT_SUPPORT", "isRoutePassTo " + checkType);
-	let tmp = await Route.findOne(
-		{
-			tenant: tenant,
-			wfid: wfid,
-			from_workid: workid,
-			status: "ST_PASS",
-		},
-		{ __v: 0 },
-	);
-	if (checkType === "NODETYPE") {
-		return dests.includes(tmp.to_nodetype);
-	} else if (checkType === "WORKID") {
-		return dests.includes(tmp.to_workid);
-	} else if (checkType === "NODEID") {
-		return dests.includes(tmp.to_nodeid);
-	}
-};
-
-const _getFromActions = function (
-	wfIO: CheerioAPI,
-	tpRoot: Cheerio<Element>,
-	wfRoot: Cheerio<Element>,
-	workNode: Cheerio<Element>,
-	decentlevel = 0,
-): ActionDef[] {
-	if (Tools.isEmpty(workNode)) return [];
-	let tplNodeId = workNode.attr("nodeid");
-	if (Tools.isEmpty(tplNodeId)) return [];
-	let linkSelector = `.link[to="${tplNodeId}"]`;
-	let ret = [];
-	tpRoot.find(linkSelector).each(function (_: number, el: Element) {
-		let linkObj = wfIO(el);
-		let fromid = linkObj.attr("from");
-		//let workSelector = `.work.ST_DONE[nodeid="${fromid}"]`;
-		let workSelector = `.work[nodeid="${fromid}"]`;
-		let tmpWork = workNode.prevAll(workSelector);
-		if (tmpWork.length > 0) {
-			tmpWork = tmpWork.eq(0);
-			if (tmpWork.hasClass("START") === false) {
-				if (tmpWork.hasClass("ACTION")) {
-					ret.push({
-						nodeid: tmpWork.attr("nodeid"),
-						workid: tmpWork.attr("id"),
-						nodeType: "ACTION",
-						route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
-						byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
-						level: decentlevel,
-					});
-				} else {
-					ret.push({
-						nodeid: tmpWork.attr("nodeid"),
-						workid: tmpWork.attr("id"),
-						nodeType: Parser.getNodeType(tmpWork),
-						route: Tools.emptyThenDefault(tmpWork.attr("route"), "DEFAULT"),
-						byroute: Tools.emptyThenDefault(tmpWork.attr("byroute"), "DEFAULT"),
-						level: decentlevel,
-					});
-					let tmp = _getFromActions(wfIO, tpRoot, wfRoot, tmpWork, decentlevel + 1);
-					ret = ret.concat(tmp);
-				}
 			}
 		}
 	});
@@ -6194,25 +4979,6 @@ const _getFromNodeIds = function (wfIO: CheerioAPI, tpRoot: Cheerio<Element>, th
 	return [...new Set(ret)];
 };
 
-const getStatusFromClass = function (node: Cheerio<Element>) {
-	if (node.hasClass("ST_RUN")) return "ST_RUN";
-	if (node.hasClass("ST_PAUSE")) return "ST_PAUSE";
-	if (node.hasClass("ST_DONE")) return "ST_DONE";
-	if (node.hasClass("ST_STOP")) return "ST_STOP";
-	if (node.hasClass("ST_IGNORE")) return "ST_IGNORE";
-	if (node.hasClass("ST_RETURNED")) return "ST_RETURNED";
-	if (node.hasClass("ST_REVOKED")) return "ST_REVOKED";
-	if (node.hasClass("ST_END")) return "ST_END";
-	if (node.hasClass("ST_WAIT")) return "ST_WAIT";
-	throw new EmpError(
-		"WORK_NO_STATUS_CLASS",
-		`Node status class is not found. classes="${node.attr("class")}"`,
-		{
-			nodeid: node.attr("nodeid"),
-			classes: node.attr("class"),
-		},
-	);
-};
 /**
  * getWorkflowOrNodeStatus = async() Get status of workflow or a worknode
  *
@@ -6234,10 +5000,10 @@ const getWorkflowOrNodeStatus = async function (
 	let wfRoot = wfIO(".workflow");
 	if (workid) {
 		let workNode = wfRoot.find("#" + workid);
-		return getStatusFromClass(workNode);
+		return Tools.getStatusFromClass(workNode);
 	} else {
 		//workid为空，
-		return getStatusFromClass(wfRoot);
+		return Tools.getStatusFromClass(wfRoot);
 	}
 };
 
@@ -6279,7 +5045,7 @@ const pauseWorkflow = async function (
 		await pauseDelayTimers(tenant, wfid);
 		ret = "ST_PAUSE";
 	} else {
-		ret = getStatusFromClass(wfRoot);
+		ret = Tools.getStatusFromClass(wfRoot);
 	}
 	await resetTodosETagByWfId(tenant, wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
@@ -6331,7 +5097,7 @@ const resumeWorkflow = async function (
 		await resumeDelayTimers(tenant, wfid);
 		ret = "ST_RUN";
 	} else {
-		ret = getStatusFromClass(wfRoot);
+		ret = Tools.getStatusFromClass(wfRoot);
 	}
 	await resetTodosETagByWfId(tenant, wfid);
 	await Cache.resetETag(`ETAG:WORKFLOWS:${tenant}`);
@@ -6880,17 +5646,17 @@ const calculateVote = async function (
 		function least() {
 			return allVoted() ? pure_order[order.length - 1].decision : "WAITING";
 		}
-		function allOfValueOrFailto(allValue: string, failValue: string) {
-			if (decisions.length === 1 && decisions[0] === allValue) {
-				return allValue;
-			} else {
-				if (pure_decisions.length === decisions.length) {
-					return failValue;
-				} else {
-					return "WAITING";
-				}
-			}
-		}
+		// function allOfValueOrFailto(allValue: string, failValue: string) {
+		// 	if (decisions.length === 1 && decisions[0] === allValue) {
+		// 		return allValue;
+		// 	} else {
+		// 		if (pure_decisions.length === decisions.length) {
+		// 			return failValue;
+		// 		} else {
+		// 			return "WAITING";
+		// 		}
+		// 	}
+		// }
 		function allOrFailto(failValue: string) {
 			if (decisions.length === 1) {
 				return decisions[0];
@@ -7104,7 +5870,7 @@ const ignore4Or = function (
 		let wfSelector = `.work[nodeid="${fromid}"]`;
 		let work = wfRoot.find(wfSelector);
 		if (work.hasClass("ST_RUN")) {
-			//如果该前置节点状态为ST_RUN, 则设置其为ST_IGNORE
+			//如果该��置节点状态为ST_RUN, 则设置其为ST_IGNORE
 			work.removeClass("ST_RUN");
 			work.addClass("ST_IGNORE");
 
@@ -7151,7 +5917,7 @@ const __getFutureSecond = function (wfRoot: Cheerio<Element>, delayString: strin
 			//表示该时间为从现在开始往后的一个时间点
 			procType = "NOW+";
 		} else procType = "FIXTIME";
-		//如果前面没有 start+,也没有+号, 则表示该时间为固定设定时间
+		//如果前��没有 start+,也没有+号, 则表示该时间为固定设定时间
 	} else {
 		//如果 配置字符串格式有误,则缺省为从现在往后60分钟
 		t = [0, 0, 0, 0, 60, 0];
@@ -7315,65 +6081,6 @@ const stopWorkflowCrons = async function (tenant: TenantIdType, wfid: string) {
 	}
 };
 
-const getWorkflowStatus = function (wfRoot: Cheerio<Element>) {
-	let ret = "ST_UNKNOWN";
-	let tmparr = wfRoot.attr("class").split(" ");
-	for (let i = 0; i < tmparr.length; i++) {
-		if (tmparr[i].startsWith("ST_")) ret = tmparr[i];
-	}
-	return ret;
-};
-const getWorkflowDoneAt = function (wfRoot: Cheerio<Element>) {
-	return wfRoot.attr("doneat");
-};
-
-// 获取从某个节点开始往后的Routing Options
-const getRoutingOptions = function (
-	wfIO: CheerioAPI,
-	tpRoot: Cheerio<Element>,
-	nodeid: string,
-	removeOnlyDefault: boolean = false,
-) {
-	let linkSelector = '.link[from="' + nodeid + '"]';
-	let routings = [];
-	let tpNode = tpRoot.find("#" + nodeid);
-	let repeaton = getRepeaton(tpNode);
-	if (repeaton) {
-		routings.push(repeaton);
-	}
-	tpRoot.find(linkSelector).each(function (_: number, el: Element) {
-		let option = Tools.emptyThenDefault(wfIO(el).attr("case"), "DEFAULT");
-		//option以h: h_ h-开头,不显示在用户界面上, 在每个节点上,都有脚本, 当使用脚本决定下一步往哪里走的时候, 对用户隐藏的选择项就有用处
-		//意思是, 脚本用的到,用户不能用的选择项就隐藏起来
-		if (
-			!(option.startsWith("h:") || option.startsWith("h_") || option.startsWith("h-")) &&
-			routings.indexOf(option) < 0
-		)
-			routings.push(option);
-	});
-	if (routings.length > 1 && routings.includes("DEFAULT")) {
-		routings = routings.filter((x) => x !== "DEFAULT");
-	}
-	//前端会自动判断如果routings数组为空，则自动显示为一个按钮DONE
-	//但前面一个注释掉的语句，不能放开注释
-	//因为当除了DEFAULT以外，还有一个选项时，DEFAULT是需要出现的
-	//这种情况发生在，在建模时，一个节点的后面有多个链接，但有一个或多个链接没有设置routing值
-	if (removeOnlyDefault) {
-		if (routings.length === 1 && routings[0] === "DEFAULT") {
-			routings = [];
-		}
-	}
-	return routings;
-};
-const getInstruct = function (tpRoot: Cheerio<Element>, nodeid: string) {
-	let ret = "";
-	let tpNode = tpRoot.find("#" + nodeid);
-	if (tpNode) {
-		ret = tpNode.find(".instruct").first().text().trim();
-	}
-	return ret;
-};
-
 const formatRoute = function (route: string | string[] | null | undefined) {
 	let ret = route;
 	if (Array.isArray(route)) return route;
@@ -7486,6 +6193,7 @@ const procNext = async function (procParams: ProcNextParams) {
 	if (foundRoutes.includes("DEFAULT") === false) foundRoutes.push("DEFAULT");
 	//统计需要经过的路径的数量, 同时,运行路径上的变量设置
 
+	let pbostatus = "";
 	linksInTemplate.each(function (_: number, el: Element) {
 		let linkObj = wfIO(el);
 		let option = Tools.blankToDefault(linkObj.attr("case"), "DEFAULT");
@@ -7504,6 +6212,10 @@ const procNext = async function (procParams: ProcNextParams) {
 				setValue = Parser.base64ToCode(setValue);
 				Client.setKVarFromString(tenant, round, wfid, this_nodeid, this_workid, setValue);
 			}
+			let tmp = linkObj.attr("pbostatus");
+			if (tmp && tmp.trim()) {
+				pbostatus = tmp.trim();
+			}
 		} else {
 			//需要被忽略的路径
 			ignoredNexts.push({
@@ -7512,6 +6224,9 @@ const procNext = async function (procParams: ProcNextParams) {
 			});
 		}
 	});
+	if (pbostatus) {
+		wfRoot.attr("pbostatus", pbostatus);
+	}
 
 	for (let i = 0; i < foundNexts.length; i++) {
 		//构建一个zeroMQ 消息 body， 放在nexts数组中
@@ -7762,11 +6477,6 @@ export default {
 	pauseWorkflow,
 	getWorkflowOrNodeStatus,
 	getTodosByWorkid,
-	loadWorkflowComments,
-	getComments,
-	splitMarked,
-	getWfHistory,
-	getWorkInfo,
 	workflowGetLatest,
 	workflowGetList,
 	destroyWorkflow,
@@ -7787,8 +6497,6 @@ export default {
 	addAdhoc,
 	revokeWork,
 	doCallback,
-	postCommentForComment,
-	postCommentForTodo,
 	doWork,
 	freejump,
 	hasPermForWork,
@@ -7796,8 +6504,6 @@ export default {
 	scheduleCron,
 	startBatchWorkflow,
 	sendNexts,
-	sendTenantMail,
-	sendSystemMail,
 	scanKShares,
 	randomNumber,
 	rescheduleCrons,

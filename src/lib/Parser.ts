@@ -427,7 +427,6 @@ const Parser = {
 			ret = [{ eid: starter, cn: await Cache.getEmployeeName(tenant, starter) }];
 			return ret;
 		}
-		debugger;
 		if (wfRoot) {
 			//search inner team
 			let innerTeamDef = {};

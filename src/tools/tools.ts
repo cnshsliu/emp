@@ -1,10 +1,18 @@
+import { Cheerio, Element } from "cheerio";
 import Jimp from "jimp";
+import { marked as Marked } from "marked";
+import { CommentType } from "../database/models/Comment";
+import Cache from "../lib/Cache";
+import EmpError from "../lib/EmpError";
 import { Types } from "mongoose";
 import zlib from "zlib";
 import type { PondFileInfoOnServerType } from "../lib/EmpTypes";
 import lodash from "lodash";
 import path from "path";
 import { sprintf } from "sprintf-js";
+import Handlebars from "handlebars";
+import SanitizeHtml from "sanitize-html";
+
 const replaceReg = / |　/gi;
 const Tools = {
 	NID: "000000000000000000000000",
@@ -323,6 +331,120 @@ const Tools = {
 			cover: path.join(process.env.EMP_STATIC_FOLDER, tenant, "cover"),
 			attachment: path.join(process.env.EMP_ATTACHMENT_FOLDER, tenant),
 		};
+	},
+	splitComment: function (str: string) {
+		//确保@之前有空格
+		str = str.replace(/([\S])@/g, "$1 @");
+		//确保@ID之后有空格
+		str = str.replace(/@(\w+)/g, "@$1 ");
+		//按空字符分割
+		let tmp = str.split(/\s/);
+		if (Array.isArray(tmp)) return tmp;
+		else return [];
+	},
+	sanitizeHtmlAndHandleBar: function (all_kvars: any, txt: string) {
+		let ret = txt;
+		let template = Handlebars.compile(txt);
+		ret = template(all_kvars);
+		ret = SanitizeHtml(ret, {
+			allowedTags: [
+				"b",
+				"i",
+				"em",
+				"strong",
+				"a",
+				"blockquote",
+				"li",
+				"ol",
+				"ul",
+				"br",
+				"code",
+				"span",
+				"sub",
+				"sup",
+				"table",
+				"thead",
+				"th",
+				"tbody",
+				"img",
+				"video",
+				"source",
+				"tr",
+				"td",
+				"p",
+				"div",
+				"h1",
+				"h2",
+				"h3",
+				"h4",
+			],
+			allowedAttributes: {
+				"*": ["*"],
+			},
+		});
+		return ret;
+	},
+
+	getStatusFromClass: function (node: Cheerio<Element>) {
+		if (node.hasClass("ST_RUN")) return "ST_RUN";
+		if (node.hasClass("ST_PAUSE")) return "ST_PAUSE";
+		if (node.hasClass("ST_DONE")) return "ST_DONE";
+		if (node.hasClass("ST_STOP")) return "ST_STOP";
+		if (node.hasClass("ST_IGNORE")) return "ST_IGNORE";
+		if (node.hasClass("ST_RETURNED")) return "ST_RETURNED";
+		if (node.hasClass("ST_REVOKED")) return "ST_REVOKED";
+		if (node.hasClass("ST_END")) return "ST_END";
+		if (node.hasClass("ST_WAIT")) return "ST_WAIT";
+		throw new EmpError(
+			"WORK_NO_STATUS_CLASS",
+			`Node status class is not found. classes="${node.attr("class")}"`,
+			{
+				nodeid: node.attr("nodeid"),
+				classes: node.attr("class"),
+			},
+		);
+	},
+
+	setPeopleFromContent: async function (
+		tenant: Types.ObjectId | string,
+		content: string,
+		people: string[],
+		eids: string[],
+	) {
+		let tmp = Tools.getEidsFromText(content);
+		for (let i = 0; i < tmp.length; i++) {
+			let toWhomEid = tmp[i];
+			let receiverCN = await Cache.getEmployeeName(tenant, toWhomEid, "setPeopleFromContent");
+			if (receiverCN !== "USER_NOT_FOUND") {
+				people.push(tmp[i]);
+				eids.push(toWhomEid);
+			}
+		}
+		eids = [...new Set(eids)];
+		people = [...new Set(people)];
+		people = people.map((p) => Tools.getEmailPrefix(p));
+		return [people, eids];
+	},
+	//为MD中的@eid添加<span>
+	splitMarked: async function (tenant: string | Types.ObjectId, cmt: CommentType) {
+		let mdcontent = Marked.parse(cmt.content, {});
+		let splittedMd = Tools.splitComment(mdcontent);
+		let people = [];
+		let eids = [];
+		[people, eids] = await Tools.setPeopleFromContent(tenant, cmt.content, people, eids);
+		for (let c = 0; c < splittedMd.length; c++) {
+			if (splittedMd[c].startsWith("@")) {
+				if (people.includes(splittedMd[c].substring(1))) {
+					splittedMd[c] = `<span class="comment_uid">${await Cache.getEmployeeName(
+						tenant,
+						splittedMd[c].substring(1),
+						"splitMarked",
+					)}(${splittedMd[c]})</span>`;
+				}
+			}
+		}
+		let mdcontent2 = splittedMd.join(" ");
+		return { mdcontent, mdcontent2 };
 	},
 };
 
