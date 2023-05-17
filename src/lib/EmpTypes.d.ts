@@ -229,6 +229,7 @@ export type workFullInfo = {
 	updatedAt: string;
 	doneat: string;
 	allowpbo: boolean;
+	mustsign: boolean;
 	tenant: string;
 	doer: string;
 	doerCN: string;

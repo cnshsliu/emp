@@ -8,26 +8,28 @@ import MenuRoutes from "../routes/menu/endpoints";
 import ShareRoutes from "../routes/share/endpoints";
 import TryRoutes from "../routes/try/endpoints";
 import YanaRoutes from "../routes/yana/endpoints";
+import SignatureRoutes from "../routes/signature/endpoints";
 import DataRoutes from "../routes/data/endpoints";
 
 const Routes = {
-	//Concatentate the routes into one array
-	//set the routes for the server
-	init: async function (server) {
-		let allRoutes = [].concat(
-			GeneralRoutes.endpoints,
-			AccountRoutes.endpoints,
-			EngineRoutes.endpoints,
-			DelegationRoutes.endpoints,
-			FilesRoutes.endpoints,
-			MenuRoutes.endpoints,
-			ShareRoutes.endpoints,
-			TryRoutes.endpoints,
-			YanaRoutes.endpoints,
-			DataRoutes.endpoints,
-		);
-		await server.route(allRoutes);
-	},
+  //Concatentate the routes into one array
+  //set the routes for the server
+  init: async function(server) {
+    let allRoutes = [].concat(
+      GeneralRoutes.endpoints,
+      AccountRoutes.endpoints,
+      EngineRoutes.endpoints,
+      DelegationRoutes.endpoints,
+      FilesRoutes.endpoints,
+      MenuRoutes.endpoints,
+      ShareRoutes.endpoints,
+      TryRoutes.endpoints,
+      YanaRoutes.endpoints,
+      SignatureRoutes.endpoints,
+      DataRoutes.endpoints,
+    );
+    await server.route(allRoutes);
+  },
 };
 
 export default Routes;

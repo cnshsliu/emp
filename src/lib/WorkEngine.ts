@@ -589,6 +589,7 @@ const __getWorkFullInfo = async function (
 	ret.rehearsal = todo.rehearsal;
 	ret.createdAt = todo.createdAt;
 	ret.allowpbo = Tools.blankToDefault(tpNode.attr("pbo"), "no") === "yes";
+	ret.mustsign = Tools.blankToDefault(tpNode.attr("mustsign"), "yes") === "yes";
 	ret.withadhoc = Tools.blankToDefault(tpNode.attr("adhoc"), "yes") === "yes";
 	ret.withcmt = Tools.blankToDefault(tpNode.attr("cmt"), "yes") === "yes";
 	ret.updatedAt = todo.updatedAt;
