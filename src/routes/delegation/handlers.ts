@@ -134,10 +134,11 @@ async function DelegationToMeToday(req: Request, h: ResponseToolkit) {
 			if (ifNoneMatch && latestETag && ifNoneMatch === latestETag) {
 				return replyHelper.build304([], latestETag);
 			}
-			return replyHelper.buildReturnWithEtag(
+			const ret = replyHelper.buildReturnWithEtag(
 				await DelegateEngine.delegationToMeToday(tenant, myEid),
 				latestETag,
 			);
+			return ret;
 		}),
 	);
 }

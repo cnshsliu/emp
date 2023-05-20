@@ -9,6 +9,7 @@ import { Template } from "../../database/models/Template";
 import { Workflow } from "../../database/models/Workflow";
 import Cache from "../../lib/Cache";
 import { Signature, SignatureType } from "../../database/models/Signature";
+import EmpError from "src/lib/EmpError";
 
 interface stepType {
 	stepId: string;
@@ -77,7 +78,7 @@ export default {
 					objid: PLD.objid,
 				});
 
-				return sig.signature;
+				return sig && sig.signature ? sig.signature : "Not found";
 			}),
 		);
 	},

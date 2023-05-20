@@ -2354,10 +2354,6 @@ export default {
 				//如果有wfid，则找只属于这个wfid工作流的workitems
 				let myGroup = CRED.employee.group;
 				let workitem = await WorkEngine.getWorkInfo(CRED.tenant._id, myEid, myGroup, PLD.todoid);
-				console.log("==============");
-				console.log(workitem.wftitle);
-				console.log(workitem.wf);
-				console.log("==============");
 				return workitem;
 			}),
 		);
