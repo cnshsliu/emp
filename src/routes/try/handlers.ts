@@ -22,6 +22,7 @@ export default {
 			}),
 		);
 	},
+
 	StartTryByKsId: async (req: Request, h: ResponseToolkit) => {
 		return h.response(
 			await MongoSession.noTransaction(async () => {
@@ -45,6 +46,7 @@ export default {
 				await Cache.resetETag(`ETAG:TEMPLATES:${CRED.tenant._id}`);
 
 				let wfid = shortId();
+				debugger;
 				let wfDoc = await Engine.startWorkflow({
 					rehearsal: false,
 					tenant: CRED.tenant._id,
@@ -52,7 +54,7 @@ export default {
 					starter: CRED.employee,
 					pbostatus: "__init__",
 					wfid: wfid,
-					wftitle: kstpl.name,
+					wftitle: PLD.wftitle,
 					runmode: "standalone",
 				});
 				await Engine.resetTodosETagByWfId(CRED.tenant._id, wfid);

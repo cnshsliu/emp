@@ -33,6 +33,7 @@ const schema = new Schema({
 	hasCover: { type: Boolean, default: false },
 	coverTag: { type: String, default: "" },
 	allowdiscuss: { type: Boolean, default: true },
+	musthavepbo: { type: Boolean, default: true },
 	ksid: { type: String, default: "", index: true },
 	searchable: { type: Boolean, default: true, index: true },
 	autostop: { type: Number, default: 0 },

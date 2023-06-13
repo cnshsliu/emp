@@ -49,6 +49,14 @@ const Parser = {
             }
 */
 
+	isEmpty: function (str: string | number): boolean {
+		if (str === undefined || str === null) return true;
+		if (str === "") return true;
+		return false;
+	},
+	hasValue: function (str: string | number): boolean {
+		return Tools.hasValue(str);
+	},
 	mergeValueFrom: async function (objA: any, objB: any) {
 		for (let [name, valueDef] of Object.entries(objA)) {
 			valueDef = valueDef;

@@ -1324,6 +1324,20 @@ export default {
 				} else {
 					textPbo = [];
 				}
+				let tpl = await Template.findOne(
+					{
+						tenant: CRED.tenant._id,
+						tplid: PLD.tplid,
+					},
+					{ doc: 0 },
+				);
+				if (!tpl) {
+					throw new EmpError("NO_FOUND", `Tempalte ${tplid} not found.`);
+				}
+				if (tpl.musthavepbo && textPbo.length == 0 && uploadedFiles.length == 0) {
+					throw new EmpError("MUST_HAVE_PBO", `Tempalte ${tplid} required PBO on start`);
+				}
+
 				let wfDoc = await Engine.startWorkflow({
 					rehearsal: rehearsal,
 					tenant: tenant_id,
@@ -1817,7 +1831,7 @@ export default {
 						filter.starter = CRED.employee.eid;
 					} else {
 						//如果有相关todo与template相关,
-						//则需要同时考虑todo相关 和 starter相关
+						//则需��同时考虑todo相关 和 starter相关
 						//filter.tplid = { $in: templatesIamIn };
 						filter["wfid"] = { $in: WfsIamIn };
 					}
@@ -5441,6 +5455,50 @@ const tenant_id = CRED.tenant._id;
 					throw new EmpError(
 						"PROC_FAILED",
 						"Return value of discuss togglling should be either true or false",
+					);
+				}
+
+				return ret;
+			}),
+		);
+	},
+
+	MustHavePboToggle: async (req: Request, h: ResponseToolkit) => {
+		return replyHelper.buildResponse(
+			h,
+			await MongoSession.noTransaction(async () => {
+				const PLD = req.payload as any;
+				const CRED = req.auth.credentials as any;
+				const tenant_id = CRED.tenant._id;
+				let myEid = CRED.employee.eid;
+				let myGroup = CRED.employee.group;
+				let objtype = PLD.objtype;
+				let objid = PLD.objid;
+				let ret = null;
+				let filter: any = {};
+				switch (objtype) {
+					case "template":
+						filter = {
+							tenant: tenant_id,
+							tplid: objid,
+						};
+						if (myGroup !== "ADMIN") {
+							filter.owner = myEid;
+						}
+						let tpl = await Template.findOneAndUpdate(
+							filter,
+							[{ $set: { musthavepbo: { $eq: [false, "$musthavepbo"] } } }],
+							{ upsert: false, new: true },
+						);
+						ret = tpl.musthavepbo;
+						break;
+					default:
+						throw new EmpError("UNSUPPORTED", `${objtype} is not supported`);
+				}
+				if (ret === null) {
+					throw new EmpError(
+						"PROC_FAILED",
+						"Return value of musthavepbo togglling should be either true or false",
 					);
 				}
 

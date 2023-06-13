@@ -34,6 +34,7 @@ const internals = {
 				validate: {
 					payload: {
 						tryid: Joi.string().required(),
+						wftitle: Joi.string().required(),
 					},
 					validator: Joi,
 				},

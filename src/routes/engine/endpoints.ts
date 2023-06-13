@@ -2789,6 +2789,26 @@ const internals = {
 				},
 			},
 		},
+		{
+			method: "POST",
+			path: "/musthavepbo/toggle",
+			handler: Handlers.MustHavePboToggle,
+			config: {
+				description: "启动流程时，是否允许空PBO",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						objtype: Joi.string().required().valid("template", "workflow", "todo"),
+						objid: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
 
 		{
 			method: "POST",
