@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import { Cheerio, CheerioAPI, Element } from "cheerio";
 import { Todo, TodoType } from "../database/models/Todo";
-import Route from "../database/models/Route";
+import { Route } from "../database/models/Route";
 import { marked as Marked } from "marked";
 import { Work, WorkType } from "../database/models/Work";
 import { Employee, EmployeeType } from "../database/models/Employee";

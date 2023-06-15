@@ -4,7 +4,7 @@ import { Todo, TodoType } from "../database/models/Todo";
 import Thumb from "../database/models/Thumb";
 import { Workflow, WorkflowType } from "../database/models/Workflow";
 import { Comment, CommentType } from "../database/models/Comment";
-import Route from "../database/models/Route";
+import { Route } from "../database/models/Route";
 import { marked as Marked } from "marked";
 import { Work, WorkType } from "../database/models/Work";
 import { Employee, EmployeeType } from "../database/models/Employee";

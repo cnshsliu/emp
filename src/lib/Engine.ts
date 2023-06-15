@@ -22,7 +22,7 @@ import { Todo, TodoType } from "../database/models/Todo";
 import { Crontab, CrontabType } from "../database/models/Crontab";
 import { Work, WorkType } from "../database/models/Work";
 import { Data } from "../database/models/Data";
-import Route from "../database/models/Route";
+import { Route } from "../database/models/Route";
 import CbPoint from "../database/models/CbPoint";
 import { Comment } from "../database/models/Comment";
 import Delegation from "../database/models/Delegation";
@@ -5870,7 +5870,7 @@ const ignore4Or = function (
 		let wfSelector = `.work[nodeid="${fromid}"]`;
 		let work = wfRoot.find(wfSelector);
 		if (work.hasClass("ST_RUN")) {
-			//如果该��置节点状态为ST_RUN, 则设置其为ST_IGNORE
+			//如果该��置��点状态为ST_RUN, 则设置其为ST_IGNORE
 			work.removeClass("ST_RUN");
 			work.addClass("ST_IGNORE");
 

@@ -3,10 +3,12 @@ import { Cheerio, CheerioAPI, Element } from "cheerio";
 import Parser from "../../lib/Parser";
 import { Template, TemplateType } from "../../database/models/Template";
 import { Workflow, WorkflowType } from "../../database/models/Workflow";
+import { Todo, TodoType } from "../../database/models/Todo";
+import { Route, RouteType } from "../../database/models/Route";
 import replyHelper from "../../lib/ReplyHelpers";
-import { SVG, registerWindow } from "@svgdotjs/svg.js";
+import { SVG, Timeline, registerWindow } from "@svgdotjs/svg.js";
 import { createSVGWindow } from "svgdom";
-const nodeColor = { normal: "#2726ff", hover: "#ff2726", DONE: "#078806" };
+const nodeColor = { default: "#a7a6ff", hover: "#ff2726", ST_DONE: "#078806", ST_RUN: "#2726ff" };
 const labelColor = { normal: "#2726ff" };
 const theConnect_color = "#2726ff";
 const theConnect_width = 2;
@@ -399,7 +401,6 @@ function calculateNodeConnectPoints(nodesInfo: any, index: number) {
 
 async function drawConnect(
 	canvas: typeof SVG,
-	tpRoot: Cheerio<Element>,
 	nodesInfo: any,
 	indexOfA: number,
 	indexOfB: number,
@@ -514,7 +515,6 @@ async function redrawLinkLines(
 		pbostatus = Parser.isEmpty(pbostatus) ? "" : pbostatus;
 		await drawConnect(
 			canvas,
-			tpRoot,
 			nodesInfo,
 			fromIndex,
 			toIndex,
@@ -528,7 +528,7 @@ async function redrawLinkLines(
 	}
 }
 
-async function getSvgSource(tenant: string, objtype: string, objid: string) {
+async function getSvg(tenant: string, objtype: string, objid: string) {
 	const window = createSVGWindow();
 	const document = window.document;
 	registerWindow(window, document);
@@ -538,6 +538,8 @@ async function getSvgSource(tenant: string, objtype: string, objid: string) {
 	let IO: CheerioAPI;
 	let tpRoot: Cheerio<Element>;
 	let allNodes: Cheerio<Element>;
+	let todos: TodoType[];
+	let routes: RouteType[];
 	if (objtype === "tpl") {
 		const tpl: TemplateType = await Template.findOne({ tenant: tenant, tplid: objid });
 		IO = await Parser.parse(tpl.doc);
@@ -546,6 +548,9 @@ async function getSvgSource(tenant: string, objtype: string, objid: string) {
 		const wf: WorkflowType = await Workflow.findOne({ tenant: tenant, wfid: objid });
 		console.log(wf.doc);
 		IO = await Parser.parse(wf.doc);
+		todos = await Todo.find({ tenant: tenant, wfid: objid }, { nodeid: 1, status: 1 });
+		console.log("Todos:", todos);
+		routes = await Route.find({ tenant: tenant, wfid: objid }, { from_nodeid: 1, to_nodeid: 1 });
 	}
 	tpRoot = IO("div.template");
 	allNodes = tpRoot.find("div.node");
@@ -584,11 +589,25 @@ async function getSvgSource(tenant: string, objtype: string, objid: string) {
 	canvas.size(svgWidth, svgHeight);
 
 	// canvas.rect(svgWidth, svgHeight).fill("yellow").move(viewpoints[0], viewpoints[1]);
+	function getTodoStatus(nodeid) {
+		for (let i = 0; i < todos.length; i++) {
+			if (todos[i].nodeid === nodeid) {
+				return todos[i].status;
+			}
+		}
+		return "";
+	}
 	for (let i = 0; i < nodesInfo.length; i++) {
 		await redrawLinkLines(canvas, tpRoot, nodesInfo, i);
-		const svgNode = canvas.circle(32);
-		svgNode.fill(nodeColor["normal"]);
-		svgNode.addClass("node");
+		const svgNode = canvas.group();
+		svgNode.circle(32);
+		svgNode.addClass("svgnode");
+		if (objtype === "wf") {
+			let todoStatus = nodesInfo[i].id === "start" ? "ST_DONE" : getTodoStatus(nodesInfo[i].id);
+			if (todoStatus) {
+				svgNode.addClass(todoStatus);
+			}
+		}
 		svgNode.center(nodesInfo[i].x, nodesInfo[i].y);
 		const svgText = canvas.text(nodesInfo[i].label);
 		svgText
@@ -596,11 +615,10 @@ async function getSvgSource(tenant: string, objtype: string, objid: string) {
 			.font({ fill: labelColor["normal"], family: "Arial; SimSun" });
 	}
 	canvas.style(".node:hover", { fill: nodeColor["hover"] });
-	canvas.style(".node.DONE", { fill: nodeColor["DONE"] });
-	canvas.style(".node.IGNORED", { fill: nodeColor["IGNORED"] });
-	canvas.style(".node.RUN", { fill: nodeColor["RUN"] });
-	canvas.style(".node.DONE:hover", { fill: nodeColor["hover"] });
-	canvas.style(".node.RUN:hover", { fill: nodeColor["hover"] });
+	canvas.style(".node.ST_IGNORED", { fill: nodeColor["ST_IGNORED"] });
+	canvas.style(".node.ST_DONE:hover", { fill: nodeColor["hover"] });
+	canvas.style(".node.ST_RUN:hover", { fill: nodeColor["hover"] });
+	canvas.style("@import url(/css/snapshot.css)");
 	// canvas.style(".link.DONE", { fill: linkColor["DONE"] });
 
 	return canvas.svg();
@@ -613,7 +631,7 @@ async function TplSnapshot(req: Request, h: ResponseToolkit) {
 		// let myEid = CRED.employee.eid;
 
 		return h
-			.response(await getSvgSource(tenant, "tpl", req.params.tplid))
+			.response(await getSvg(tenant, "tpl", req.params.tplid))
 			.header("cache-control", "no-cache")
 			.header("Pragma", "no-cache")
 			.header("Access-Control-Allow-Origin", "*")
@@ -631,7 +649,7 @@ async function WfSnapshot(req: Request, h: ResponseToolkit) {
 		// let myEid = CRED.employee.eid;
 
 		return h
-			.response(await getSvgSource(tenant, "wf", req.params.wfid))
+			.response(await getSvg(tenant, "wf", req.params.wfid))
 			.header("cache-control", "no-cache")
 			.header("Pragma", "no-cache")
 			.header("Access-Control-Allow-Origin", "*")
