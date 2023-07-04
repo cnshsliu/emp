@@ -6,7 +6,7 @@ import { Workflow, WorkflowType } from "../../database/models/Workflow";
 import { Todo, TodoType } from "../../database/models/Todo";
 import { Route, RouteType } from "../../database/models/Route";
 import replyHelper from "../../lib/ReplyHelpers";
-import { SVG, Timeline, registerWindow } from "@svgdotjs/svg.js";
+import { SVG, registerWindow } from "@svgdotjs/svg.js";
 import { createSVGWindow } from "svgdom";
 const nodeColor = { default: "#a7a6ff", hover: "#ff2726", ST_DONE: "#078806", ST_RUN: "#2726ff" };
 const labelColor = { normal: "#2726ff" };
@@ -15,13 +15,8 @@ const theConnect_width = 2;
 
 const drawCurve: boolean = true;
 
-function unpx(px: string) {
-	return parseInt(px.replace("px", ""));
-}
-
 async function _svgDrawNodesConnect(
 	canvas: any,
-	pstr: string, //polygon string 曲线模式的连接点
 	lstr: string, //line string 直线模式的连接点
 	_tstr: string,
 	triangle: number[],
@@ -353,17 +348,7 @@ async function svgConnectNode(
 			}
 			break;
 	}
-	await _svgDrawNodesConnect(
-		canvas,
-		pstr,
-		lstr,
-		tstr,
-		triangle,
-		caseValue,
-		setValue,
-		pbostatus,
-		debug,
-	);
+	await _svgDrawNodesConnect(canvas, lstr, tstr, triangle, caseValue, setValue, pbostatus, debug);
 }
 
 function calculateNodeConnectPoints(nodesInfo: any, index: number) {
@@ -506,7 +491,6 @@ async function redrawLinkLines(
 		const thisLink = tplLinks.eq(i);
 		const toId = thisLink.attr("to");
 		const toIndex = nodesInfo.findIndex((item: any) => item.id === toId);
-		console.log(fromId, "->", toId, ":", fromIndex, "->", toIndex);
 		let caseValue = thisLink.attr("case");
 		caseValue = Parser.isEmpty(caseValue) ? "" : caseValue;
 		let setValue = thisLink.attr("set");
@@ -544,12 +528,9 @@ async function getSvg(tenant: string, objtype: string, objid: string) {
 		const tpl: TemplateType = await Template.findOne({ tenant: tenant, tplid: objid });
 		IO = await Parser.parse(tpl.doc);
 	} else {
-		console.log(objtype, objid);
 		const wf: WorkflowType = await Workflow.findOne({ tenant: tenant, wfid: objid });
-		console.log(wf.doc);
 		IO = await Parser.parse(wf.doc);
 		todos = await Todo.find({ tenant: tenant, wfid: objid }, { nodeid: 1, status: 1 });
-		console.log("Todos:", todos);
 		routes = await Route.find({ tenant: tenant, wfid: objid }, { from_nodeid: 1, to_nodeid: 1 });
 	}
 	tpRoot = IO("div.template");
@@ -589,7 +570,7 @@ async function getSvg(tenant: string, objtype: string, objid: string) {
 	canvas.size(svgWidth, svgHeight);
 
 	// canvas.rect(svgWidth, svgHeight).fill("yellow").move(viewpoints[0], viewpoints[1]);
-	function getTodoStatus(nodeid) {
+	function getTodoStatus(nodeid: string) {
 		for (let i = 0; i < todos.length; i++) {
 			if (todos[i].nodeid === nodeid) {
 				return todos[i].status;
@@ -624,6 +605,63 @@ async function getSvg(tenant: string, objtype: string, objid: string) {
 	return canvas.svg();
 }
 
+async function getSvgdata(tenant: string, objtype: string, objid: string) {
+	let IO: CheerioAPI;
+	let tpRoot: Cheerio<Element>;
+	let allNodes: Cheerio<Element>;
+
+	let todos: TodoType[];
+	let routes: RouteType[];
+	const nodesInfo = [];
+
+	if (objtype === "tpl") {
+		const tpl: TemplateType = await Template.findOne({ tenant: tenant, tplid: objid });
+		IO = await Parser.parse(tpl.doc);
+	} else {
+		const wf: WorkflowType = await Workflow.findOne({ tenant: tenant, wfid: objid });
+		IO = await Parser.parse(wf.doc);
+		todos = await Todo.find({ tenant: tenant, wfid: objid }, { nodeid: 1, status: 1 });
+		routes = await Route.find({ tenant: tenant, wfid: objid }, { from_nodeid: 1, to_nodeid: 1 });
+	}
+	tpRoot = IO("div.template");
+	allNodes = tpRoot.find("div.node");
+
+	for (let i = 0; i < allNodes.length; i++) {
+		const node = allNodes.eq(i);
+		const id = node.attr("id");
+		const left = node.css("left") ? Number(node.css("left")?.slice(0, -2)) : -1;
+		const top = node.css("top") ? Number(node.css("top")?.slice(0, -2)) : -1;
+		const width = node.css("width") ? Number(node.css("width")?.slice(0, -2)) : 24;
+		const height = node.css("height") ? Number(node.css("height")?.slice(0, -2)) : 24;
+		const label = node.find("p").text();
+		nodesInfo.push({ id, label, left, top, width, height, x: left + 16, y: top + 16, node });
+	}
+	if (nodesInfo[0].left < 0) {
+		nodesInfo[0].left = nodesInfo[1].left - 120;
+		nodesInfo[0].top = nodesInfo[1].top;
+		nodesInfo[0].x = nodesInfo[0].left + 16;
+		nodesInfo[0].y = nodesInfo[0].top + 16;
+	}
+
+	// canvas.rect(svgWidth, svgHeight).fill("yellow").move(viewpoints[0], viewpoints[1]);
+	function getTodoStatus(nodeid: string) {
+		for (let i = 0; i < todos.length; i++) {
+			if (todos[i].nodeid === nodeid) {
+				return todos[i].status;
+			}
+		}
+		return "";
+	}
+	for (let i = 0; i < nodesInfo.length; i++) {
+		if (objtype === "wf") {
+			nodesInfo[i].todoStatus =
+				nodesInfo[i].id === "start" ? "ST_DONE" : getTodoStatus(nodesInfo[i].id);
+		}
+	}
+
+	return nodesInfo;
+}
+
 async function TplSnapshot(req: Request, h: ResponseToolkit) {
 	try {
 		const CRED = req.auth.credentials as any;
@@ -632,6 +670,24 @@ async function TplSnapshot(req: Request, h: ResponseToolkit) {
 
 		return h
 			.response(await getSvg(tenant, "tpl", req.params.tplid))
+			.header("cache-control", "no-cache")
+			.header("Pragma", "no-cache")
+			.header("Access-Control-Allow-Origin", "*")
+			.header("Content-Type", "image/svg+xml");
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
+async function TplSnapdata(req: Request, h: ResponseToolkit) {
+	try {
+		const CRED = req.auth.credentials as any;
+		let tenant = CRED.tenant._id;
+		// let myEid = CRED.employee.eid;
+
+		return h
+			.response(await getSvgdata(tenant, "tpl", req.params.tplid))
 			.header("cache-control", "no-cache")
 			.header("Pragma", "no-cache")
 			.header("Access-Control-Allow-Origin", "*")
@@ -660,7 +716,27 @@ async function WfSnapshot(req: Request, h: ResponseToolkit) {
 	}
 }
 
+async function WfSnapdata(req: Request, h: ResponseToolkit) {
+	try {
+		const CRED = req.auth.credentials as any;
+		let tenant = CRED.tenant._id;
+		// let myEid = CRED.employee.eid;
+
+		return h
+			.response(await getSvgdata(tenant, "wf", req.params.wfid))
+			.header("cache-control", "no-cache")
+			.header("Pragma", "no-cache")
+			.header("Access-Control-Allow-Origin", "*")
+			.header("Content-Type", "image/svg+xml");
+	} catch (err) {
+		console.error(err);
+		return h.response(replyHelper.constructErrorResponse(err)).code(500);
+	}
+}
+
 export default {
 	TplSnapshot,
 	WfSnapshot,
+	TplSnapdata,
+	WfSnapdata,
 };

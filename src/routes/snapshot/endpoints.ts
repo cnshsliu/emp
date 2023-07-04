@@ -18,6 +18,22 @@ const internals = {
 				auth: "token",
 			},
 		},
+		{
+			method: "GET",
+			path: "/snapdata/tpl/{tplid}",
+			handler: Handlers.TplSnapdata,
+			config: {
+				auth: "token",
+			},
+		},
+		{
+			method: "GET",
+			path: "/snapdata/wf/{wfid}",
+			handler: Handlers.WfSnapdata,
+			config: {
+				auth: "token",
+			},
+		},
 	],
 };
 
