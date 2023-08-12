@@ -1,12 +1,12 @@
 "use strict";
-import MongoSession from "../../lib/MongoSession";
-import Engine from "../../lib/Engine";
+import MongoSession from "../../lib/MongoSession.js";
+import Engine from "../../lib/Engine.js";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import { shortId } from "../../lib/IdGenerator";
-import { Template } from "../../database/models/Template";
-import Cache from "../../lib/Cache";
-import KsTpl from "../../database/models/KsTpl";
-import EmpError from "../../lib/EmpError";
+import { shortId } from "../../lib/IdGenerator.js";
+import { Template } from "../../database/models/Template.js";
+import Cache from "../../lib/Cache.js";
+import KsTpl from "../../database/models/KsTpl.js";
+import EmpError from "../../lib/EmpError.js";
 
 export default {
 	TryById: async (req: Request, h: ResponseToolkit) => {

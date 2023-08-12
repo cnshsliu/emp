@@ -1,5 +1,5 @@
 "use strict";
-import DelegateHandlers from "./handlers";
+import DelegateHandlers from "./handlers.js";
 import Joi from "joi";
 
 const internals = {

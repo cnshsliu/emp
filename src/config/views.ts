@@ -23,6 +23,12 @@ import Path from "path";
 import Vision from "@hapi/vision";
 import Handlebars from "handlebars";
 
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 /**
  * ### markdown view
  *

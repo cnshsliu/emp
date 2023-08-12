@@ -8,7 +8,7 @@ import { isMainThread } from "worker_threads";
  */
 //use mongoose as the ORM
 import Mongoose, { ConnectOptions } from "mongoose";
-import ServerConfig from "../../secret/keep_secret";
+import ServerConfig from "../../secret/keep_secret.js";
 const theThread = isMainThread ? "MainThread" : "ChildThread";
 
 /**

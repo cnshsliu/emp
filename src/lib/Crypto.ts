@@ -1,5 +1,5 @@
 "use strict";
-import ServerConfig from "../../secret/keep_secret";
+import ServerConfig from "../../secret/keep_secret.js";
 import crypto from "crypto";
 const algorithm = "aes-256-ctr";
 const privateKey = ServerConfig.crypto.privateKey;

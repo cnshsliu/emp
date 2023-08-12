@@ -1,9 +1,9 @@
 import { Types } from "mongoose";
-import Cache from "./Cache";
-import TimeZone from "./timezone";
-import Delegation from "../database/models/Delegation";
-import { Employee } from "../database/models/Employee";
-import EmpError from "./EmpError";
+import Cache from "./Cache.js";
+import TimeZone from "./timezone.js";
+import Delegation from "../database/models/Delegation.js";
+import { Employee } from "../database/models/Employee.js";
+import EmpError from "./EmpError.js";
 const delegate = async function (
 	tenant: string | Types.ObjectId,
 	delegator: string,

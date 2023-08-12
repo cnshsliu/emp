@@ -1,10 +1,10 @@
 "use strict";
 import lodash from "lodash";
-import MongoSession from "../../lib/MongoSession";
+import MongoSession from "../../lib/MongoSession.js";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import { Menu, MenuDataType, MENU_ACL_SELF, MENU_ACL_TENANT } from "../../database/models/Menu";
-import { PersonalMenuItem } from "../../database/models/PersonalMenuItem";
-import EmpError from "../../lib/EmpError";
+import { Menu, MenuDataType, MENU_ACL_SELF, MENU_ACL_TENANT } from "../../database/models/Menu.js";
+import { PersonalMenuItem } from "../../database/models/PersonalMenuItem.js";
+import EmpError from "../../lib/EmpError.js";
 
 export default {
 	SaveMenuGroup: async (req: Request, h: ResponseToolkit) => {

@@ -1,4 +1,4 @@
-import Handlers from "./handlers";
+import Handlers from "./handlers.js";
 
 const internals = {
 	endpoints: [

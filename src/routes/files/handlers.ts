@@ -1,12 +1,12 @@
 import Mongoose from "mongoose";
-import EmpError from "../../lib/EmpError";
+import EmpError from "../../lib/EmpError.js";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import replyHelper from "../../lib/ReplyHelpers";
-import { Workflow } from "../../database/models/Workflow";
-import { PondFile } from "../../database/models/PondFile";
+import replyHelper from "../../lib/ReplyHelpers.js";
+import { Workflow } from "../../database/models/Workflow.js";
+import { PondFile } from "../../database/models/PondFile.js";
 import fs from "fs";
 import path from "path";
-import Tools from "../../tools/tools";
+import Tools from "../../tools/tools.js";
 
 let getWf = async (tenant, file, wfid = "") => {
 	let matchFilter: any = {

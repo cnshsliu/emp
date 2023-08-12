@@ -1,8 +1,8 @@
-import Tools from "../tools/tools";
-import EmpError from "./EmpError";
+import Tools from "../tools/tools.js";
+import EmpError from "./EmpError.js";
 import { Types, ClientSession } from "mongoose";
-import OrgChart from "../database/models/OrgChart";
-import { Employee } from "../database/models/Employee";
+import OrgChart from "../database/models/OrgChart.js";
+import { Employee } from "../database/models/Employee.js";
 const OrgChartHelper = {
 	FIND_ALL: 3,
 	FIND_ALL_UPPER: 2,

@@ -1,8 +1,8 @@
 "use strict";
-import Tools from "../tools/tools";
+import Tools from "../tools/tools.js";
 import nodemailer from "nodemailer";
-import ServerConfig from "../../secret/keep_secret";
-import { SmtpInfo } from "./EmpTypes";
+import ServerConfig from "../../secret/keep_secret.js";
+import { SmtpInfo } from "./EmpTypes.js";
 
 const Mailman = {
 	mail: async function (

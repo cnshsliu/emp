@@ -1,9 +1,9 @@
 import { isMainThread } from "worker_threads";
-import Tools from "../tools/tools";
-import EmpError from "./EmpError";
-import { Template } from "../database/models/Template";
-import { Workflow } from "../database/models/Workflow";
-import { redisClient, redisConnect } from "../database/redis";
+import Tools from "../tools/tools.js";
+import EmpError from "./EmpError.js";
+import { Template } from "../database/models/Template.js";
+import { Workflow } from "../database/models/Workflow.js";
+import { redisClient, redisConnect } from "../database/redis.js";
 import { Types, ClientSession } from "mongoose";
 import assert from "assert";
 import LRU from "lru-cache";

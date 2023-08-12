@@ -1,21 +1,21 @@
 import { Types } from "mongoose";
 import { Cheerio, CheerioAPI, Element } from "cheerio";
-import { Todo, TodoType } from "../database/models/Todo";
-import Thumb from "../database/models/Thumb";
-import { Workflow, WorkflowType } from "../database/models/Workflow";
-import { Comment, CommentType } from "../database/models/Comment";
-import { Route } from "../database/models/Route";
+import { Todo, TodoType } from "../database/models/Todo.js";
+import Thumb from "../database/models/Thumb.js";
+import { Workflow, WorkflowType } from "../database/models/Workflow.js";
+import { Comment, CommentType } from "../database/models/Comment.js";
+import { Route } from "../database/models/Route.js";
 import { marked as Marked } from "marked";
-import { Work, WorkType } from "../database/models/Work";
-import { Employee, EmployeeType } from "../database/models/Employee";
-import Cache from "./Cache";
-import MessageEngine from "./MessageEngine";
+import { Work, WorkType } from "../database/models/Work.js";
+import { Employee, EmployeeType } from "../database/models/Employee.js";
+import Cache from "./Cache.js";
+import MessageEngine from "./MessageEngine.js";
 import Tools from "../tools/tools.js";
-import SystemPermController from "./SystemPermController";
-import Parser from "./Parser";
-import EmpError from "./EmpError";
-import RCL from "./RedisCacheLayer";
-import Const from "./Const";
+import SystemPermController from "./SystemPermController.js";
+import Parser from "./Parser.js";
+import EmpError from "./EmpError.js";
+import RCL from "./RedisCacheLayer.js";
+import Const from "./Const.js";
 import type {
 	CommentContextType,
 	workFullInfo,

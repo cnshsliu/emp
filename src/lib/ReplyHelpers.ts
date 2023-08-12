@@ -1,4 +1,4 @@
-import type { ErrResponse } from "./EmpTypes";
+import type { ErrResponse } from "./EmpTypes.js";
 import { Request, ResponseToolkit, ResponseObject } from "@hapi/hapi";
 
 function joiResponseErrorHandler(err) {

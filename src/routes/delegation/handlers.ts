@@ -1,10 +1,10 @@
 "use strict";
-import { MtcCredentials } from "../../lib/EmpTypes";
+import { MtcCredentials } from "../../lib/EmpTypes.js";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import replyHelper from "../../lib/ReplyHelpers";
-import DelegateEngine from "../../lib/DelegateEngine";
-import Cache from "../../lib/Cache";
-import MongoSession from "../../lib/MongoSession";
+import replyHelper from "../../lib/ReplyHelpers.js";
+import DelegateEngine from "../../lib/DelegateEngine.js";
+import Cache from "../../lib/Cache.js";
+import MongoSession from "../../lib/MongoSession.js";
 
 async function Delegate(req: Request, h: ResponseToolkit) {
 	return replyHelper.buildResponse(

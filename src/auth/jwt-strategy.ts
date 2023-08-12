@@ -13,14 +13,14 @@
  *
  */
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import ServerConfig from "../../secret/keep_secret";
+import ServerConfig from "../../secret/keep_secret.js";
 //the authentication package
 import Jwt from "jsonwebtoken";
-import { redisClient } from "../database/redis";
+import { redisClient } from "../database/redis.js";
 //mongoose user object
-import { User } from "../database/models/User";
-import { Tenant } from "../database/models/Tenant";
-import { Employee } from "../database/models/Employee";
+import { User } from "../database/models/User.js";
+import { Tenant } from "../database/models/Tenant.js";
+import { Employee } from "../database/models/Employee.js";
 
 // private key for signing
 const JwtAuth = {

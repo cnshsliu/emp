@@ -1,19 +1,21 @@
 "use strict";
 
-import ServerConfig from "../../secret/keep_secret";
+import ServerConfig from "../../secret/keep_secret.js";
 import { Server, Request, ResponseObject, ResponseToolkit } from "@hapi/hapi";
 import JasonWebToken from "jsonwebtoken";
-import JwtAuth from "../auth/jwt-strategy";
-import Routes from "./routes";
-import Views from "./views";
+import JwtAuth from "../auth/jwt-strategy.js";
+import Routes from "./routes.js";
+import Views from "./views.js";
 import Inert from "@hapi/inert";
 import Vision from "@hapi/vision";
 import HapiSwagger from "hapi-swagger";
+import hapiWebSocket from "hapi-plugin-websocket";
+import WebSocket from "ws";
 
-import Good from "@hapi/good";
+// import Good from "@hapi/good";
 import hapiAuthJwt from "hapi-auth-jwt2";
 import hapiAuthWishHouse from "hapi-auth-wishhouse";
-import WishHouseAuthStrategy from "../auth/wishhouse-strategy";
+import WishHouseAuthStrategy from "../auth/wishhouse-strategy.js";
 
 const theHapiServer = {
 	server_initialized: false,
@@ -61,34 +63,38 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		},
 	}),
 
-	register_Good: async () => {
-		await theHapiServer.server.register({
-			plugin: Good,
-			options: {
-				reporters: {
-					myConsoleReporter: [
-						{
-							module: "@hapi/good-squeeze",
-							name: "Squeeze",
-							args: [
-								{
-									log: "*",
-									request: ["error", "warn", "debug"],
-									error: "*",
-								},
-							],
-						},
-						{
-							module: "@hapi/good-console",
-						},
-						"stdout",
-					],
-				},
-			},
-		});
-	},
+	// register_Good: async () => {
+	// 	await theHapiServer.server.register({
+	// 		plugin: Good,
+	// 		options: {
+	// 			reporters: {
+	// 				myConsoleReporter: [
+	// 					{
+	// 						module: "@hapi/good-squeeze",
+	// 						name: "Squeeze",
+	// 						args: [
+	// 							{
+	// 								log: "*",
+	// 								request: ["error", "warn", "debug"],
+	// 								error: "*",
+	// 							},
+	// 						],
+	// 					},
+	// 					{
+	// 						module: "@hapi/good-console",
+	// 					},
+	// 					"stdout",
+	// 				],
+	// 			},
+	// 		},
+	// 	});
+	// },
 	register_authJwt: async () => {
 		await theHapiServer.server.register({ plugin: hapiAuthJwt });
+	},
+	register_websocket: async () => {
+		await theHapiServer.server.register(hapiWebSocket);
+		console.log("!!!! websocket registered!!!");
 	},
 	register_authWishHouse: async () => {
 		await theHapiServer.server.register({ plugin: hapiAuthWishHouse });
@@ -120,10 +126,11 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		if (theHapiServer.server_initialized) {
 			return theHapiServer.server;
 		}
-		await theHapiServer.register_Good();
+		// await theHapiServer.register_Good();
 		await theHapiServer.register_authJwt();
 		await theHapiServer.register_authWishHouse();
 		await theHapiServer.register_swagger();
+		await theHapiServer.register_websocket();
 
 		await JwtAuth.setJwtStrategy(theHapiServer.server);
 		await Routes.init(theHapiServer.server);
@@ -158,9 +165,10 @@ additionalExposedHeaders - a strings array of additional headers to exposedHeade
 		if (theHapiServer.server_initialized) {
 			return theHapiServer.server;
 		}
-		await theHapiServer.register_Good();
+		// await theHapiServer.register_Good();
 		await theHapiServer.register_authJwt();
 		await theHapiServer.register_authWishHouse();
+		await theHapiServer.register_websocket();
 		//await register_swagger();
 
 		await JwtAuth.setJwtStrategy(theHapiServer.server);

@@ -3,9 +3,9 @@
  *
  *
  **/
-import { Mongoose, dbConnect } from "../../database/mongodb";
-import { User } from "../../database/models/User";
-import { Tenant } from "../../database/models/Tenant";
+import { Mongoose, dbConnect } from "../../database/mongodb.js";
+import { User } from "../../database/models/User.js";
+import { Tenant } from "../../database/models/Tenant.js";
 
 dbConnect().then(async () => {
 	console.log("Db connected");

@@ -1,7 +1,7 @@
 "use strict";
 import Mongoose from "mongoose";
-import replyHelper from "./ReplyHelpers";
-import EmpError from "./EmpError";
+import replyHelper from "./ReplyHelpers.js";
+import EmpError from "./EmpError.js";
 
 const MongoSession = {
 	startSession: async (): Promise<Mongoose.ClientSession> => {

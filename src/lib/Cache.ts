@@ -3,19 +3,19 @@ import { Types } from "mongoose";
 import { expect } from "@hapi/code";
 import fs from "fs";
 import assert from "assert";
-import Tools from "../tools/tools";
-import { Employee } from "../database/models/Employee";
-import { Template } from "../database/models/Template";
-import KsTpl from "../database/models/KsTpl";
-import { Tenant } from "../database/models/Tenant";
-import OrgChart from "../database/models/OrgChart";
-import { Site, SiteType } from "../database/models/Site";
-import { redisClient } from "../database/redis";
+import Tools from "../tools/tools.js";
+import { Employee } from "../database/models/Employee.js";
+import { Template } from "../database/models/Template.js";
+import KsTpl from "../database/models/KsTpl.js";
+import { Tenant } from "../database/models/Tenant.js";
+import OrgChart from "../database/models/OrgChart.js";
+import { Site, SiteType } from "../database/models/Site.js";
+import { redisClient } from "../database/redis.js";
 import LRU from "lru-cache";
 
 const lruCache = new LRU({ max: 10000 });
 
-import type { CoverInfo, AvatarInfo, SmtpInfo, TenantIdType } from "./EmpTypes";
+import type { CoverInfo, AvatarInfo, SmtpInfo, TenantIdType } from "./EmpTypes.js";
 // const PERM_EXPIRE_SECONDS = 60;
 
 const internals = {

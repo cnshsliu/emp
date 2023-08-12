@@ -1,7 +1,7 @@
 import { CheerioAPI } from "cheerio";
-import { UserType } from "../database/models/User";
-import { EmployeeType } from "../database/models/Employee";
-import { TenantType } from "../database/models/Tenant";
+import { UserType } from "../database/models/User.js";
+import { EmployeeType } from "../database/models/Employee.js";
+import { TenantType } from "../database/models/Tenant.js";
 import { Types } from "mongoose";
 
 export type AvatarInfo = {

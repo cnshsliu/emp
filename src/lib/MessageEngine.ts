@@ -1,10 +1,10 @@
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
-import Cache from "./Cache";
+import Cache from "./Cache.js";
 import { Types } from "mongoose";
-import Webhook from "../database/models/Webhook";
+import Webhook from "../database/models/Webhook.js";
 import path from "path";
-import Parser from "./Parser";
-import type { SmtpInfo } from "./EmpTypes";
+import Parser from "./Parser.js";
+import type { SmtpInfo } from "./EmpTypes.js";
 import Tools from "../tools/tools.js";
 
 const frontendUrl = Tools.getFrontEndUrl();

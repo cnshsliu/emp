@@ -1,12 +1,12 @@
 import { Cheerio, Element } from "cheerio";
 import Jimp from "jimp";
 import { marked as Marked } from "marked";
-import { CommentType } from "../database/models/Comment";
-import Cache from "../lib/Cache";
-import EmpError from "../lib/EmpError";
+import { CommentType } from "../database/models/Comment.js";
+import Cache from "../lib/Cache.js";
+import EmpError from "../lib/EmpError.js";
 import { Types } from "mongoose";
 import zlib from "zlib";
-import type { PondFileInfoOnServerType } from "../lib/EmpTypes";
+import type { PondFileInfoOnServerType } from "../lib/EmpTypes.js";
 import lodash from "lodash";
 import path from "path";
 import { sprintf } from "sprintf-js";

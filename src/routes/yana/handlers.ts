@@ -1,13 +1,13 @@
 "use strict";
-import Parser from "../../lib/Parser";
-import MongoSession from "../../lib/MongoSession";
-import IdGenerator from "../../lib/IdGenerator";
-import Engine from "../../lib/Engine";
-import replyHelper from "../../lib/ReplyHelpers";
+import Parser from "../../lib/Parser.js";
+import MongoSession from "../../lib/MongoSession.js";
+import IdGenerator from "../../lib/IdGenerator.js";
+import Engine from "../../lib/Engine.js";
+import replyHelper from "../../lib/ReplyHelpers.js";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import { Template } from "../../database/models/Template";
-import { Workflow } from "../../database/models/Workflow";
-import Cache from "../../lib/Cache";
+import { Template } from "../../database/models/Template.js";
+import { Workflow } from "../../database/models/Workflow.js";
+import Cache from "../../lib/Cache.js";
 
 interface stepType {
 	stepId: string;

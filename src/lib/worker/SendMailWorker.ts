@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "worker_threads";
-import Mailman from "../Mailman";
+import Mailman from "../Mailman.js";
 const codeToBase64 = function (code) {
 	return Buffer.from(code).toString("base64");
 };

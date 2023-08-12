@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
-import { EmployeeType } from "../database/models/Employee";
-import Cache from "./Cache";
+import { EmployeeType } from "../database/models/Employee.js";
+import Cache from "./Cache.js";
 const SUPPORTED_GROUPS = ["ADMIN", "OBSERVER", "DOER"];
 const internals = {
 	//对三个系统角色的赋权

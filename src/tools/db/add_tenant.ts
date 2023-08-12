@@ -1,7 +1,7 @@
-import Crypto from "../../lib/Crypto";
-import { Mongoose, dbConnect } from "../../database/mongodb";
-import { User } from "../../database/models/User";
-import { Tenant } from "../../database/models/Tenant";
+import Crypto from "../../lib/Crypto.js";
+import { Mongoose, dbConnect } from "../../database/mongodb.js";
+import { User } from "../../database/models/User.js";
+import { Tenant } from "../../database/models/Tenant.js";
 
 if (process.argv.length < 6) process.exit(0);
 console.log("Create Tenant:");

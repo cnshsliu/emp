@@ -1,8 +1,8 @@
 "use strict";
-import MongoSession from "../../lib/MongoSession";
-import replyHelper from "../../lib/ReplyHelpers";
+import MongoSession from "../../lib/MongoSession.js";
+import replyHelper from "../../lib/ReplyHelpers.js";
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import { Data } from "../../database/models/Data";
+import { Data } from "../../database/models/Data.js";
 
 export default {
 	SetData: async (req: Request, h: ResponseToolkit) => {

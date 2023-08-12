@@ -2,19 +2,19 @@ import { load as CheerioLoad } from "cheerio";
 import { Cheerio, CheerioAPI, Node as CheerioNode } from "cheerio";
 import lodash from "lodash";
 import Moment from "moment";
-import Const from "./Const";
-import Tools from "../tools/tools";
+import Const from "./Const.js";
+import Tools from "../tools/tools.js";
 import { Types, ClientSession } from "mongoose";
-import EmpError from "./EmpError";
-import { Employee } from "../database/models/Employee";
-import { Team, TeamType } from "../database/models/Team";
-import KVar from "../database/models/KVar";
-import OrgChart from "../database/models/OrgChart";
-import OrgChartAdmin from "../database/models/OrgChartAdmin";
-import { Cell } from "../database/models/Cell";
-import Cache from "./Cache";
-import OrgChartHelper from "./OrgChartHelper";
-import type { DoerInfo, DoersArray } from "./EmpTypes";
+import EmpError from "./EmpError.js";
+import { Employee } from "../database/models/Employee.js";
+import { Team, TeamType } from "../database/models/Team.js";
+import KVar from "../database/models/KVar.js";
+import OrgChart from "../database/models/OrgChart.js";
+import OrgChartAdmin from "../database/models/OrgChartAdmin.js";
+import { Cell } from "../database/models/Cell.js";
+import Cache from "./Cache.js";
+import OrgChartHelper from "./OrgChartHelper.js";
+import type { DoerInfo, DoersArray } from "./EmpTypes.js";
 
 const Parser = {
 	parse: async function (str: string): Promise<CheerioAPI> {

@@ -9,7 +9,6 @@
  * ## Imports
  *
  */
-const Joi = require("joi");
 //Mongoose - the ORM
 import Mongoose from "mongoose";
 //The document structure definition

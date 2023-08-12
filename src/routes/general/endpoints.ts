@@ -9,7 +9,7 @@
  * ## Imports
  *
  */
-import Handlers from "./handlers";
+import Handlers from "./handlers.js";
 import Joi from "joi";
 /**
  * ## endpoints

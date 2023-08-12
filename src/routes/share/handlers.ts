@@ -1,19 +1,19 @@
 import { Request, ResponseToolkit } from "@hapi/hapi";
-import Parser from "../../lib/Parser";
-import MongoSession from "../../lib/MongoSession";
+import Parser from "../../lib/Parser.js";
+import MongoSession from "../../lib/MongoSession.js";
 import fs from "fs";
 import path from "path";
 // import Joi from "joi";
-import KsTpl from "../../database/models/KsTpl";
-import { Site } from "../../database/models/Site";
-import { Template } from "../../database/models/Template";
-import { shortId } from "../../lib/IdGenerator";
-import replyHelper from "../../lib/ReplyHelpers";
-import Engine from "../../lib/Engine";
-import EmpError from "../../lib/EmpError";
+import KsTpl from "../../database/models/KsTpl.js";
+import { Site } from "../../database/models/Site.js";
+import { Template } from "../../database/models/Template.js";
+import { shortId } from "../../lib/IdGenerator.js";
+import replyHelper from "../../lib/ReplyHelpers.js";
+import Engine from "../../lib/Engine.js";
+import EmpError from "../../lib/EmpError.js";
 import lodash from "lodash";
-import Cache from "../../lib/Cache";
-import { redisClient } from "../../database/redis";
+import Cache from "../../lib/Cache.js";
+import { redisClient } from "../../database/redis.js";
 
 const CheckKsAdminPermission = async (cred: any) => {
 	let allowDomains = Parser.splitStringToArray(await Cache.getKsAdminDomain());

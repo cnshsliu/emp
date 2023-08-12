@@ -1,5 +1,5 @@
 "use strict";
-import Handlers from "./handlers";
+import Handlers from "./handlers.js";
 import Joi from "joi";
 const validation = {
 	account: /^[a-zA-Z][a-zA-Z0-9_]{2,28}[a-zA-Z0-9]$/,

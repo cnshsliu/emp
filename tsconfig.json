@@ -3,13 +3,15 @@
 		"baseUrl": ".",
 		"outDir": "build",
 		"rootDir": "src",
-		"target": "es6",
-		"module": "commonjs",
 		"moduleResolution": "node",
 		"sourceMap": true,
 		"typeRoots": ["node_modules/@types"],
 		"esModuleInterop": true,
-		"noUnusedLocals": false
+		"noUnusedLocals": false,
+		// "target": "es6",
+		// "module": "commonjs",
+		"target": "es2017",
+		"module": "esnext"
 	},
 	"include": ["./src", "../secret"],
 	"exclude": ["./node_modules"]

@@ -1,7 +1,7 @@
 "use strict";
 import { isMainThread } from "worker_threads";
 import { createClient } from "redis";
-import ServerConfig from "../../secret/keep_secret";
+import ServerConfig from "../../secret/keep_secret.js";
 
 const theThread = isMainThread ? "MainThread" : "ChildThread";
 
@@ -9,7 +9,7 @@ const redisUrl = ServerConfig.redis.connectionString;
 const redisPassword = ServerConfig.redis.password;
 const redisClient = createClient({
 	url: redisUrl,
-	password: 'ddipMzbaHtEw7PZK'
+	password: "ddipMzbaHtEw7PZK",
 });
 
 const redisConnect = async () => {

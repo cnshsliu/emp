@@ -1,11 +1,11 @@
 import { Request, ResponseToolkit } from "@hapi/hapi";
 import { Cheerio, CheerioAPI, Element } from "cheerio";
-import Parser from "../../lib/Parser";
-import { Template, TemplateType } from "../../database/models/Template";
-import { Workflow, WorkflowType } from "../../database/models/Workflow";
-import { Todo, TodoType } from "../../database/models/Todo";
-import { Route, RouteType } from "../../database/models/Route";
-import replyHelper from "../../lib/ReplyHelpers";
+import Parser from "../../lib/Parser.js";
+import { Template, TemplateType } from "../../database/models/Template.js";
+import { Workflow, WorkflowType } from "../../database/models/Workflow.js";
+import { Todo, TodoType } from "../../database/models/Todo.js";
+import { Route, RouteType } from "../../database/models/Route.js";
+import replyHelper from "../../lib/ReplyHelpers.js";
 import { SVG, registerWindow } from "@svgdotjs/svg.js";
 import { createSVGWindow } from "svgdom";
 const nodeColor = { default: "#a7a6ff", hover: "#ff2726", ST_DONE: "#078806", ST_RUN: "#2726ff" };

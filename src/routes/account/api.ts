@@ -1,4 +1,4 @@
-import { _axios_tx } from "../../config/axios";
+import { _axios_tx } from "../../config/axios.js";
 
 export const getOpenId = (data) => {
 	console.log(
