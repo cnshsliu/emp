@@ -5433,7 +5433,7 @@ const scanKShares = async function () {
 				);
 			}
 		}
-		console.log(files);
+		console.log("KShare template files", files.length);
 	} catch (err) {
 		console.log(err);
 	}
@@ -6007,7 +6007,7 @@ const checkDelayTimer = async function () {
 
 const collectTplAutostop = async function () {
 	tplAutostop = await Template.find({ autostop: { $gt: 0 } }, { tplid: 1, autostop: 1 }).lean();
-	console.log("collectTplAutostop", tplAutostop);
+	console.log("collectTplAutostop", tplAutostop.length);
 };
 
 const checkAutostop = async function () {

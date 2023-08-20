@@ -1,4 +1,5 @@
 "use strict";
+import { v4 as uuidv4 } from "uuid";
 import { ResponseToolkit } from "@hapi/hapi";
 import { redisClient } from "../../database/redis.js";
 import { CaishenToken } from "../../database/models/CaishenToken.js";
@@ -25,59 +26,7 @@ console.log(
 	"OPENAI API using key:",
 	process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.slice(-10) : "KEY_NOT_SET",
 );
-const chat = new Chat(process.env.OPENAI_API_KEY ?? "KEY_NOT_SET");
-
-const ___sendToOne = async function (p, data) {
-	try {
-		if (p.OPEN) {
-			if (typeof data === "string") {
-				await p.send(data);
-			} else {
-				await p.send(JSON.stringify(data));
-			}
-		}
-	} catch (e) {
-		console.debug(`-->send data ${data.ANC} to ${p.uname} failed.`);
-	}
-};
-
-const delHistoryInRedis = async function (clientid: string) {
-	console.log("History deleted");
-	let cacheKey = "gpt_history_" + clientid;
-	await redisClient.del(cacheKey);
-};
-
-const putHistoryInRedis = async function (clientid: string, msg: string) {
-	let cacheKey = "gpt_history_" + clientid;
-	let history = [];
-	let historyString = await redisClient.get(cacheKey);
-	if (historyString) {
-		history = JSON.parse(historyString);
-	}
-	history.push(msg);
-	await redisClient.set(cacheKey, JSON.stringify(history));
-};
-
-const getAssistantFromHistory = async function (clientid: string): Promise<string> {
-	let cacheKey = "gpt_history_" + clientid;
-	let history = [];
-	let historyString = await redisClient.get(cacheKey);
-	if (historyString) {
-		history = JSON.parse(historyString);
-	}
-	console.log("Use histories", history.length);
-	let ret = history.join(" ");
-	if (ret.length > 1000) {
-		chat.summarizeText(ret).then((summary) => {
-			redisClient.set(cacheKey, JSON.stringify([summary])).then(() => {
-				console.log("summary is saved");
-			});
-		});
-	}
-	// ret = ret.slice(-1000);
-	// console.log(ret);
-	return ret;
-};
+const theChat = new Chat();
 
 const getMyAdvisory = async (clientid: string): Promise<advisoryType[]> => {
 	let advisory_key = redisKey("gptadvisory_", clientid);
@@ -129,7 +78,6 @@ export default {
 			}
 			const clientid: string = PLD.clientid ?? user._id.toString();
 			if (PLD.detail.startsWith("/清空记忆")) {
-				await delHistoryInRedis(clientid);
 				ws.send("如你所愿，之前的沟通我已经不记得了");
 				return "[[Done]]";
 			} else if (PLD.detail.startsWith("/智囊团")) {
@@ -150,8 +98,7 @@ export default {
 				}
 				return "[[Done]]";
 			}
-			let lastReply = "";
-			let theScenario = chat.getScenarioFullInfo(PLD.scenarioId);
+			let theScenario = theChat.getScenarioFullInfo(PLD.scenarioId);
 			//Start check token
 			let tokenLeft = 0;
 			let initTokenInRedis = DEFAULT_TOKEN_LEFT;
@@ -177,23 +124,27 @@ export default {
 				return "[[Done]]";
 			}
 			//end check token
-			//
-			if (PLD.mode === "A") {
-				await delHistoryInRedis(clientid);
-				await putHistoryInRedis(clientid, theScenario.desc + PLD.detail);
-			} else if (PLD.mode === "F") {
-				await putHistoryInRedis(clientid, PLD.detail);
-			}
 
 			let prompts = null;
+			const callbacks = [
+				{
+					handleLLMNewToken(token: string) {
+						console.log({ token });
+						ws.send(token);
+					},
+				},
+			];
+
 			for (;;) {
 				if (!keep_chatgpt_connection) break;
-				const { currentIcon, reader, nextPrompts, question, controller } = await chat.caishenSay(
+				const { currentIcon, nextPrompts, controller } = await theChat.caishenSay(
+					PLD.user,
+					clientid,
 					prompts,
 					PLD,
 					false,
-					await getAssistantFromHistory(clientid),
 					await getMyAdvisory(clientid),
+					callbacks,
 				);
 				console.log("currentIcon", currentIcon);
 
@@ -201,37 +152,16 @@ export default {
 					ws.send(`\ncurrentIcon: [${currentIcon}]\n`);
 				}
 
-				lastReply = "";
-				for await (const chunk of reader) {
-					let str = chunk.toString();
-					console.log(str);
-					const match = str.match(regex);
-					if (match) {
-						ws.send(match[1]);
-						lastReply += match[1];
-					} else {
-						console.log("No match", str);
-						if (str.indexOf("maximum context length") > 0) {
-							getAssistantFromHistory(clientid).then(() => {});
-							ws.send("当然主题讨论差不多了，尝试换一个新的主题吧");
-							// keep_chatgpt_connection = false;
-							// break;
-						}
-					}
-					if (!keep_chatgpt_connection) {
-						try {
-							controller.abort();
-						} catch (e) {}
-						break;
-					}
-				}
-				if (lastReply) {
-					await putHistoryInRedis(clientid, lastReply);
+				if (!keep_chatgpt_connection) {
+					try {
+						controller.abort();
+					} catch (e) {}
+					break;
 				}
 				if (nextPrompts.length == 0 || !keep_chatgpt_connection) break;
 				ws.send("\\n\\n");
 				ws.send("[[newSection]]");
-				prompts = { prompts: nextPrompts, question: question };
+				prompts = { prompts: nextPrompts };
 			}
 			//
 			//token -1
@@ -252,16 +182,14 @@ export default {
 		console.log("Entering Gpt3 Test");
 		const PLD = req.payload as any;
 		const IS_TEST = true;
-		const { reader } = await chat.caishenSay(null, PLD, IS_TEST, "", []);
-
-		for await (const chunk of reader) {
-			let str = chunk.toString();
-			const match = str.match(regex);
-			if (match) console.log(match[1]);
-			else {
-				console.log("No match", str);
-			}
-		}
+		const callbacks = [
+			{
+				handleLLMNewToken(token: string) {
+					console.log({ token });
+				},
+			},
+		];
+		await theChat.caishenSay("test", uuidv4(), null, PLD, IS_TEST, [], callbacks);
 
 		return h.response("[[Done]]");
 	},

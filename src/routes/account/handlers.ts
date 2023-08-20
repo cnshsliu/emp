@@ -34,6 +34,7 @@ import { getOpenId } from "./api.js";
 import { exit, listenerCount } from "process";
 import { Employee, EmployeeType } from "../../database/models/Employee.js";
 import * as tencentcloud from "tencentcloud-sdk-nodejs";
+import {shortId} from "../../lib/IdGenerator.js";
 
 const buildSessionResponse = async (
 	user: UserType,
@@ -76,6 +77,7 @@ const buildSessionResponse = async (
 			group: employee?.group,
 			mg: employee?.mg ?? "default",
 			sessionToken: token,
+      clientid: shortId(),
 			notify: employee?.notify,
 			tenant: {
 				_id: employee?.tenant?._id,
@@ -1521,7 +1523,10 @@ async function RemoveEmployees(req: Request, h: ResponseToolkit) {
 				let personalTenant = await Tenant.findOne({ owner: anEmployee.account }, { __v: 0 });
 
 				try {
-					anEmployee && (await anEmployee.remove());
+					anEmployee && (await Employee.deleteOne({
+						tenant: tenant_id,
+						eid: eids[i],
+          }));
 				} catch (err) {
 					console.debug(err);
 				}

@@ -26,6 +26,7 @@ const schema = new Schema(
 		// 最后登录的组织
 		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		demo: { type: Boolean, default: false },
+		expire: { type: Number, default: -1 },
 	},
 	{ timestamps: true },
 );
