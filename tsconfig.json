@@ -1,15 +1,16 @@
 {
-  "compilerOptions": {
-    "baseUrl": ".",
-    "outDir": "build",
-    "rootDir": "src",
-    "target": "es6",
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "sourceMap": true,
-    "typeRoots": ["node_modules/@types"],
-    "esModuleInterop": true
-  },
-  "include": ["./src", "../secret"],
-  "exclude": ["node_modules"]
+	"compilerOptions": {
+		"baseUrl": ".",
+		"outDir": "build",
+		"rootDir": "src",
+		"target": "es6",
+		"module": "commonjs",
+		"moduleResolution": "node",
+		"sourceMap": true,
+		"typeRoots": ["node_modules/@types"],
+		"esModuleInterop": true,
+		"skipLibCheck": true
+	},
+	"include": ["./src", "../secret"],
+	"exclude": ["node_modules"]
 }
