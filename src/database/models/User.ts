@@ -27,6 +27,8 @@ const schema = new Schema(
 		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		demo: { type: Boolean, default: false },
 		expire: { type: Number, default: -1 },
+		chatgpt_api_key: { type: String, default: "" },
+		chatglm_api_key: { type: String, default: "" },
 	},
 	{ timestamps: true },
 );

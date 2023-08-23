@@ -35,6 +35,80 @@ const internals = {
 				tags: ["api"],
 			},
 		},
+		{
+			method: "POST",
+			path: "/caishen/getGptLog",
+			handler: Handlers.GetGptLog,
+			config: {
+				description: "Get chatgpt log",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/restoreGptLogItem",
+			handler: Handlers.RestoreGptLogItem,
+			config: {
+				description: "Get chatgpt log item",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						bsid: Joi.string(),
+						clientid: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/delGptLog",
+			handler: Handlers.DelGptLog,
+			config: {
+				description: "Del chatgpt log",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						bsids: Joi.array().items(Joi.string()),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/setMyKey",
+			handler: Handlers.SetMyKey,
+			config: {
+				description: "Set My API key",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						key: Joi.string()
+					},
+					validator: Joi,
+				},
+			},
 	],
 };
 
