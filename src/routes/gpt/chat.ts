@@ -210,7 +210,7 @@ export class Chat {
 		let controller = new AbortController();
 
 		let messages = prompts[0]; //只使用第一个prompts
-		console.log(messages);
+		// console.log(messages);
 		let currentIcon = "";
 		for (let i = 0; i < messages.length; i++) {
 			if (messages[i].role === "system") {
@@ -288,7 +288,7 @@ export class Chat {
 	public summarizeText = async (myOpenAIAPIKey: string, text: string) => {
 		let controller = new AbortController();
 		const body = {
-			model: "gpt-3.5-turbo",
+			model: "text-davinci-003",
 			messages: [
 				{
 					role: "user",
