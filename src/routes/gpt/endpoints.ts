@@ -104,11 +104,12 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						key: Joi.string()
+						key: Joi.string(),
 					},
 					validator: Joi,
 				},
 			},
+		},
 	],
 };
 

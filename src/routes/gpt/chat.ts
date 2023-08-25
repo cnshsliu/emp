@@ -85,6 +85,20 @@ export class Chat {
 				],
 			];
 		}
+		const answerLanguage: string = "请用中文回答";
+		const a_scenario: scenarioType = getScenarioById(context.scenarioId) as any as scenarioType;
+		let my_industry = "";
+		let my_position = "";
+		try {
+			// my_industry = industries[Number(context.industry)];
+			my_industry = context.industry;
+		} catch (e) {}
+		try {
+			my_position = positions[Number(context.position)];
+		} catch (e) {}
+		//const aboutme = `about me: 我的名字是${context.name}，所在的组织名称是${context.company}，这个组织所在的行业是${my_industry}，我的职位是${my_position}，${answerLanguage}`;
+		const aboutme = `Human的: 我的名字是${context.name}，我所在的组织名称是${context.company}，我的组织所在的行业是${my_industry}，我的职位是${my_position}，${answerLanguage}`;
+		const humanIs = `跟你说话的Human的名字是${context.name}，Human的组织是${context.company}，Human的行业是${my_industry}，Human的职位是${my_position}，${answerLanguage}`;
 		if (context.askNumber > 0) {
 			//We need summarize the assistant here.
 			let tmp = getKnownIcon(context.detail);
@@ -103,6 +117,7 @@ export class Chat {
 							// "中的name属性查找，如找到，返回其icon属性值，并请在回复中包含'currentIcon: icon属性值', 比如，用户如果把你当做Elon Musk来问问题，那么你不仅要换成Elon Musk的身份来回答问题，而且也要在你的答复中包含 currentIcon: elonmusk",
 						},
 						{ role: "assistant", content: assistant ?? "" },
+						{ role: "assistant", content: humanIs },
 						{
 							role: "user",
 							content: `${context.detail}`,
@@ -112,19 +127,7 @@ export class Chat {
 				question: context.detail,
 			};
 		}
-		const answerLanguage: string = "请用中文回答";
-		let my_industry = "";
-		let my_position = "";
-		try {
-			// my_industry = industries[Number(context.industry)];
-			my_industry = context.industry;
-		} catch (e) {}
-		try {
-			my_position = positions[Number(context.position)];
-		} catch (e) {}
 
-		const aboutme = `about me: 我的名字是${context.name}，所在的组织名称是${context.company}，这个组织所在的行业是${my_industry}，我的职位是${my_position}，${answerLanguage}`;
-		const a_scenario: scenarioType = getScenarioById(context.scenarioId) as any as scenarioType;
 		let prompts = [];
 		let allSystems = [];
 		let originalSystems = [];
@@ -173,7 +176,7 @@ export class Chat {
 				let aPrompt = [
 					{ role: "system", content: useSystems[s] },
 					{ role: "assistant", content: assistant ?? "" },
-					{ role: "user", content: aboutme },
+					{ role: "assistant", content: humanIs },
 				];
 				if (i === 0) {
 					prompts.push([
@@ -262,7 +265,7 @@ export class Chat {
 		});
 	};
 
-	public makeSummary = async (clientid: string, new_lines: string) => {
+	public makeSummary = async (myOpenAIAPIKey: string, clientid: string, new_lines: string) => {
 		let summary = (await this.getSummaryFromRedis(clientid)) ?? "";
 		const preSummaryKey = "gpt_pre_summary_" + clientid;
 		const existingBuffer = await redisClient.get(preSummaryKey);
@@ -274,7 +277,7 @@ export class Chat {
 			);
 
 			await redisClient.del(preSummaryKey);
-			summary = await this.summarizeText(prompt);
+			summary = await this.summarizeText(myOpenAIAPIKey, prompt);
 			await redisClient.set("gpt_summary_" + clientid, summary);
 		} else {
 			await redisClient.set(preSummaryKey, newBuffer);
@@ -282,7 +285,7 @@ export class Chat {
 		return summary;
 	};
 
-	public summarizeText = async (text: string) => {
+	public summarizeText = async (myOpenAIAPIKey: string, text: string) => {
 		let controller = new AbortController();
 		const body = {
 			model: "gpt-3.5-turbo",
@@ -299,7 +302,7 @@ export class Chat {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${myOpenAIAPIKey}`,
 			},
 			body: JSON.stringify(body),
 			agent: proxyAgent,

@@ -10,7 +10,7 @@
 		"noUnusedLocals": false,
 		// "target": "es6",
 		// "module": "commonjs",
-		"target": "es2017",
+		"target": "es2020",
 		"module": "esnext"
 	},
 	"include": ["./src", "../secret"],

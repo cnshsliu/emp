@@ -66,14 +66,23 @@ const putHistoryInRedis = async function (clientid: string, msg: string) {
 	await redisClient.set(cacheKey, JSON.stringify(history));
 };
 
-const getHistoryFromRedis = async function (clientid: string, sliceAt: number): Promise<string> {
+const getHistoryFromRedis = async function (
+	myOpenAIAPIKey: string,
+	clientid: string,
+	sliceAt: number,
+): Promise<string> {
 	let cacheKey = "gpt_history_" + clientid;
 	let history = [];
 	let historyString = await redisClient.get(cacheKey);
 	if (historyString) {
 		history = JSON.parse(historyString);
 	}
-	return history.slice(sliceAt).join("\n");
+	let ret = history.slice(sliceAt).join("\n");
+	if (ret.length > 1000) {
+		ret = await chat.makeSummary(myOpenAIAPIKey, clientid, ret);
+		console.log("History to sumary", ret);
+	}
+	return ret;
 };
 
 const getMyAdvisory = async (clientid: string): Promise<advisoryType[]> => {
@@ -256,7 +265,7 @@ export default {
 				const assistant = `内容概要是：
 ${await chat.getSummaryFromRedis(clientid)}
 对话记录是:
-${await getHistoryFromRedis(clientid, -10)}`;
+${await getHistoryFromRedis(myOpenAIAPIKey, clientid, -10)}`;
 				const { currentIcon, reader, nextPrompts, controller } = await chat.caishenSay(
 					myOpenAIAPIKey,
 					prompts,
@@ -300,7 +309,11 @@ ${await getHistoryFromRedis(clientid, -10)}`;
 					console.log("Process lastRepy...");
 					putHistoryInRedis(clientid, "AI: " + lastReply).then(() => {
 						chat
-							.makeSummary(clientid, "Human: " + question_input + "\n" + "AI: " + lastReply + "\n")
+							.makeSummary(
+								myOpenAIAPIKey,
+								clientid,
+								"Human: " + question_input + "\n" + "AI: " + lastReply + "\n",
+							)
 							.then((summary) => {
 								GptLog.findOneAndUpdate(
 									{
@@ -357,7 +370,14 @@ ${await getHistoryFromRedis(clientid, -10)}`;
 		console.log("Entering Gpt3 Test");
 		const PLD = req.payload as any;
 		const IS_TEST = true;
-		const { reader } = await chat.caishenSay(null, PLD, IS_TEST, "", []);
+		const { reader } = await chat.caishenSay(
+			process.env.OPENAI_API_KEY,
+			null,
+			PLD,
+			IS_TEST,
+			"",
+			[],
+		);
 
 		for await (const chunk of reader) {
 			let str = chunk.toString();
@@ -480,7 +500,9 @@ ${await getHistoryFromRedis(clientid, -10)}`;
 		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
 		console.log(PLD);
-
+		if (PLD.key.startsWith("GIVE_TMP_CHATGPT_API_KEY")) {
+			return h.response("Wrong key");
+		}
 		await User.findOneAndUpdate(
 			{
 				tenant: CRED.tenant._id,
