@@ -1,5 +1,7 @@
 "use strict";
+import Mongoose from "mongoose";
 import { ResponseToolkit } from "@hapi/hapi";
+import { shortId } from "../../lib/IdGenerator.js";
 import { redisClient } from "../../database/redis.js";
 import { MtcCredentials } from "../../lib/EmpTypes";
 // import { CaishenToken } from "../../database/models/CaishenToken.js";
@@ -9,6 +11,9 @@ import { Chat } from "./chat.js";
 import JwtAuth from "../../auth/jwt-strategy.js";
 import { User } from "../../database/models/User.js";
 import { GptLog } from "../../database/models/GptLog.js";
+import { GptShareIt } from "../../database/models/GptShareIt.js";
+import type { GptShareItType } from "../../database/models/GptShareIt.js";
+
 import {
 	getScenarioListForSelection,
 	// getScenarioById,
@@ -121,6 +126,30 @@ const descSeconds = (seconds: number) => {
 		(minutes > 0 ? `${minutes}分钟, ` : "") +
 		(seconds > 0 ? `${seconds}秒, ` : "")
 	);
+};
+
+const remove1dayOr7daysAgoShareIt = async (uid: Mongoose.Types.ObjectId | string) => {
+	const h24Ago = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+	const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+	if (uid) {
+		await GptShareIt.updateMany(
+			{ uid: uid, deleted: false, period: "7days", createdAt: { $lt: sevenDaysAgo } },
+			{ $set: { deleted: true } },
+		);
+		await GptShareIt.updateMany(
+			{ uid: uid, deleted: false, period: "1day", createdAt: { $lt: h24Ago } },
+			{ $set: { deleted: true } },
+		);
+	} else {
+		await GptShareIt.updateMany(
+			{ deleted: false, period: "7days", createdAt: { $lt: sevenDaysAgo } },
+			{ $set: { deleted: true } },
+		);
+		await GptShareIt.updateMany(
+			{ deleted: false, period: "1day", createdAt: { $lt: h24Ago } },
+			{ $set: { deleted: true } },
+		);
+	}
 };
 
 const regex = /"delta":\{"content":"(.*?)"\}/;
@@ -262,10 +291,9 @@ export default {
 			let prompts = null;
 			for (let promptRound = 0; ; promptRound++) {
 				if (!keep_chatgpt_connection) break;
-				const assistant = `内容概要是：
-${await chat.getSummaryFromRedis(clientid)}
-对话记录是:
-${await getHistoryFromRedis(myOpenAIAPIKey, clientid, -10)}`;
+				const assistant = `内容概要是：${await chat.getSummaryFromRedis(
+					clientid,
+				)}。对话记录是: ${await getHistoryFromRedis(myOpenAIAPIKey, clientid, -10)}`;
 				const { currentIcon, reader, nextPrompts, controller } = await chat.caishenSay(
 					myOpenAIAPIKey,
 					prompts,
@@ -499,7 +527,6 @@ ${await getHistoryFromRedis(myOpenAIAPIKey, clientid, -10)}`;
 	SetMyKey: async (req: any, h: ResponseToolkit) => {
 		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
-		console.log(PLD);
 		if (PLD.key.startsWith("GIVE_TMP_CHATGPT_API_KEY")) {
 			return h.response("Wrong key");
 		}
@@ -512,5 +539,50 @@ ${await getHistoryFromRedis(myOpenAIAPIKey, clientid, -10)}`;
 		);
 
 		return h.response("Done");
+	},
+
+	ShareIt: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		const sharekey = shortId();
+		await remove1dayOr7daysAgoShareIt(CRED.user._id);
+		const shareit = new GptShareIt({
+			uid: CRED.user._id,
+			sharekey: sharekey,
+			question: PLD.question,
+			answer: PLD.answer,
+			period: PLD.period,
+			by: CRED.user.username,
+			deleted: false,
+		});
+		await shareit.save();
+		return h.response(sharekey);
+	},
+
+	GetShareIt: async (req: any, h: ResponseToolkit) => {
+		const sharekey = req.params.sharekey;
+		if (!sharekey.trim()) {
+			return {
+				error: "没有找到分享的内容",
+			};
+		}
+		await remove1dayOr7daysAgoShareIt(undefined);
+
+		const shareit = await GptShareIt.findOne(
+			{
+				sharekey: sharekey,
+				deleted: false,
+			},
+			{ question: 1, answer: 1, peroid: 1, by: 1 },
+		);
+		if (!shareit) {
+			return {
+				error: "没有找到分享的内容",
+			};
+		}
+		if (shareit.period === "yhjf") {
+			await GptShareIt.findOneAndUpdate({ _id: shareit._id }, { $set: { deleted: true } });
+		}
+		return h.response(shareit);
 	},
 };

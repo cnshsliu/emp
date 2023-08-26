@@ -110,6 +110,42 @@ const internals = {
 				},
 			},
 		},
+		{
+			method: "POST",
+			path: "/caishen/shareit",
+			handler: Handlers.ShareIt,
+			config: {
+				description: "Share QA",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						question: Joi.string(),
+						answer: Joi.string(),
+						period: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "GET",
+			path: "/caishen/cs/{sharekey}",
+			handler: Handlers.GetShareIt,
+			config: {
+				description: "Read Share QA",
+				tags: ["api"],
+				validate: {
+					params: {
+						sharekey: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
 	],
 };
 
