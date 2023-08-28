@@ -1,5 +1,6 @@
 "use strict";
 import Mongoose from "mongoose";
+import EmpError from "../../lib/EmpError.js";
 import { ResponseToolkit } from "@hapi/hapi";
 import { shortId } from "../../lib/IdGenerator.js";
 import { redisClient } from "../../database/redis.js";
@@ -12,12 +13,13 @@ import JwtAuth from "../../auth/jwt-strategy.js";
 import { User } from "../../database/models/User.js";
 import { GptLog } from "../../database/models/GptLog.js";
 import { GptShareIt } from "../../database/models/GptShareIt.js";
+import { GptScenario } from "../../database/models/GptScenario.js";
 import type { GptShareItType } from "../../database/models/GptShareIt.js";
 
 import {
 	getScenarioListForSelection,
-	// getScenarioById,
-	groups,
+	getGroups,
+	setScenarios,
 	industries,
 	positions,
 	DEFAULT_ADVISORY,
@@ -178,7 +180,9 @@ export default {
 			let myOpenAIAPIKey = "";
 			let api_key_warning = "";
 			if (user.expire > 0 && user.expire < Date.now()) {
-				ws.send("您的账号已过期 {contact}\\n");
+				ws.send(
+					`<span class='caishen_warning'>您的账号[${user.account}]已过期。如有需要请联系客服</span>`,
+				);
 				return "[[Done]]";
 			}
 			//mongodb数据库的用户表中,如果chatgpt_api_key没有配置
@@ -192,10 +196,14 @@ export default {
 					let ttl = await redisClient.ttl("CHATGPT_API_KEY_USER_" + user._id.toString());
 					myOpenAIAPIKey = tmp_chat_gpt_key_in_reids;
 					api_key_warning =
-						"你正在使用临时额度，距离额度过期还有" + descSeconds(ttl) + " {contact}";
+						`<span class='caishen_warning'>你[${user.account}]正在使用临时额度，距离额度过期还有` +
+						descSeconds(ttl) +
+						"如有需要，请联系客服</span>\\n";
 					ws.send(api_key_warning);
 				} else {
-					ws.send("您的账号下没有使用额度 {contact}\\n");
+					ws.send(
+						`<span class='caishen_warning'>您的账号[${user.account}]下额度不足, 您可以通过联系客服获得更多额度</span>\\n`,
+					);
 					return "[[Done]]";
 				}
 			} else if (user.chatgpt_api_key.startsWith("GIVE_TMP_CHATGPT_API_KEY")) {
@@ -207,10 +215,17 @@ export default {
 				}
 				if (seconds_to_give > 0) {
 					const tmp_key_to_give = process.env.OPENAI_API_KEY;
+					if (!tmp_key_to_give) {
+						console.error("process.env.OPENAI_API_KEY not set");
+					}
 					await redisClient.set("CHATGPT_API_KEY_USER_" + user._id.toString(), tmp_key_to_give);
 					await redisClient.expire("CHATGPT_API_KEY_USER_" + user._id.toString(), seconds_to_give);
 					myOpenAIAPIKey = tmp_key_to_give;
-					ws.send("已为你加配临时GPT使用额度" + descSeconds(seconds_to_give) + " {contact}\\n");
+					ws.send(
+						`<span class='caishen_warning'>已为账号[${user.account}]加配临时GPT使用额度` +
+							descSeconds(seconds_to_give) +
+							" 如有需要，请联系客服</span>\\n",
+					);
 					User.updateOne({ _id: user._id }, { $set: { chatgpt_api_key: "" } }).then(() => {
 						console.log("User", user.account, user.username, "GIVE_TMP_KEY cleared");
 					});
@@ -227,7 +242,7 @@ export default {
 			const clientid: string = PLD.clientid ?? user._id.toString();
 			if (PLD.detail.startsWith("/清空记忆")) {
 				delHistoryInRedis(clientid);
-				ws.send("如你所愿，之前的沟通我已经不记得了");
+				ws.send("<span class='caishen_warning'>如你所愿，之前的沟通我已经不记得了</span>");
 				return "[[Done]]";
 			} else if (PLD.detail.startsWith("/智囊团")) {
 				let advisory = PLD.detail.slice("/智囊团".length).trim();
@@ -248,7 +263,7 @@ export default {
 				return "[[Done]]";
 			}
 			let lastReply = "";
-			let theScenario = chat.getScenarioFullInfo(PLD.scenarioId);
+			let theScenario = await chat.getScenarioFullInfo(PLD.scenarioId);
 			//Start check token
 			// let tokenLeft = 0;
 			// let initTokenInRedis = DEFAULT_TOKEN_LEFT;
@@ -422,12 +437,14 @@ export default {
 	GetContext: async (req: any, h: ResponseToolkit) => {
 		let nouse = req.payload;
 		nouse = nouse;
-		return h.response({
-			groups,
+		let ret = {
+			groups: await getGroups(),
 			industries,
 			positions,
-			scenarioList: getScenarioListForSelection(),
-		});
+			scenarioList: await getScenarioListForSelection(),
+		};
+		console.log(ret);
+		return h.response(ret);
 	},
 
 	GetGptLog: async (req: any, h: ResponseToolkit) => {
@@ -537,8 +554,38 @@ export default {
 			},
 			{ $set: { chatgpt_api_key: PLD.key } },
 		);
-
 		return h.response("Done");
+	},
+
+	SetKey: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		if (CRED.user.account !== "lucas") {
+			throw new EmpError("ONLY_ADMIN", "只有管理员可以设置API KEY");
+		}
+		type UserUpdateCommand = {
+			$set: {
+				chatgpt_api_key?: any;
+				chatglm_api_key?: any;
+			};
+		};
+
+		let setCmd: UserUpdateCommand = { $set: { chatgpt_api_key: PLD.key } };
+		if (PLD.keyType === "chatglm_api_key") setCmd = { $set: { chatglm_api_key: PLD.key } };
+		let user = await User.findOneAndUpdate(
+			{
+				account: PLD.account,
+			},
+			setCmd,
+			{ upsert: false, new: true },
+		);
+		if (user) {
+			await redisClient.del("CHATGPT_API_KEY_USER_" + user._id.toString());
+		} else {
+			throw new EmpError("USER_NOT_FOUND", `${PLD.account} does not exist`);
+		}
+
+		return h.response(user[PLD.keyType]);
 	},
 
 	ShareIt: async (req: any, h: ResponseToolkit) => {
@@ -550,7 +597,8 @@ export default {
 			uid: CRED.user._id,
 			sharekey: sharekey,
 			question: PLD.question,
-			answer: PLD.answer,
+			answers: PLD.answers,
+			images: PLD.images,
 			period: PLD.period,
 			by: CRED.user.username,
 			deleted: false,
@@ -573,7 +621,7 @@ export default {
 				sharekey: sharekey,
 				deleted: false,
 			},
-			{ question: 1, answer: 1, peroid: 1, by: 1 },
+			{ question: 1, answers: 1, images: 1, peroid: 1, by: 1 },
 		);
 		if (!shareit) {
 			return {
@@ -584,5 +632,54 @@ export default {
 			await GptShareIt.findOneAndUpdate({ _id: shareit._id }, { $set: { deleted: true } });
 		}
 		return h.response(shareit);
+	},
+
+	GetBsGroups: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		if (CRED.user.account !== "lucas") {
+			throw new EmpError("ONLY_ADMIN", "只允许管理员");
+		}
+		let groups = await getGroups();
+		return h.response(groups);
+	},
+
+	SetBsGroups: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		if (CRED.user.account !== "lucas") {
+			throw new EmpError("ONLY_ADMIN", "只允许管理员");
+		}
+		await redisClient.set("___GPT_BS_GROUPS", JSON.stringify(PLD.groups));
+		return h.response(PLD.groups);
+	},
+
+	SetBsScenarios: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		if (CRED.user.account !== "lucas") {
+			throw new EmpError("ONLY_ADMIN", "只允许管理员");
+		}
+
+		let ret = await GptScenario.findOneAndUpdate(
+			{ groupid: PLD.groupid },
+			{ $set: { scenarios: PLD.scenarios } },
+			{ upsert: true, new: true },
+		);
+		let groupScenRedisKey = "___GPT_BS_SCENARIOS_" + PLD.groupid;
+		await redisClient.set(groupScenRedisKey, JSON.stringify(PLD.scenarios));
+		setScenarios(PLD.groupid, PLD.scenarios);
+		return h.response(ret);
+	},
+
+	GetBsScenarios: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		if (CRED.user.account !== "lucas") {
+			throw new EmpError("ONLY_ADMIN", "只允许管理员");
+		}
+		let ret = await GptScenario.findOne({ groupid: PLD.groupid });
+		if (ret) return h.response(ret.scenarios);
+		else return h.response([]);
 	},
 };

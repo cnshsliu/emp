@@ -60,7 +60,7 @@ const getKnownIcon = (text: string) => {
 			return DEFAULT_ADVISORY[i];
 		}
 	}
-	return { name: "商业经营大师专家", icon: "liukehong" };
+	return { name: "商业经营大师专家", icon: "teacher1" };
 };
 
 export class Chat {
@@ -86,7 +86,9 @@ export class Chat {
 			];
 		}
 		const answerLanguage: string = "请用中文回答";
-		const a_scenario: scenarioType = getScenarioById(context.scenarioId) as any as scenarioType;
+		const a_scenario: scenarioType = (await getScenarioById(
+			context.scenarioId,
+		)) as any as scenarioType;
 		let my_industry = "";
 		let my_position = "";
 		try {
@@ -120,7 +122,7 @@ export class Chat {
 						{ role: "assistant", content: humanIs },
 						{
 							role: "user",
-							content: `${context.detail}`,
+							content: `${context.detail ? context.detail : a_scenario.desc}`,
 						},
 					],
 				],
@@ -192,8 +194,8 @@ export class Chat {
 		return { prompts, question: a_scenario.desc + ", " + context.detail };
 	};
 
-	public getScenarioFullInfo = (scenarioId: string): scenarioType => {
-		const a_scenario: scenarioType = getScenarioById(scenarioId) as any as scenarioType;
+	public getScenarioFullInfo = async (scenarioId: string): Promise<scenarioType> => {
+		const a_scenario: scenarioType = (await getScenarioById(scenarioId)) as any as scenarioType;
 		return a_scenario;
 	};
 
@@ -207,6 +209,7 @@ export class Chat {
 	) => {
 		let { prompts, question } =
 			promptsToProcess ?? (await this.generatePrompt(context, test, assistant, myAdvisory));
+		console.log(prompts);
 		let controller = new AbortController();
 
 		let messages = prompts[0]; //只使用第一个prompts

@@ -2,10 +2,7 @@ import Joi from "joi";
 import suuid from "short-uuid";
 import Handlers from "./handlers.js";
 
-function myuid() {
-	return suuid.generate();
-}
-
+import EmpError from "../../lib/EmpError.js";
 const internals = {
 	endpoints: [
 		{
@@ -112,6 +109,26 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/caishen/setKey",
+			handler: Handlers.SetKey,
+			config: {
+				description: "Set API key for account",
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						key: Joi.string(),
+						keyType: Joi.string(),
+						account: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/caishen/shareit",
 			handler: Handlers.ShareIt,
 			config: {
@@ -124,7 +141,8 @@ const internals = {
 					}).unknown(),
 					payload: {
 						question: Joi.string(),
-						answer: Joi.string(),
+						answers: Joi.array().items(Joi.string()),
+						images: Joi.array().items(Joi.string()),
 						period: Joi.string(),
 					},
 					validator: Joi,
@@ -141,6 +159,83 @@ const internals = {
 				validate: {
 					params: {
 						sharekey: Joi.string().required(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/bs/groups/get",
+			handler: Handlers.GetBsGroups,
+			config: {
+				description: "Get Bs Groups",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/bs/groups/set",
+			handler: Handlers.SetBsGroups,
+			config: {
+				description: "Set Bs Groups",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						groups: Joi.array().items({
+							id: Joi.string(),
+							desc: Joi.string(),
+						}),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/bs/scenarios/set",
+			handler: Handlers.SetBsScenarios,
+			config: {
+				description: "Set Bs Scenarios",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						groupid: Joi.string(),
+						scenarios: Joi.array().items(Joi.object()),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/bs/scenarios/get",
+			handler: Handlers.GetBsScenarios,
+			config: {
+				description: "Get Bs Scenarios",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						groupid: Joi.string(),
 					},
 					validator: Joi,
 				},
