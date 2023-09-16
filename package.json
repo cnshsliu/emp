@@ -26,6 +26,7 @@
 		"docs": "./node_modules/docker/docker -w -I -x node_modules -s yes -o ../raindrop-pages "
 	},
 	"dependencies": {
+		"@dqbd/tiktoken": "^1.0.7",
 		"@hapi/accept": "^5.0.2",
 		"@hapi/basic": "^6.0.0",
 		"@hapi/boom": "^9.1.4",
@@ -45,7 +46,7 @@
 		"axios-better-stacktrace": "^2.1.2",
 		"bufferutil": "^4.0.6",
 		"chatgpt": "^5.2.5",
-		"cheerio": "^1.0.0-rc.10",
+		"cheerio": "1.0.0-rc.10",
 		"constantinople": "^4.0.1",
 		"exceljs": "^4.3.0",
 		"handlebars": "^4.7.7",
@@ -58,6 +59,8 @@
 		"jimp": "^0.16.1",
 		"joi": "^17.5.0",
 		"jsonwebtoken": "^9.0.1",
+		"lite": "link:@dqbd/tiktoken/lite",
+		"llamaindex": "^0.0.27",
 		"lodash": "^4.17.21",
 		"lru-cache": "^7.10.1",
 		"marked": "^4.0.12",
@@ -72,6 +75,7 @@
 		"nodemailer": "^6.7.2",
 		"nzh": "^1.0.8",
 		"path": "^0.12.7",
+		"pdfreader": "^3.0.2",
 		"redis": "^4.6.7",
 		"sanitize-html": "^2.6.1",
 		"saslprep": "^1.0.3",
