@@ -1,4 +1,6 @@
 "use strict";
+import fs from "fs";
+import path from "path";
 import Mongoose from "mongoose";
 import EmpError from "../../lib/EmpError.js";
 import { ResponseToolkit } from "@hapi/hapi";
@@ -14,7 +16,7 @@ import { User } from "../../database/models/User.js";
 import { GptLog } from "../../database/models/GptLog.js";
 import { GptShareIt } from "../../database/models/GptShareIt.js";
 import { GptScenario } from "../../database/models/GptScenario.js";
-import type { GptShareItType } from "../../database/models/GptShareIt.js";
+import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
 
 import {
 	getScenarioListForSelection,
@@ -25,6 +27,8 @@ import {
 	DEFAULT_ADVISORY,
 } from "./context.js";
 import type { advisoryType } from "./context.js";
+import type { summaryInfoType } from "./chat.js";
+import { PdfReader } from "pdfreader";
 
 // const DEFAULT_TOKEN_LEFT = 100;
 
@@ -34,8 +38,34 @@ console.log(
 	"OPENAI API using key:",
 	process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.slice(-10) : "KEY_NOT_SET",
 );
+
+import { OpenAI } from "llamaindex";
+
+const abc = async () => {
+	const llm = new OpenAI({ model: "gpt-3.5-turbo", temperature: 0.0 });
+
+	// complete api
+	const response1 = await llm.complete("How are you?");
+	console.log(">>>> Entering LLAMAIndex demo...........");
+	console.log(response1.message.content);
+
+	// chat api
+	const response2 = await llm.chat([{ content: "Tell me a joke!", role: "user" }]);
+	console.log(response2.message.content);
+};
+
+// await abc();
+
 const chat = new Chat();
 
+import { Tiktoken } from "@dqbd/tiktoken/lite";
+import cl100k_base from "@dqbd/tiktoken/encoders/cl100k_base.json" assert { type: "json" };
+
+const TiktokenEncoding = new Tiktoken(
+	cl100k_base.bpe_ranks,
+	cl100k_base.special_tokens,
+	cl100k_base.pat_str,
+);
 // const ___sendToOne = async function (p, data) {
 // 	try {
 // 		if (p.OPEN) {
@@ -49,6 +79,42 @@ const chat = new Chat();
 // 		console.debug(`-->send data ${data.ANC} to ${p.uname} failed.`);
 // 	}
 // };
+const saveHistoryEntry = (user: any, PLD: any, lastQuestion: string, lastAnswer: string) => {
+	GptLog.findOneAndUpdate(
+		{
+			tenant: user.tenant._id,
+			uid: user._id,
+			bsid: PLD.bsid,
+		},
+		{
+			$set: {
+				scenarioId: PLD.scenarioId,
+				summary: "",
+				deleted: false,
+			},
+			$push: {
+				qas: {
+					question: lastQuestion,
+					answer: lastAnswer,
+				},
+			},
+		},
+		{ new: true, upsert: true },
+	).then(() => {
+		console.log("Done process lastAnswer...");
+	});
+};
+
+const delHistoryFromDatabase = async function (user: any, PLD: any) {
+	await GptLog.updateMany(
+		{
+			tenant: user.tenant._id,
+			uid: user._id,
+			bsid: PLD.bsid,
+		},
+		{ $set: { deleted: true } },
+	);
+};
 
 const delHistoryInRedis = async function (clientid: string) {
 	let cacheKey = "gpt_history_" + clientid;
@@ -60,36 +126,6 @@ const delHistoryInRedis = async function (clientid: string) {
 const setHistoryToRedis = async function (clientid: string, msgs: string[]) {
 	let cacheKey = "gpt_history_" + clientid;
 	await redisClient.set(cacheKey, JSON.stringify(msgs));
-};
-
-const putHistoryInRedis = async function (clientid: string, msg: string) {
-	let cacheKey = "gpt_history_" + clientid;
-	let history = [];
-	let historyString = await redisClient.get(cacheKey);
-	if (historyString) {
-		history = JSON.parse(historyString);
-	}
-	history.push(msg);
-	await redisClient.set(cacheKey, JSON.stringify(history));
-};
-
-const getHistoryFromRedis = async function (
-	myOpenAIAPIKey: string,
-	clientid: string,
-	sliceAt: number,
-): Promise<string> {
-	let cacheKey = "gpt_history_" + clientid;
-	let history = [];
-	let historyString = await redisClient.get(cacheKey);
-	if (historyString) {
-		history = JSON.parse(historyString);
-	}
-	let ret = history.slice(sliceAt).join("\n");
-	if (ret.length > 1000) {
-		ret = await chat.makeSummary(myOpenAIAPIKey, clientid, ret);
-		console.log("History to sumary", ret);
-	}
-	return ret;
 };
 
 const getMyAdvisory = async (clientid: string): Promise<advisoryType[]> => {
@@ -126,7 +162,7 @@ const descSeconds = (seconds: number) => {
 		(days > 0 ? `${days}天, ` : "") +
 		(hours > 0 ? `${hours}小时, ` : "") +
 		(minutes > 0 ? `${minutes}分钟, ` : "") +
-		(seconds > 0 ? `${seconds}秒, ` : "")
+		(seconds > 0 ? `${seconds}秒` : "")
 	);
 };
 
@@ -155,6 +191,7 @@ const remove1dayOr7daysAgoShareIt = async (uid: Mongoose.Types.ObjectId | string
 };
 
 const regex = /"delta":\{"content":"(.*?)"\}/;
+
 export default {
 	AskGpt3Ws: async (req: any, h: ResponseToolkit) => {
 		// console.log("Entering AskGpt3Ws");
@@ -195,11 +232,8 @@ export default {
 				if (tmp_chat_gpt_key_in_reids) {
 					let ttl = await redisClient.ttl("CHATGPT_API_KEY_USER_" + user._id.toString());
 					myOpenAIAPIKey = tmp_chat_gpt_key_in_reids;
-					api_key_warning =
-						`<span class='caishen_warning'>你[${user.account}]正在使用临时额度，距离额度过期还有` +
-						descSeconds(ttl) +
-						"如有需要，请联系客服</span>\\n";
-					ws.send(api_key_warning);
+					api_key_warning = `API_KEY_WARNING: ${descSeconds(ttl)}`;
+					// ws.send(api_key_warning);
 				} else {
 					ws.send(
 						`<span class='caishen_warning'>您的账号[${user.account}]下额度不足, 您可以通过联系客服获得更多额度</span>\\n`,
@@ -241,7 +275,7 @@ export default {
 			}
 			const clientid: string = PLD.clientid ?? user._id.toString();
 			if (PLD.detail.startsWith("/清空记忆")) {
-				delHistoryInRedis(clientid);
+				delHistoryFromDatabase(user, PLD);
 				ws.send("<span class='caishen_warning'>如你所愿，之前的沟通我已经不记得了</span>");
 				return "[[Done]]";
 			} else if (PLD.detail.startsWith("/智囊团")) {
@@ -262,7 +296,7 @@ export default {
 				}
 				return "[[Done]]";
 			}
-			let lastReply = "";
+			let lastAnswer = "";
 			let theScenario = await chat.getScenarioFullInfo(PLD.scenarioId);
 			//Start check token
 			// let tokenLeft = 0;
@@ -290,52 +324,67 @@ export default {
 			// }
 			//end check token
 			//
-			let question_input = "";
-			if (askNumber === 0) {
-				//如果是当前课题的第一句话，那么清空之前话题的历史和摘要
-				delHistoryInRedis(clientid);
-				chat.delSummary(clientid);
-
-				question_input = "Human: " + theScenario.desc + PLD.detail;
-				await putHistoryInRedis(clientid, question_input);
-			} else {
-				question_input = "Human: " + (PLD.detail ? PLD.detail : "请继续");
-				await putHistoryInRedis(clientid, question_input);
-			}
-
 			let prompts = null;
 			for (let promptRound = 0; ; promptRound++) {
 				if (!keep_chatgpt_connection) break;
-				const assistant = `内容概要是：${await chat.getSummaryFromRedis(
-					clientid,
-				)}。对话记录是: ${await getHistoryFromRedis(myOpenAIAPIKey, clientid, -10)}`;
-				const { currentIcon, reader, nextPrompts, controller } = await chat.caishenSay(
-					myOpenAIAPIKey,
-					prompts,
-					PLD,
-					false,
-					assistant,
-					await getMyAdvisory(clientid),
-				);
-				console.log("currentIcon", currentIcon);
+				/*
+				const historyLog = await GptLog.findOne(
+					{
+						tenant: user.tenant._id,
+						uid: user._id,
+						deleted: false,
+						bsid: PLD.bsid,
+					},
+					{ qas: 1, summary: 1, _id: 0 },
+				).lean();
+				console.log("historyLog", historyLog);
+				let historyString =
+					(historyLog === null)
+						? ""
+						: historyLog.qas
+								.map(
+									(x) =>
+										"<Question>" + x.question + "</Question>\n<Answer>" + x.answer + "</Answer>",
+								)
+								.join("\n");
+        */
+				let { currentIcon, playActorName, messages, reader, nextPrompts, controller } =
+					await chat.caishenSay(
+						user,
+						myOpenAIAPIKey,
+						prompts,
+						PLD,
+						false, //test
+						null, //history
+						await getMyAdvisory(clientid),
+						0,
+						false,
+					);
+
+				const getQuestionFromMessages = (messages: any[]) => {
+					for (let msgIndex = messages.length - 1; msgIndex >= 0; msgIndex--) {
+						if (messages[msgIndex].role === "user") {
+							return messages[msgIndex].content;
+						}
+					}
+				};
+				const lastQuestion = getQuestionFromMessages(messages);
 
 				if (currentIcon) {
 					ws.send(`\ncurrentIcon: [${currentIcon}]\n`);
 				}
 
-				lastReply = "";
+				lastAnswer = "";
 				for await (const chunk of reader) {
 					let str = chunk.toString();
 					const match = str.match(regex);
 					if (match) {
 						ws.send(match[1]);
-						lastReply += match[1];
+						lastAnswer += match[1];
 					} else {
 						console.log("No match", str);
 						if (str.indexOf("maximum context length") > 0) {
 							ws.send("当然主题讨论差不多了，尝试换一个新的主题吧");
-							await delHistoryInRedis(clientid);
-							await chat.delSummary(clientid);
 						}
 					}
 					if (!keep_chatgpt_connection) {
@@ -348,43 +397,14 @@ export default {
 				if (nextPrompts.length == 0 || !keep_chatgpt_connection) {
 					console.log("Should finish now..");
 				}
-				if (lastReply) {
-					console.log("Process lastRepy...");
-					putHistoryInRedis(clientid, "AI: " + lastReply).then(() => {
-						chat
-							.makeSummary(
-								myOpenAIAPIKey,
-								clientid,
-								"Human: " + question_input + "\n" + "AI: " + lastReply + "\n",
-							)
-							.then((summary) => {
-								GptLog.findOneAndUpdate(
-									{
-										tenant: user.tenant._id,
-										uid: user._id,
-										bsid: PLD.bsid,
-									},
-									{
-										$set: {
-											scenarioId: PLD.scenarioId,
-											summary: summary,
-											deleted: PLD.enableLog ? false : true,
-										},
-										$push: {
-											qas: {
-												question: question_input,
-												answer: "AI: " + lastReply,
-											},
-										},
-									},
-									{ new: true, upsert: true },
-								).then(() => {
-									console.log("Done process lastReply...");
-								});
-							});
-					});
+				if (lastAnswer) {
+					saveHistoryEntry(
+						user,
+						PLD,
+						lastQuestion,
+						playActorName ? `${playActorName}说："""${lastAnswer}"""` : lastAnswer,
+					);
 				}
-				console.log(lastReply);
 
 				//这是最后一个回复，就break结束
 				if (nextPrompts.length == 0 || !keep_chatgpt_connection) break;
@@ -392,7 +412,7 @@ export default {
 				//如果是多个连续回复，在中间加一个newSection标志
 				ws.send("\\n\\n");
 				ws.send("[[newSection]]");
-				prompts = { prompts: nextPrompts };
+				prompts = nextPrompts;
 			}
 			//
 			// //token -1
@@ -409,31 +429,6 @@ export default {
 		return h.response("[[Done]]");
 	},
 
-	Gpt3Test: async (req: any, h: ResponseToolkit) => {
-		console.log("Entering Gpt3 Test");
-		const PLD = req.payload as any;
-		const IS_TEST = true;
-		const { reader } = await chat.caishenSay(
-			process.env.OPENAI_API_KEY,
-			null,
-			PLD,
-			IS_TEST,
-			"",
-			[],
-		);
-
-		for await (const chunk of reader) {
-			let str = chunk.toString();
-			const match = str.match(regex);
-			if (match) console.log(match[1]);
-			else {
-				console.log("No match", str);
-			}
-		}
-
-		return h.response("[[Done]]");
-	},
-
 	GetContext: async (req: any, h: ResponseToolkit) => {
 		let nouse = req.payload;
 		nouse = nouse;
@@ -443,7 +438,6 @@ export default {
 			positions,
 			scenarioList: await getScenarioListForSelection(),
 		};
-		console.log(ret);
 		return h.response(ret);
 	},
 
@@ -514,7 +508,6 @@ export default {
 				msgs.push(ret.qas[i].question);
 				msgs.push(ret.qas[i].answer);
 			}
-			debugger;
 			await setHistoryToRedis(PLD.clientid, msgs);
 			return h.response(ret);
 		} catch (e) {
@@ -635,7 +628,6 @@ export default {
 	},
 
 	GetBsGroups: async (req: any, h: ResponseToolkit) => {
-		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
 		if (CRED.user.account !== "lucas") {
 			throw new EmpError("ONLY_ADMIN", "只允许管理员");
@@ -650,7 +642,15 @@ export default {
 		if (CRED.user.account !== "lucas") {
 			throw new EmpError("ONLY_ADMIN", "只允许管理员");
 		}
-		await redisClient.set("___GPT_BS_GROUPS", JSON.stringify(PLD.groups));
+
+		await GptScenarioGroup.findOneAndUpdate(
+			{},
+			{ $set: { groups: PLD.groups } },
+			{ upsert: true, new: true },
+		);
+
+		await redisClient.del("___GPT_BS_GROUPS");
+		await redisClient.del("___GPT_BS_SCENARIOS_*");
 		return h.response(PLD.groups);
 	},
 
@@ -667,7 +667,7 @@ export default {
 			{ upsert: true, new: true },
 		);
 		let groupScenRedisKey = "___GPT_BS_SCENARIOS_" + PLD.groupid;
-		await redisClient.set(groupScenRedisKey, JSON.stringify(PLD.scenarios));
+		await redisClient.del(groupScenRedisKey);
 		setScenarios(PLD.groupid, PLD.scenarios);
 		return h.response(ret);
 	},
@@ -681,5 +681,49 @@ export default {
 		let ret = await GptScenario.findOne({ groupid: PLD.groupid });
 		if (ret) return h.response(ret.scenarios);
 		else return h.response([]);
+	},
+
+	UploadFile: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+
+		await abc();
+		console.log("<<<<after abc()");
+		return "hello";
+
+		const file = PLD.file;
+		console.log(file.hapi);
+
+		const filename = file.hapi.filename;
+		const fileMime = file.hapi.headers["content-type"];
+		// const filePath = path.join("/tmp", filename);
+		// const fileStream = fs.createWriteStream(filePath);
+		// file.pipe(fileStream);
+		console.log(fileMime);
+		switch (fileMime) {
+			case "application/pdf":
+				let data = [];
+				for await (let chunk of file) {
+					data.push(chunk);
+				}
+				let buffer = Buffer.concat(data);
+
+				new PdfReader({}).parseBuffer(buffer, (err, item) => {
+					if (err) console.error("error:", err);
+					else if (!item) console.warn("end of buffer");
+					else if (item.text) console.log(item.text);
+				});
+				buffer = null;
+				break;
+		}
+
+		// file.on("end", (err) => {
+		// 	if (err) {
+		// 		console.error(err + "abc");
+		// 		return h.response("File upload failed").code(500);
+		// 	}
+		// });
+
+		return h.response("File uploaded successfully").code(200);
 	},
 };

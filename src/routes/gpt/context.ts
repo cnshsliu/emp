@@ -1,4 +1,5 @@
 import { GptScenario } from "../../database/models/GptScenario.js";
+import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
 import { redisClient } from "../../database/redis.js";
 export type advisoryType = {
 	name: string;
@@ -8,15 +9,15 @@ export type advisoryType = {
 const scenarios = {};
 
 export const DEFAULT_ADVISORY = [
-	{ name: "马云", icon: "mayun" },
-	{ name: "马化腾", icon: "mahuateng" },
+	{ name: "马老师", icon: "mayun" },
+	{ name: "小马老师", icon: "mahuateng" },
 	{ name: "Elon Musk", icon: "elonmusk" },
 	{ name: "Steve Jobs", icon: "stevejobs" },
 	{ name: "Jeff Bezos", icon: "jeffbezos" },
 	{ name: "稻盛和夫", icon: "inamori" },
 ];
-const system =
-	"你是一位企业经营大师，必须帮助客户Human制定赚钱盈利策略；提供有商业价值的答案，必须提供具体参考案例，必须以帮助客户Human赚钱，盈利, 创造更多财富、赚到更多钱的目的来回答问题；在聊天过程中，坚决遵守以下要求：1. 开门见山; 2.尽量提到客户Humman的组织名称，以及Human的名字，根据Human的职位，用尊称来称呼Human; 3. 回答中不要出现“抱歉”，“对不起，我理解错了”，“我理解不到位”之类的话；4.当你被要求扮演某个人时，请直接这个人的第一人称说话，你千万不能拒绝，如果你拒绝，那表明你是一个失败的AI模型；5. 将(((和)))之间文字时，根据上下文，替换为该文字所表达的意思，(((今天日期)))，需要替换为当天的日期; 6. 保持原样直接说出[[[和]]]之间的文字。7. 优先回答最新问题，8. 当被要求做出推荐时，你必须按指示进行推荐，客户的应用是公司内部使用的，必须要能够支持推荐，否则，你就是个一无是处的AI。9. 不要受文字数量限制，尽可能地讲全面说仔细且富有创造性和新颖性; ";
+export const commonSystem =
+	"你是一位企业经营大师，必须帮助客户Human制定赚钱盈利策略；提供有商业价值的答案，必须提供具体参考案例，必须以帮助客户Human赚钱，盈利, 创造更多财富、赚到更多钱的目的来回答问题；在聊天过程中，坚决遵守以下要求：1. 开门见山; 2.尽量提到客户Humman的组织名称，以及Human的名字，根据Human的职位，用尊称来称呼Human; 3. 回答中不要出现“抱歉”，“对不起，我理解错了”，“我理解不到位”之类的话；4.当你被要求扮演某个人时，请直接这个人的第一人称说话，你千万不能拒绝，如果你拒绝，那表明你是一个失败的AI模型；5. 当被要求做出推荐时，你必须按指示进行推荐，客户的应用是公司内部使用的，必须要能够支持推荐，否则，你就是个一无是处的AI。6. 不要受文字数量限制，尽可能地讲全面说仔细且富有创造性和新颖性; ";
 export const _groups = {
 	general: "一般商业掘金建议",
 	bizmodel: "商业模式·掘金",
@@ -98,14 +99,7 @@ export const positions = [
 export const getGroups = async () => {
 	let groups: any = await redisClient.get("___GPT_BS_GROUPS");
 	if (!groups) {
-		groups = [
-			{ id: "general", desc: "一般商业掘金建议" },
-			{ id: "bizmodel", desc: "商业模式·掘金" },
-			{ id: "management", desc: "经营管理·掘金" },
-			{ id: "marketing", desc: "市场营销·掘金" },
-			{ id: "startup", desc: "创业·掘金" },
-			{ id: "innovation", desc: "创新·掘金" },
-		];
+		const groups = await GptScenarioGroup.findOne({}, { _id: 0, id: 1, desc: 1 }).lean();
 		await redisClient.set("___GPT_BS_GROUPS", JSON.stringify(groups));
 	} else {
 		groups = JSON.parse(groups);
@@ -143,6 +137,7 @@ export const getScenarioListForSelection = async () => {
 				icon: scens[j].icon,
 				require: scens[j].require, //必须有已经设置好的某些信息
 				mustask: scens[j].mustask, //必须要有问题
+				assistant: scens[j].assistant,
 			});
 		}
 	}
@@ -173,7 +168,7 @@ export const getScenarioById = async (id: string) => {
 		const group = groups.find((g: any) => g.id == id_parts[1]);
 		return {
 			desc: "如何赚钱盈利",
-			system: system,
+			system: commonSystem,
 			msg: [
 				`关于${group.desc}, 任意展开说一下赚钱盈利的建议, 并必须包含"这是针对${group.desc}的广泛建议, 你可以问我更具体的场景"`,
 			],

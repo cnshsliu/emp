@@ -1,13 +1,5 @@
 /**
- * # views.js
- *
- * Snowflake has only one view, reset password
- *
- * Using the module 'vision, establish the renderering engine,
- * in this case, handlebars, and where the views are located
- *
- * Since this reset password view needs a javascript file,
- * the location of this 'asset' is set.
+ * # views.ts
  *
  */
 "use strict";
@@ -52,6 +44,7 @@ const Views = {
 				plugin: Vision,
 			})
 			.then(() => {
+				console.log("Register views");
 				server.views({
 					engines: {
 						html: Handlebars,

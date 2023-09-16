@@ -15,15 +15,6 @@ const internals = {
 			},
 		},
 		{
-			method: "POST",
-			path: "/gpt3/test",
-			handler: Handlers.Gpt3Test,
-			config: {
-				description: "gpt3 test",
-				tags: ["api"],
-			},
-		},
-		{
 			method: "GET",
 			path: "/caishen/getContext",
 			handler: Handlers.GetContext,
