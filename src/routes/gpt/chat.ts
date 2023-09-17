@@ -23,17 +23,20 @@ const tokens = TiktokenEncoding.encode("大家好");
 console.log(tokens);
 
 type scenarioType = {
-	id: string;
-	caishen: string[];
-	desc: string;
-	icon: string;
-	note?: string;
-	json?: string;
-	assistant?: string;
-	system?: string;
-	msg: string | string[];
-	actor?: string;
-	model?: string;
+	groupid: string;
+	scenid: string;
+	content: {
+		caishen: string[];
+		desc: string;
+		icon: string;
+		note?: string;
+		json?: string;
+		assistant?: string;
+		system?: string;
+		msg: string | string[];
+		actor?: string;
+		model?: string;
+	};
 };
 
 export type summaryInfoType = {
@@ -159,11 +162,6 @@ export class Chat {
 		return ret;
 	};
 
-	public getScenarioFullInfo = async (scenarioId: string): Promise<scenarioType> => {
-		const a_scenario: scenarioType = (await getScenarioById(scenarioId)) as any as scenarioType;
-		return a_scenario;
-	};
-
 	private async generatePrompt(
 		PLD: any,
 		test: boolean = false,
@@ -186,14 +184,14 @@ export class Chat {
 			PLD.userMsg = PLD.userMsg.replace("+pure", "");
 		}
 
-		const a_scenario: scenarioType = (await getScenarioById(PLD.scenarioId)) as any as scenarioType;
+		const a_scenario: scenarioType = (await getScenarioById(PLD.scenid)) as any as scenarioType;
 
-		if (a_scenario.json) {
+		if (a_scenario.content.json) {
 			let prompts = [];
 			try {
 				prompts.push(
 					JSON.parse(
-						a_scenario.json
+						a_scenario.content.json
 							.replace(/{usermsg}/gi, PLD.userMsg)
 							.replace(/{industry}/gi, PLD.industry)
 							.replace(/{bizmodel}/gi, PLD.bizmodel)
@@ -210,19 +208,28 @@ export class Chat {
 			return prompts;
 		}
 
-		a_scenario.assistant = a_scenario.assistant ?? "";
-		if (a_scenario.assistant !== "") {
-			a_scenario.assistant = a_scenario.assistant.replace(
+		a_scenario.content.assistant = a_scenario.content.assistant ?? "";
+		if (a_scenario.content.assistant !== "") {
+			a_scenario.content.assistant = a_scenario.content.assistant.replace(
 				/{startasyou}/gi,
 				`你就是{name}, 你不仅仅是AI助手。回答时请以'${getRandomElement(
 					startWith,
 				)}'开头，你可以自己决定如何开头`,
 			);
-			a_scenario.assistant = a_scenario.assistant.replace(/{background}/gi, PLD.background ?? "");
-			a_scenario.assistant = a_scenario.assistant.replace(/{opinion}/gi, PLD.opinion ?? "");
+			a_scenario.content.assistant = a_scenario.content.assistant.replace(
+				/{background}/gi,
+				PLD.background ?? "",
+			);
+			a_scenario.content.assistant = a_scenario.content.assistant.replace(
+				/{opinion}/gi,
+				PLD.opinion ?? "",
+			);
 		}
-		if (a_scenario.assistant.match(/.*{usermsg}.*/gi)) {
-			a_scenario.assistant = a_scenario.assistant.replace(/{userMsg}/gi, PLD.userMsg);
+		if (a_scenario.content.assistant.match(/.*{usermsg}.*/gi)) {
+			a_scenario.content.assistant = a_scenario.content.assistant.replace(
+				/{userMsg}/gi,
+				PLD.userMsg,
+			);
 			PLD.userMsg = "";
 		}
 
@@ -241,28 +248,28 @@ export class Chat {
 		let reshuffle = false;
 		let isAPlay = false;
 
-		a_scenario.actor = a_scenario.actor ?? "";
-		if (a_scenario.actor.match(new RegExp("shuffle", "i"))) {
+		a_scenario.content.actor = a_scenario.content.actor ?? "";
+		if (a_scenario.content.actor.match(new RegExp("shuffle", "i"))) {
 			reshuffle = true;
-			a_scenario.actor = a_scenario.actor.replace(new RegExp("shuffle", "i"), "");
-			if (a_scenario.actor.trim() === "") {
-				a_scenario.actor = "all";
+			a_scenario.content.actor = a_scenario.content.actor.replace(new RegExp("shuffle", "i"), "");
+			if (a_scenario.content.actor.trim() === "") {
+				a_scenario.content.actor = "all";
 			}
 		}
 
 		let actorSpecified = findKnownIcon(PLD.userMsg);
 		if (actorSpecified) {
 			actors = [actorSpecified.icon];
-		} else if (a_scenario.actor.trim() === "") {
+		} else if (a_scenario.content.actor.trim() === "") {
 			actors.push(PLD.advisor ? PLD.advisor : "tycoon");
-		} else if (a_scenario.actor.match(new RegExp("all", "i"))) {
+		} else if (a_scenario.content.actor.match(new RegExp("all", "i"))) {
 			actors = myAdvisory.map((a) => a.icon);
 			if (reshuffle) {
 				actors = shuffle(actors);
 			}
 			isAPlay = true;
-		} else if (a_scenario.actor.match(/rand(\d+)/i)) {
-			let match = a_scenario.actor.match(/rand(\d+)/i);
+		} else if (a_scenario.content.actor.match(/rand(\d+)/i)) {
+			let match = a_scenario.content.actor.match(/rand(\d+)/i);
 			if (match && match[1]) {
 				let num = Number(match[1]);
 				actors = myAdvisory.map((a) => a.icon);
@@ -276,7 +283,7 @@ export class Chat {
 			}
 			isAPlay = true;
 		} else {
-			actors = a_scenario.actor.split(/[,|，| ]/).filter((x) => x.length > 0);
+			actors = a_scenario.content.actor.split(/[,|，| ]/).filter((x) => x.length > 0);
 			isAPlay = true;
 		}
 
@@ -287,17 +294,17 @@ export class Chat {
 		let prompts = [];
 		for (
 			let scenMsgIndex = 0;
-			scenMsgIndex < (PLD.askNumber === 0 ? a_scenario.msg.length : 1);
+			scenMsgIndex < (PLD.askNumber === 0 ? a_scenario.content.msg.length : 1);
 			scenMsgIndex++
 		) {
 			let userMsgAlreadyIncluded = false;
-			if (a_scenario.msg[scenMsgIndex].match(/{usermsg}/gi)) {
+			if (a_scenario.content.msg[scenMsgIndex].match(/{usermsg}/gi)) {
 				userMsgAlreadyIncluded = true;
 			}
-			if (a_scenario.assistant.match(/{usermsg}/gi)) {
+			if (a_scenario.content.assistant.match(/{usermsg}/gi)) {
 				userMsgAlreadyIncluded = true;
 			}
-			let msg = a_scenario.msg[scenMsgIndex]
+			let msg = a_scenario.content.msg[scenMsgIndex]
 				.replace(/{usermsg}/gi, PLD.userMsg)
 				.replace(/{industry}/gi, PLD.industry)
 				.replace(/{bizmodel}/gi, PLD.bizmodel)
@@ -307,7 +314,7 @@ export class Chat {
 				console.log("====>SceneMsgIndex: ", scenMsgIndex, "actorIndex: ", actorIndex);
 				let scenMsg = msg.replace(/{name}/gi, getAdvisorName(actors[actorIndex]));
 				//useSystems, 在扮演情况下，对应到每个扮演对象
-				let scenario_system = a_scenario.system;
+				let scenario_system = a_scenario.content.system;
 				scenario_system = scenario_system.replace(/{human}/gi, PLD.name);
 				scenario_system = scenario_system.replace(/{name}/gi, getAdvisorName(actors[actorIndex]));
 				let aPrompt = [
@@ -336,7 +343,7 @@ export class Chat {
 				});
 				aPrompt.push({
 					role: "assistant",
-					content: a_scenario.assistant
+					content: a_scenario.content.assistant
 						.replace(/{human}/gi, PLD.name)
 						.replace(/{name}/gi, getAdvisorName(actors[actorIndex]))
 						.replace(/{industry}/gi, PLD.industry)
@@ -516,11 +523,9 @@ export class Chat {
 			);
 		}
 		//TODO: check messages TOKEN limit here
-		const theScenario: scenarioType = (await getScenarioById(
-			PLD.scenarioId,
-		)) as any as scenarioType;
+		const theScenario: scenarioType = (await getScenarioById(PLD.scenid)) as any as scenarioType;
 		const body = {
-			model: theScenario.model ?? "gpt-3.5-turbo",
+			model: theScenario.content.model ?? "gpt-3.5-turbo",
 			// messages: [{ role: "user", content: "写三句中文诗" }],
 			messages: messages,
 			stream: true,

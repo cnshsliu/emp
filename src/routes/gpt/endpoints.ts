@@ -195,10 +195,10 @@ const internals = {
 		},
 		{
 			method: "POST",
-			path: "/caishen/bs/scenarios/set",
-			handler: Handlers.SetBsScenarios,
+			path: "/caishen/bs/scenario/set",
+			handler: Handlers.SetBsScenario,
 			config: {
-				description: "Set Bs Scenarios",
+				description: "Set Bs Scenario",
 				tags: ["api"],
 				auth: "token",
 				validate: {
@@ -206,8 +206,7 @@ const internals = {
 						Authorization: Joi.string(),
 					}).unknown(),
 					payload: {
-						groupid: Joi.string(),
-						scenarios: Joi.array().items(Joi.object()),
+						scen: Joi.object(),
 					},
 					validator: Joi,
 				},
@@ -227,6 +226,57 @@ const internals = {
 					}).unknown(),
 					payload: {
 						groupid: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/auth/sendcode",
+			handler: Handlers.AuthSendCode,
+			config: {
+				description: "Send code to email",
+				tags: ["api"],
+				validate: {
+					payload: {
+						email: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/auth/verifycode",
+			handler: Handlers.AuthVerifyCode,
+			config: {
+				description: "Verify code",
+				tags: ["api"],
+				validate: {
+					payload: {
+						email: Joi.string(),
+						code: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/buycard",
+			handler: Handlers.BuyCard,
+			config: {
+				description: "Buy Card",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						account: Joi.string().trim(),
+						days: Joi.number(),
 					},
 					validator: Joi,
 				},

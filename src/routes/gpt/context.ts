@@ -1,6 +1,7 @@
+import { GptScen } from "../../database/models/GptScen.js";
+import { redisClient } from "../../database/redis.js";
 import { GptScenario } from "../../database/models/GptScenario.js";
 import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
-import { redisClient } from "../../database/redis.js";
 export type advisoryType = {
 	name: string;
 	icon: string;
@@ -113,11 +114,14 @@ export const getScenarioListForSelection = async () => {
 	for (let i = 0; i < groups.length; i++) {
 		let groupScenRedisKey = "___GPT_BS_SCENARIOS_" + groups[i].id;
 		let sigs = await redisClient.get(groupScenRedisKey);
+		sigs = null; //remove it later
 		let scens = [];
 		if (!sigs) {
-			let ret = await GptScenario.findOne({ groupid: groups[i].id });
+			let ret = await GptScen.find({ groupid: groups[i].id }).lean();
 			if (ret) {
-				scens = ret.scenarios;
+				scens = ret.map((x) => {
+					return { groupid: groups[i].id, scenid: x.scenid, ...x.content };
+				});
 				await redisClient.set(groupScenRedisKey, JSON.stringify(scens));
 			}
 		} else {
@@ -125,19 +129,12 @@ export const getScenarioListForSelection = async () => {
 		}
 		if (!scens) continue;
 		ret.push({
-			id: "G-" + groups[i].id,
+			groupid: groups[i].id,
 			desc: groups[i].desc,
 		});
 		for (let j = 0; j < scens.length; j++) {
 			ret.push({
-				id: "S-" + groups[i].id + "-" + j,
-				desc: scens[j].desc,
-				note: scens[j].note,
-				caishen: scens[j].caishen,
-				icon: scens[j].icon,
-				require: scens[j].require, //必须有已经设置好的某些信息
-				mustask: scens[j].mustask, //必须要有问题
-				assistant: scens[j].assistant,
+				...scens[j],
 			});
 		}
 	}
@@ -150,33 +147,17 @@ export const getGroupById = async (id: string) => {
 	return group;
 };
 
-export const refreshGroupFromDB = async (groupId) => {
-	let ret = await GptScenario.findOne({ groupid: groupId });
+export const refreshScenarioFromDB = async (scenid: string) => {
+	let ret = await GptScen.findOne({ scenid: scenid }).lean();
 	if (ret) {
-		scenarios[groupId] = ret.scenarios;
+		scenarios[scenid] = ret;
 	}
 };
 
-export const setScenarios = (groupId: string, _scenarios: any[]) => {
-	scenarios[groupId] = _scenarios;
-};
-
-export const getScenarioById = async (id: string) => {
-	const groups = await getGroups();
-	const id_parts = id.split("-");
-	if (id_parts.length == 2) {
-		const group = groups.find((g: any) => g.id == id_parts[1]);
-		return {
-			desc: "如何赚钱盈利",
-			system: commonSystem,
-			msg: [
-				`关于${group.desc}, 任意展开说一下赚钱盈利的建议, 并必须包含"这是针对${group.desc}的广泛建议, 你可以问我更具体的场景"`,
-			],
-		};
-	} else {
-		if (!scenarios[id_parts[1]]) {
-			await refreshGroupFromDB(id_parts[1]);
-		}
-		return scenarios[id_parts[1]][Number(id_parts[2])];
+export const getScenarioById = async (scenid: string) => {
+	if (!scenarios[scenid]) {
+		await refreshScenarioFromDB(scenid);
 	}
+
+	return scenarios[scenid];
 };

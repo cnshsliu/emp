@@ -26,6 +26,7 @@ const schema = new Schema(
 		// 最后登录的组织
 		tenant: { type: Schema.Types.ObjectId, ref: "Tenant" },
 		demo: { type: Boolean, default: false },
+		validuntil: { type: Number, default: -1 },
 		expire: { type: Number, default: -1 },
 		chatgpt_api_key: { type: String, default: "" },
 		chatglm_api_key: { type: String, default: "" },

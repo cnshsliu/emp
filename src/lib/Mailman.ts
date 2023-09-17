@@ -28,8 +28,7 @@ const Mailman = {
 		if (from.indexOf(smtp.username) < 0) {
 			console.error(`mail from [${from}] != [${smtp.username}]`);
 		}
-		//Send email
-		let transporter = nodemailer.createTransport({
+		const data = {
 			host: smtp.host,
 			port: smtp.port,
 			secure: smtp.secure,
@@ -37,7 +36,10 @@ const Mailman = {
 				user: smtp.username,
 				pass: smtp.password,
 			},
-		});
+		};
+		//Send email
+		console.log("nodemailer", data);
+		let transporter = nodemailer.createTransport(data);
 		transporter.sendMail(mailOptions, function (error) {
 			if (error) {
 				console.error(error.message);

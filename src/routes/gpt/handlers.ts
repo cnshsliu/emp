@@ -1,8 +1,11 @@
 "use strict";
 import fs from "fs";
 import path from "path";
+import suuid from "short-uuid";
 import Mongoose from "mongoose";
 import EmpError from "../../lib/EmpError.js";
+import Mailman from "../../lib/Mailman.js";
+import Tools from "../../tools/tools.js";
 import { ResponseToolkit } from "@hapi/hapi";
 import { shortId } from "../../lib/IdGenerator.js";
 import { redisClient } from "../../database/redis.js";
@@ -15,13 +18,13 @@ import JwtAuth from "../../auth/jwt-strategy.js";
 import { User } from "../../database/models/User.js";
 import { GptLog } from "../../database/models/GptLog.js";
 import { GptShareIt } from "../../database/models/GptShareIt.js";
+import { GptScen } from "../../database/models/GptScen.js";
 import { GptScenario } from "../../database/models/GptScenario.js";
 import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
 
 import {
 	getScenarioListForSelection,
 	getGroups,
-	setScenarios,
 	industries,
 	positions,
 	DEFAULT_ADVISORY,
@@ -88,7 +91,7 @@ const saveHistoryEntry = (user: any, PLD: any, lastQuestion: string, lastAnswer:
 		},
 		{
 			$set: {
-				scenarioId: PLD.scenarioId,
+				scenid: PLD.scenid,
 				summary: "",
 				deleted: false,
 			},
@@ -214,63 +217,13 @@ export default {
 		// console.log("After verify", verifyResult);
 		const user = await User.findOne({ _id: verifyResult.id }).lean();
 		if (user) {
-			let myOpenAIAPIKey = "";
-			let api_key_warning = "";
-			if (user.expire > 0 && user.expire < Date.now()) {
-				ws.send(
-					`<span class='caishen_warning'>您的账号[${user.account}]已过期。如有需要请联系客服</span>`,
-				);
+			console.log("Account:", user.account, user.username, user);
+			if (user.validuntil < 0) {
+				ws.send("___NO_CARD___");
 				return "[[Done]]";
 			}
-			//mongodb数据库的用户表中,如果chatgpt_api_key没有配置
-			if ((user.chatgpt_api_key ?? "").length < 5) {
-				//那么，就从redis中去查找
-				const tmp_chat_gpt_key_in_reids = await redisClient.get(
-					"CHATGPT_API_KEY_USER_" + user._id.toString(),
-				);
-				//如果reids中有，就用redis中的，如果redis中也没有，那就提示用户没有使用额度
-				if (tmp_chat_gpt_key_in_reids) {
-					let ttl = await redisClient.ttl("CHATGPT_API_KEY_USER_" + user._id.toString());
-					myOpenAIAPIKey = tmp_chat_gpt_key_in_reids;
-					api_key_warning = `API_KEY_WARNING: ${descSeconds(ttl)}`;
-					// ws.send(api_key_warning);
-				} else {
-					ws.send(`NO_QUOTA/${user.account}/${user.username}`);
-					return "[[Done]]";
-				}
-			} else if (user.chatgpt_api_key.startsWith("GIVE_TMP_CHATGPT_API_KEY")) {
-				//如果用户的chatgpt_api_key是以GIVE_TMP_CHATGPT_API_KEY开头的，那么就给用户临时配额
-				let seconds_to_give = 130; //130秒 for test
-				const match = user.chatgpt_api_key.match(/GIVE_TMP_CHATGPT_API_KEY_(\d+)/);
-				if (match) {
-					seconds_to_give = Number(match[1]);
-				}
-				if (seconds_to_give > 0) {
-					const tmp_key_to_give = process.env.OPENAI_API_KEY;
-					if (!tmp_key_to_give) {
-						console.error("process.env.OPENAI_API_KEY not set");
-					}
-					await redisClient.set("CHATGPT_API_KEY_USER_" + user._id.toString(), tmp_key_to_give);
-					await redisClient.expire("CHATGPT_API_KEY_USER_" + user._id.toString(), seconds_to_give);
-					myOpenAIAPIKey = tmp_key_to_give;
-					ws.send(
-						`<span class='caishen_warning'>已为账号[${user.account}]加配临时GPT使用额度` +
-							descSeconds(seconds_to_give) +
-							" 如有需要，请联系客服</span>\\n",
-					);
-					User.updateOne({ _id: user._id }, { $set: { chatgpt_api_key: "" } }).then(() => {
-						console.log("User", user.account, user.username, "GIVE_TMP_KEY cleared");
-					});
-				} else {
-					await redisClient.del("CHATGPT_API_KEY_USER_" + user._id.toString());
-					User.updateOne({ _id: user._id }, { $set: { chatgpt_api_key: "" } }).then(() => {
-						console.log("User", user.account, user.username, "GIVE_TMP_KEY cleared");
-					});
-				}
-			} else {
-				//如果用户的chatgpt_api_key是正常的，那么就用正常的
-				myOpenAIAPIKey = user.chatgpt_api_key;
-			}
+			let myOpenAIAPIKey = process.env.OPENAI_API_KEY;
+			let api_key_warning = "";
 			const clientid: string = PLD.clientid ?? user._id.toString();
 			if (PLD.userMsg.startsWith("/清空记忆")) {
 				delHistoryFromDatabase(user, PLD);
@@ -295,7 +248,6 @@ export default {
 				return "[[Done]]";
 			}
 			let lastAnswer = "";
-			let theScenario = await chat.getScenarioFullInfo(PLD.scenarioId);
 			//Start check token
 			// let tokenLeft = 0;
 			// let initTokenInRedis = DEFAULT_TOKEN_LEFT;
@@ -448,7 +400,7 @@ export default {
 		// 		uid: CRED.user._id,
 		// 		deleted: false,
 		// 	},
-		// 	{ bsid: 1, scenarioId: 1 }.lean(),
+		// 	{ bsid: 1, scenid: 1 }.lean(),
 		// ).sort({ createdAt: -1 });
 		const bs = await GptLog.aggregate([
 			{
@@ -652,22 +604,21 @@ export default {
 		return h.response(PLD.groups);
 	},
 
-	SetBsScenarios: async (req: any, h: ResponseToolkit) => {
+	SetBsScenario: async (req: any, h: ResponseToolkit) => {
 		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
 		if (CRED.user.account !== "lucas") {
 			throw new EmpError("ONLY_ADMIN", "只允许管理员");
 		}
 
-		let ret = await GptScenario.findOneAndUpdate(
-			{ groupid: PLD.groupid },
-			{ $set: { scenarios: PLD.scenarios } },
+		await GptScen.findOneAndUpdate(
+			{ groupid: PLD.scen.groupid, scenid: PLD.scen.scenid },
+			{ $set: { content: PLD.scen.content } },
 			{ upsert: true, new: true },
 		);
-		let groupScenRedisKey = "___GPT_BS_SCENARIOS_" + PLD.groupid;
-		await redisClient.del(groupScenRedisKey);
-		setScenarios(PLD.groupid, PLD.scenarios);
-		return h.response(ret);
+
+		await redisClient.del("___GPT_BS_SCENARIOS_" + PLD.scen.groupid);
+		return h.response("Done");
 	},
 
 	GetBsScenarios: async (req: any, h: ResponseToolkit) => {
@@ -676,8 +627,8 @@ export default {
 		if (CRED.user.account !== "lucas") {
 			throw new EmpError("ONLY_ADMIN", "只允许管理员");
 		}
-		let ret = await GptScenario.findOne({ groupid: PLD.groupid });
-		if (ret) return h.response(ret.scenarios);
+		let ret = await GptScen.find({ groupid: PLD.groupid }).lean();
+		if (ret) return h.response(ret);
 		else return h.response([]);
 	},
 
@@ -723,5 +674,66 @@ export default {
 		// });
 
 		return h.response("File uploaded successfully").code(200);
+	},
+
+	AuthSendCode: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		let vrfCode = Tools.randomString(6, "0123456789");
+		await redisClient.set("REG_CODE_" + PLD.email, vrfCode);
+		await redisClient.expire("REG_CODE_" + PLD.email, 60 * 5); //in 5 minutes
+		//TODO: 用户不加入组织,没有地方发送邮件
+		await Mailman.SimpleSend(
+			PLD.email,
+			"",
+			"",
+			"LKH.AI registration code",
+			`<div style="font-family:Arial">You are register lkh.ai, and this is your code:<br/>
+你正在注册lkh.ai, 这里是你的验证码：<br/><br/>
+<span style="font-size: 2rem; color: lightblue;">${vrfCode}</span><br/><br/>
+</div>`,
+		);
+		return h.response(PLD.email);
+	},
+
+	AuthVerifyCode: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		let code = await redisClient.get("REG_CODE_" + PLD.email);
+		if (code && code === PLD.code) {
+			return h.response("MATCH");
+		} else {
+			return h.response("NOT_MATCH");
+		}
+	},
+
+	BuyCard: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		if (CRED.user.account !== "lucas") {
+			return h.response({ error: "ONLY_ADMIN", message: "只允许管理员" });
+		}
+		let user = await User.findOne({ account: PLD.account });
+		if (!user) {
+			return h.response({ error: "USER_NOT_FOUND", message: `${PLD.account} 不存在` });
+		}
+		let newtime = 0;
+		if (user.validuntil < new Date().getTime()) {
+			newtime = new Date().getTime() + PLD.days * 24 * 60 * 60 * 1000;
+		} else {
+			newtime = user.validuntil + PLD.days * 24 * 60 * 60 * 1000;
+		}
+		await User.findOneAndUpdate({ account: PLD.account }, { $set: { validuntil: newtime } });
+
+		let date = new Date(newtime);
+
+		let YYYY = date.getFullYear();
+		let MM = String(date.getMonth() + 1).padStart(2, "0"); // Months are 0-based
+		let DD = String(date.getDate()).padStart(2, "0");
+		let HH = String(date.getHours()).padStart(2, "0");
+		let min = String(date.getMinutes()).padStart(2, "0");
+		let SS = String(date.getSeconds()).padStart(2, "0");
+
+		let formattedDate = `${YYYY}_${MM}_${DD} ${HH}:${min}:${SS}`;
+
+		return h.response(`Add ${PLD.days} days to ${PLD.account}, valid until ${formattedDate}`);
 	},
 };
