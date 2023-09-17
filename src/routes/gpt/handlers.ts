@@ -235,9 +235,7 @@ export default {
 					api_key_warning = `API_KEY_WARNING: ${descSeconds(ttl)}`;
 					// ws.send(api_key_warning);
 				} else {
-					ws.send(
-						`<span class='caishen_warning'>您的账号[${user.account}]下额度不足, 您可以通过联系客服获得更多额度</span>\\n`,
-					);
+					ws.send(`NO_QUOTA/${user.account}/${user.username}`);
 					return "[[Done]]";
 				}
 			} else if (user.chatgpt_api_key.startsWith("GIVE_TMP_CHATGPT_API_KEY")) {
@@ -274,12 +272,12 @@ export default {
 				myOpenAIAPIKey = user.chatgpt_api_key;
 			}
 			const clientid: string = PLD.clientid ?? user._id.toString();
-			if (PLD.detail.startsWith("/清空记忆")) {
+			if (PLD.userMsg.startsWith("/清空记忆")) {
 				delHistoryFromDatabase(user, PLD);
 				ws.send("<span class='caishen_warning'>如你所愿，之前的沟通我已经不记得了</span>");
 				return "[[Done]]";
-			} else if (PLD.detail.startsWith("/智囊团")) {
-				let advisory = PLD.detail.slice("/智囊团".length).trim();
+			} else if (PLD.userMsg.startsWith("/智囊团")) {
+				let advisory = PLD.userMsg.slice("/智囊团".length).trim();
 				let advisory_key = redisKey("gptadvisory_", clientid);
 				if (advisory === "") {
 					let yourAdvisory = await redisClient.get(advisory_key);
