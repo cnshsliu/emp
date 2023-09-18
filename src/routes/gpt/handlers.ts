@@ -611,9 +611,18 @@ export default {
 			throw new EmpError("ONLY_ADMIN", "只允许管理员");
 		}
 
+		let setvalue: any = { $set: { desc: PLD.scen.content.desc, content: PLD.scen.content } };
+		if (PLD.scen.content.tags) {
+			let tagsArray = PLD.scen.content.tags.split(/, /);
+			setvalue = {
+				$set: { desc: PLD.scen.content.desc, content: PLD.scen.content, tags: tagsArray },
+			};
+		}
+		console.log(setvalue);
+
 		await GptScen.findOneAndUpdate(
 			{ groupid: PLD.scen.groupid, scenid: PLD.scen.scenid },
-			{ $set: { content: PLD.scen.content } },
+			setvalue,
 			{ upsert: true, new: true },
 		);
 
