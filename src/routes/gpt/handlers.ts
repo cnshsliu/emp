@@ -20,6 +20,7 @@ import { GptLog } from "../../database/models/GptLog.js";
 import { GptShareIt } from "../../database/models/GptShareIt.js";
 import { GptScen } from "../../database/models/GptScen.js";
 import { GptSearchWord } from "../../database/models/GptSearchWord.js";
+import { GptScenUsed } from "../../database/models/GptScenUsed.js";
 import { GptScenario } from "../../database/models/GptScenario.js";
 import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
 
@@ -672,6 +673,45 @@ export default {
 		)
 			.sort({ times: -1 })
 			.lean();
+		return h.response(ret);
+	},
+
+	UseScen: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+
+		const ret = await GptScenUsed.findOneAndUpdate(
+			{ account: CRED.user.account, scenid: PLD.scenid },
+			{ $set: { usedat: new Date().getTime() } },
+			{ upsert: true, new: true },
+		);
+		return h.response(ret);
+	},
+
+	ScenUsed: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+
+		const ret = await GptScenUsed.aggregate([
+			{
+				$match: { account: CRED.user.account },
+			},
+			{
+				$sort: { usedat: -1 },
+			},
+			{
+				$lookup: {
+					from: "gptscens",
+					localField: "scenid",
+					foreignField: "scenid",
+					as: "gptscen",
+				},
+			},
+			{
+				$unwind: "$gptscen",
+			},
+		]);
+		console.log(JSON.stringify(ret, null, 2));
 		return h.response(ret);
 	},
 

@@ -268,6 +268,40 @@ const internals = {
 				},
 			},
 		},
+		{
+			method: "POST",
+			path: "/caishen/bs/use",
+			handler: Handlers.UseScen,
+			config: {
+				description: "Use a scen",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: { scenid: Joi.string() },
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/bs/used",
+			handler: Handlers.ScenUsed,
+			config: {
+				description: "what scens were used",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
 
 		{
 			method: "POST",
