@@ -231,6 +231,44 @@ const internals = {
 				},
 			},
 		},
+
+		{
+			method: "POST",
+			path: "/caishen/bs/search",
+			handler: Handlers.SearchBsScenarios,
+			config: {
+				description: "Get Bs Scenarios",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {
+						q: Joi.string(),
+					},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/bs/searchwords",
+			handler: Handlers.GetMySearchWords,
+			config: {
+				description: "Get Bs Search Words",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+
 		{
 			method: "POST",
 			path: "/auth/sendcode",

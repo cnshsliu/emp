@@ -19,6 +19,7 @@ import { User } from "../../database/models/User.js";
 import { GptLog } from "../../database/models/GptLog.js";
 import { GptShareIt } from "../../database/models/GptShareIt.js";
 import { GptScen } from "../../database/models/GptScen.js";
+import { GptSearchWord } from "../../database/models/GptSearchWord.js";
 import { GptScenario } from "../../database/models/GptScenario.js";
 import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
 
@@ -628,6 +629,50 @@ export default {
 
 		await redisClient.del("___GPT_BS_SCENARIOS_" + PLD.scen.groupid);
 		return h.response("Done");
+	},
+
+	SearchBsScenarios: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		const fields = ["desc", "tags"];
+		const words = PLD.q.split(/[,|，| ]/).filter((x) => x.length > 0);
+		let conditions = [];
+		for (let i = 0; i < fields.length; i++) {
+			let sub_conditions = [];
+			for (let j = 0; j < words.length; j++) {
+				sub_conditions.push({ [fields[i]]: { $regex: words[j] } });
+			}
+			conditions.push({ $and: sub_conditions });
+		}
+
+		for (let j = 0; j < words.length; j++) {
+			await GptSearchWord.findOneAndUpdate(
+				{ account: CRED.user.account, word: words[j] },
+				{ $inc: { times: 1 }, $setOnInsert: { account: CRED.user.account, word: words[j] } },
+				{ upsert: true, new: true },
+			);
+		}
+
+		let criteria = {
+			$or: conditions,
+		};
+		console.log(JSON.stringify(criteria, null, 2));
+		let ret = await GptScen.find(criteria).lean();
+		if (ret) return h.response(ret);
+		else return h.response([]);
+	},
+
+	GetMySearchWords: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+
+		const ret = await GptSearchWord.find(
+			{ account: CRED.user.account },
+			{ word: 1, times: 1, _id: 0 },
+		)
+			.sort({ times: -1 })
+			.lean();
+		return h.response(ret);
 	},
 
 	GetBsScenarios: async (req: any, h: ResponseToolkit) => {
