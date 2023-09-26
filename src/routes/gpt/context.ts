@@ -7,8 +7,6 @@ export type advisoryType = {
 	icon: string;
 };
 
-const scenarios = {};
-
 export const DEFAULT_ADVISORY = [
 	{ name: "马老师", icon: "mayun" },
 	{ name: "小马老师", icon: "mahuateng" },
@@ -150,14 +148,16 @@ export const getGroupById = async (id: string) => {
 export const refreshScenarioFromDB = async (scenid: string) => {
 	let ret = await GptScen.findOne({ scenid: scenid }).lean();
 	if (ret) {
-		scenarios[scenid] = ret;
+		await redisClient.set(`CAISHEN_SCEN_${scenid}`, JSON.stringify(ret));
 	}
+	return ret;
 };
 
 export const getScenarioById = async (scenid: string) => {
-	if (!scenarios[scenid]) {
-		await refreshScenarioFromDB(scenid);
+	const ret = await redisClient.get(`CAISHEN_SCEN_${scenid}`);
+	if (!ret) {
+		return await refreshScenarioFromDB(scenid);
+	} else {
+		return JSON.parse(ret);
 	}
-
-	return scenarios[scenid];
 };

@@ -29,6 +29,7 @@ import {
 	getGroups,
 	industries,
 	positions,
+	refreshScenarioFromDB,
 	DEFAULT_ADVISORY,
 } from "./context.js";
 import type { advisoryType } from "./context.js";
@@ -210,7 +211,6 @@ export default {
 
 		const PLD = req.payload as any;
 		const askNumber = PLD.askNumber;
-		console.log("askNumber", askNumber);
 
 		// console.log(req.payload);
 		// console.log("Before verify", PLD.sessionToken);
@@ -219,7 +219,6 @@ export default {
 		// console.log("After verify", verifyResult);
 		const user = await User.findOne({ _id: verifyResult.id }).lean();
 		if (user) {
-			console.log("Account:", user.account, user.username, user);
 			if (user.validuntil < 0) {
 				ws.send("___NO_CARD___");
 				return "[[Done]]";
@@ -334,7 +333,7 @@ export default {
 						ws.send(match[1]);
 						lastAnswer += match[1];
 					} else {
-						console.log("No match", str);
+						// console.log("No match", str);
 						if (str.indexOf("maximum context length") > 0) {
 							ws.send("当然主题讨论差不多了，尝试换一个新的主题吧");
 						}
@@ -346,9 +345,9 @@ export default {
 						break;
 					}
 				}
-				if (nextPrompts.length == 0 || !keep_chatgpt_connection) {
-					console.log("Should finish now..");
-				}
+				// if (nextPrompts.length == 0 || !keep_chatgpt_connection) {
+				// 	console.log("Should finish now..");
+				// }
 				if (lastAnswer) {
 					saveHistoryEntry(
 						user,
@@ -628,6 +627,7 @@ export default {
 			{ upsert: true, new: true },
 		);
 
+		await refreshScenarioFromDB(PLD.scen.scenid);
 		await redisClient.del("___GPT_BS_SCENARIOS_" + PLD.scen.groupid);
 		return h.response("Done");
 	},
@@ -711,7 +711,6 @@ export default {
 				$unwind: "$gptscen",
 			},
 		]);
-		console.log(JSON.stringify(ret, null, 2));
 		return h.response(ret);
 	},
 

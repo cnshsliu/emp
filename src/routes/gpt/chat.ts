@@ -31,6 +31,7 @@ type scenarioType = {
 		icon: string;
 		note?: string;
 		json?: string;
+		characteristics?: string;
 		assistant?: string;
 		system?: string;
 		msg: string | string[];
@@ -216,14 +217,16 @@ export class Chat {
 					startWith,
 				)}'开头，你可以自己决定如何开头`,
 			);
-			a_scenario.content.assistant = a_scenario.content.assistant.replace(
-				/{background}/gi,
-				PLD.background ?? "",
-			);
-			a_scenario.content.assistant = a_scenario.content.assistant.replace(
-				/{opinion}/gi,
-				PLD.opinion ?? "",
-			);
+			let match = a_scenario.content.assistant.match(/(\{extra.+:.+\})/gi);
+			if (match) {
+				match.map((x) => {
+					let tmp = x.match(/\{(extra.+?):.+\}/i);
+					if (tmp) {
+						let key = tmp[1];
+						a_scenario.content.assistant = a_scenario.content.assistant.replace(x, PLD.extras[key]);
+					}
+				});
+			}
 		}
 		if (a_scenario.content.assistant.match(/.*{usermsg}.*/gi)) {
 			a_scenario.content.assistant = a_scenario.content.assistant.replace(
@@ -311,7 +314,14 @@ export class Chat {
 				.replace(/{human}/gi, PLD.name);
 
 			for (let actorIndex = 0; actorIndex < actors.length; actorIndex++) {
-				console.log("====>SceneMsgIndex: ", scenMsgIndex, "actorIndex: ", actorIndex);
+				console.log(
+					"====>SceneMsgIndex: ",
+					scenMsgIndex,
+					"actorIndex: ",
+					actorIndex,
+					"actor",
+					actors[actorIndex],
+				);
 				let scenMsg = msg.replace(/{name}/gi, getAdvisorName(actors[actorIndex]));
 				//useSystems, 在扮演情况下，对应到每个扮演对象
 				let scenario_system = a_scenario.content.system;
@@ -334,13 +344,24 @@ export class Chat {
 				aPrompt.push({ role: "actor", content: getAdvisorName(actors[actorIndex]) });
 				aPrompt.push({ role: "assistant", content: history_assistant ?? "" });
 				aPrompt.push({ role: "assistant", content: humanIs });
-				aPrompt.push({
-					role: "assistant",
-					content: getAdvisorIntroduction(actors[actorIndex])
-						.replace(/{human}/gi, PLD.name)
-						.replace(/{name}/gi, getAdvisorName(actors[actorIndex]))
-						.replace(/{industry}/gi, PLD.industry),
-				});
+				if (a_scenario.content.characteristics?.trim().length > 0) {
+					aPrompt.push({
+						role: "assistant",
+						content: a_scenario.content.characteristics
+							.trim()
+							.replace(/{human}/gi, PLD.name)
+							.replace(/{name}/gi, getAdvisorName(actors[actorIndex]))
+							.replace(/{industry}/gi, PLD.industry),
+					});
+				} else {
+					aPrompt.push({
+						role: "assistant",
+						content: getAdvisorIntroduction(actors[actorIndex])
+							.replace(/{human}/gi, PLD.name)
+							.replace(/{name}/gi, getAdvisorName(actors[actorIndex]))
+							.replace(/{industry}/gi, PLD.industry),
+					});
+				}
 				aPrompt.push({
 					role: "assistant",
 					content: a_scenario.content.assistant
@@ -364,7 +385,11 @@ export class Chat {
 					]);
 				} else {
 					//接下去的问答中，仅使用用户的提问内容
-					prompts.push([...aPrompt, { role: "user", content: PLD.userMsg }]);
+					if (PLD.userMsg.trim().length > 0) {
+						prompts.push([...aPrompt, { role: "user", content: PLD.userMsg }]);
+					} else {
+						prompts.push([...aPrompt, { role: "user", content: scenMsg }]);
+					}
 				}
 			}
 		}
@@ -487,15 +512,15 @@ export class Chat {
 		}
 
 		let messageTokens = TiktokenEncoding.encode(JSON.stringify(messages));
-		console.log(
-			"askNumber",
-			PLD.askNumber,
-			"messageTokens.length",
-			messageTokens.length,
-			"history assistant",
-			history_assistant.length,
-			JSON.stringify(messages).indexOf(history_assistant) > -1 ? "included" : "NOT included",
-		);
+		// console.log(
+		// 	"askNumber",
+		// 	PLD.askNumber,
+		// 	"messageTokens.length",
+		// 	messageTokens.length,
+		// 	"history assistant",
+		// 	history_assistant.length,
+		// 	JSON.stringify(messages).indexOf(history_assistant) > -1 ? "included" : "NOT included",
+		// );
 		if (messageTokens.length > 16000) {
 			// let new_history_assistant = await this.getHistoryFromDatabaseAsString(
 			// 	user,
@@ -531,6 +556,7 @@ export class Chat {
 			stream: true,
 		};
 		console.log(">>>>Use model:", body);
+		console.log(messages);
 
 		const requestInit: RequestInit = {
 			method: "POST",
@@ -554,10 +580,12 @@ export class Chat {
 		if (mock) {
 			reader = mockReader(getRandomInt(1, 2));
 		} else {
-			console.log("Before fetch");
-			const response = await fetch(this.apiUrl, requestInit);
-			console.log("after fetch");
-			reader = response.body;
+			try {
+				const response = await fetch(this.apiUrl, requestInit);
+				reader = response.body;
+			} catch (e) {
+				console.error(e);
+			}
 		}
 		prompts.shift();
 		return {
