@@ -190,15 +190,15 @@ export class Chat {
 		if (a_scenario.content.json) {
 			let prompts = [];
 			try {
-				prompts.push(
-					JSON.parse(
-						a_scenario.content.json
-							.replace(/{usermsg}/gi, PLD.userMsg)
-							.replace(/{industry}/gi, PLD.industry)
-							.replace(/{bizmodel}/gi, PLD.bizmodel)
-							.replace(/{human}/gi, PLD.name),
-					),
-				);
+				PLD.userMsg = PLD.userMsg.replace(/"/g, '\\"');
+				PLD.userMsg = PLD.userMsg.replace(/`/g, "\\`");
+				const jsonString = a_scenario.content.json
+					.replace(/{usermsg}/gi, PLD.userMsg)
+					.replace(/{industry}/gi, PLD.industry)
+					.replace(/{bizmodel}/gi, PLD.bizmodel)
+					.replace(/{human}/gi, PLD.name);
+				console.log("jsonString", jsonString);
+				prompts.push(JSON.parse(jsonString));
 			} catch (e) {
 				console.warn("JSON parse error", e);
 				prompts.push([
