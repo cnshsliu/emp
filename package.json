@@ -48,6 +48,7 @@
 		"chatgpt": "^5.2.5",
 		"cheerio": "1.0.0-rc.10",
 		"constantinople": "^4.0.1",
+		"cron-parser": "^4.9.0",
 		"exceljs": "^4.3.0",
 		"handlebars": "^4.7.7",
 		"hapi-auth-jwt2": "^10.2.0",

@@ -71,6 +71,9 @@ dependencies:
   constantinople:
     specifier: ^4.0.1
     version: 4.0.1
+  cron-parser:
+    specifier: ^4.9.0
+    version: registry.npmmirror.com/cron-parser@4.9.0
   exceljs:
     specifier: ^4.3.0
     version: 4.3.0
@@ -5269,6 +5272,15 @@ packages:
     dev: false
     optional: true
 
+  registry.npmmirror.com/cron-parser@4.9.0:
+    resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==, registry: https://registry.npm.taobao.org/, tarball: https://registry.npmmirror.com/cron-parser/-/cron-parser-4.9.0.tgz}
+    name: cron-parser
+    version: 4.9.0
+    engines: {node: '>=12.0.0'}
+    dependencies:
+      luxon: registry.npmmirror.com/luxon@3.4.3
+    dev: false
+
   registry.npmmirror.com/crypt@0.0.2:
     resolution: {integrity: sha512-mCxBlsHFYh9C+HVpiEacem8FEBnMXgU9gy4zmNC+SXAZNB/1idgp/aulFJ4FgCi7GPEVbfyng092GqL2k2rmow==, registry: https://registry.npm.taobao.org/, tarball: https://registry.npmmirror.com/crypt/-/crypt-0.0.2.tgz}
     name: crypt
@@ -5414,6 +5426,13 @@ packages:
     resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==, registry: https://registry.npm.taobao.org/, tarball: https://registry.npmmirror.com/lodash/-/lodash-4.17.21.tgz}
     name: lodash
     version: 4.17.21
+    dev: false
+
+  registry.npmmirror.com/luxon@3.4.3:
+    resolution: {integrity: sha512-tFWBiv3h7z+T/tDaoxA8rqTxy1CHV6gHS//QdaH4pulbq/JuBSGgQspQQqcgnwdAx6pNI7cmvz5Sv/addzHmUg==, registry: https://registry.npm.taobao.org/, tarball: https://registry.npmmirror.com/luxon/-/luxon-3.4.3.tgz}
+    name: luxon
+    version: 3.4.3
+    engines: {node: '>=12'}
     dev: false
 
   registry.npmmirror.com/md-utils-ts@2.0.0:

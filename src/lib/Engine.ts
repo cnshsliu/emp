@@ -2,6 +2,7 @@ import { Cheerio, CheerioAPI, Element } from "cheerio";
 import { Types, ClientSession } from "mongoose";
 import { Worker, parentPort, isMainThread, SHARE_ENV } from "worker_threads";
 import cronEngine from "node-cron";
+import cronParser from "cron-parser";
 import Parser from "./Parser.js";
 import Mutex from "./Mutex.js";
 import moment from "moment";
@@ -41,7 +42,7 @@ import fs from "fs";
 import path from "path";
 import util from "util";
 // const Exec = util.promisify(require("child_process").exec);
-import {exec as execCb} from "child_process";
+import { exec as execCb } from "child_process";
 import { promisify } from "util";
 const Exec = promisify(execCb);
 import Podium from "@hapi/podium";
@@ -251,14 +252,48 @@ Client.clientInit = async function () {
 	);
 };
 
+function isValidCronExpression(cronExpression: string, min: number = 5) {
+	try {
+		// Parse the cron expression to get the next 2 occurrences
+		const interval = cronParser.parseExpression(cronExpression, { currentDate: new Date() });
+		const firstOccurrence = interval.next().toDate().getTime();
+		const secondOccurrence = interval.next().toDate().getTime();
+
+		// Calculate the difference in minutes between the two occurrences
+		const differenceInMinutes = (secondOccurrence - firstOccurrence) / (1000 * 60);
+
+		// Check if the difference is less than 5 minutes
+		if (differenceInMinutes < min) {
+			return -1;
+		}
+
+		return differenceInMinutes;
+	} catch (error) {
+		console.error("Invalid cron expression:", error.message);
+		return -1;
+	}
+}
+
 const rescheduleCrons = async function () {
 	try {
 		let crons = await Crontab.find({}, { __v: 0 });
 		for (let i = 0; i < crons.length; i++) {
-			let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
-			if (tmp.length !== 5 || cronEngine.validate(crons[i].expr) === false) {
+			// let tmp = Parser.splitStringToArray(crons[i].expr, /\s/);
+			let minute = 5;
+			if (
+				cronEngine.validate(crons[i].expr) === false ||
+				(() => {
+					minute = isValidCronExpression(crons[i].expr, 5);
+					return minute;
+				})() < 5
+			) {
+				console.log(
+					`${crons[i].creator} Cron ${crons[i].expr} occurs too frequently: ${minute} minutes only.`,
+				);
 				await stopCronTask(crons[i]._id.toString());
 				await Crontab.deleteOne({ _id: crons[i]._id });
+			} else {
+				console.log(`${crons[i].creator} Cron ${crons[i].expr} occurs every ${minute} minutes.`);
 			}
 		}
 		crons = await Crontab.find({ scheduled: false }, { __v: 0 });
@@ -325,6 +360,25 @@ const dispatchWorkByCron = async (cron: CrontabType) => {
 	}
 };
 
+const startGptTaskByCron = async (cron: CrontabType) => {
+	console.log("Cron Start GPT Task");
+	console.log("Cron starter", cron.creator);
+	console.log("Cron starter", cron.extra);
+
+	try {
+		const extra = JSON.parse(cron.extra);
+		if (!extra.taskid) {
+			try {
+				await stopCronTask(cron._id.toString());
+				await Crontab.deleteOne({ _id: cron._id });
+			} catch (e) {}
+		}
+		console.log(extra);
+	} catch (e) {
+		console.log(e);
+	}
+};
+
 const startBatchWorkflow = async (
 	tenant: string,
 	starters: string,
@@ -388,15 +442,29 @@ const scheduleCron = async (cron: CrontabType) => {
 		case "DISPATCHWORK":
 			console.log(`Schedule cron ${cron.expr} DISPATCHWORK ${cron.extra}`);
 			break;
+		case "GPTTASK":
+			console.log(`Schedule cron ${cron.expr} GPTTASK ${cron.extra}`);
+			break;
 	}
 	let task = cronEngine.schedule(
 		cron.expr,
 		async () => {
 			try {
-				if (cron.method === "STARTWORKFLOW") {
-					startWorkflowByCron(cron).then(() => {});
-				} else if (cron.method === "DISPATCHWORK") {
-					dispatchWorkByCron(cron).then(() => {});
+				switch (cron.method) {
+					case "STARTWORKFLOW":
+						startWorkflowByCron(cron).then(() => {});
+						break;
+					case "DISPATCHWORK":
+						dispatchWorkByCron(cron).then(() => {});
+						break;
+					case "GPTTASK":
+						console.log("Start GPT Task");
+						startGptTaskByCron(cron).then(() => {
+							console.log("started....");
+						});
+						break;
+					default:
+						console.log("schedule an unknown task");
 				}
 			} catch (e) {
 				console.error(e);
@@ -6512,4 +6580,5 @@ export default {
 	rescheduleCrons,
 	removeUser,
 	collectTplAutostop,
+	isValidCronExpression,
 };

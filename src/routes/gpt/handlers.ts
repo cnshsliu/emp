@@ -17,6 +17,7 @@ import { Chat } from "./chat.js";
 import JwtAuth from "../../auth/jwt-strategy.js";
 import { User } from "../../database/models/User.js";
 import { GptLog } from "../../database/models/GptLog.js";
+import { GptTask } from "../../database/models/GptTask.js";
 import { GptShareIt } from "../../database/models/GptShareIt.js";
 import { GptScen } from "../../database/models/GptScen.js";
 import { GptSearchWord } from "../../database/models/GptSearchWord.js";
@@ -61,6 +62,7 @@ const abc = async () => {
 };
 
 // await abc();
+//
 
 const chat = new Chat();
 
@@ -96,6 +98,8 @@ const saveHistoryEntry = (user: any, PLD: any, lastQuestion: string, lastAnswer:
 			$set: {
 				scenid: PLD.scenid,
 				summary: "",
+				advisor: PLD.advisor,
+				taskid: PLD.taskid,
 				deleted: false,
 			},
 			$push: {
@@ -326,25 +330,27 @@ export default {
 				}
 
 				lastAnswer = "";
-				for await (const chunk of reader) {
-					let str = chunk.toString();
-					const match = str.match(regex);
-					if (match) {
-						ws.send(match[1]);
-						lastAnswer += match[1];
-					} else {
-						// console.log("No match", str);
-						if (str.indexOf("maximum context length") > 0) {
-							ws.send("当然主题讨论差不多了，尝试换一个新的主题吧");
+				if (reader)
+					for await (const chunk of reader) {
+						let str = chunk.toString();
+						const match = str.match(regex);
+						if (match) {
+							ws.send(match[1]);
+							lastAnswer += match[1];
+						} else {
+							// console.log("No match", str);
+							if (str.indexOf("maximum context length") > 0) {
+								ws.send("当然主题讨论差不多了，尝试换一个新的主题吧");
+							}
+						}
+						if (!keep_chatgpt_connection) {
+							try {
+								controller.abort();
+							} catch (e) {}
+							break;
 						}
 					}
-					if (!keep_chatgpt_connection) {
-						try {
-							controller.abort();
-						} catch (e) {}
-						break;
-					}
-				}
+				else ws.send("后台访问出现网络故障，请稍后重试");
 				// if (nextPrompts.length == 0 || !keep_chatgpt_connection) {
 				// 	console.log("Should finish now..");
 				// }
@@ -395,6 +401,18 @@ export default {
 	GetGptLog: async (req: any, h: ResponseToolkit) => {
 		// const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
+		const InsertATask = async () => {
+			await GptTask.findOneAndUpdate(
+				{
+					tenant: CRED.user.tenant._id,
+					uid: CRED.user._id,
+					taskid: "test",
+				},
+				{ $set: { content: "写一篇网络热文" } },
+				{ upsert: true, new: true },
+			);
+		};
+		await InsertATask();
 		// const bs = await GptLog.find(
 		// 	{
 		// 		tenant: CRED.tenant._id,
@@ -416,7 +434,8 @@ export default {
 					_id: 1,
 					bsid: 1,
 					name: 1,
-					scenarioId: 1,
+					scenid: 1,
+					icon: 1,
 					lastQuestion: {
 						$let: {
 							vars: {
@@ -434,8 +453,20 @@ export default {
 				},
 			},
 		]);
-
 		return h.response(bs);
+	},
+
+	GetTasks: async (req: any, h: ResponseToolkit) => {
+		// const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		return h.response(
+			await GptTask.find(
+				{ tenant: CRED.user.tenant._id, uid: CRED.user._id },
+				{ _id: 0, taskid: 1, content: 1 },
+			)
+				.sort({ _id: -1 })
+				.lean(),
+		);
 	},
 
 	RestoreGptLogItem: async (req: any, h: ResponseToolkit) => {

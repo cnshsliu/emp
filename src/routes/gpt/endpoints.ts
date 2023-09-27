@@ -42,6 +42,23 @@ const internals = {
 		},
 		{
 			method: "POST",
+			path: "/caishen/getTasks",
+			handler: Handlers.GetTasks,
+			config: {
+				description: "Get user tasks",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
+					payload: {},
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
 			path: "/caishen/restoreGptLogItem",
 			handler: Handlers.RestoreGptLogItem,
 			config: {
