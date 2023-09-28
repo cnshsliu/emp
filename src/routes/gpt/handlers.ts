@@ -157,9 +157,7 @@ const getMyAdvisory = async (clientid: string): Promise<advisoryType[]> => {
 const redisKey = (cat: string, id: string): string => {
 	return cat + id;
 };
-// const TokenLeftKey = (clientid: string): string => {
-// 	return redisKey("gpttokenleft_", clientid);
-// };
+
 const descSeconds = (seconds: number) => {
 	const days = Math.floor(seconds / (3600 * 24));
 	seconds -= days * 3600 * 24;
@@ -214,7 +212,6 @@ export default {
 		});
 
 		const PLD = req.payload as any;
-		const askNumber = PLD.askNumber;
 
 		// console.log(req.payload);
 		// console.log("Before verify", PLD.sessionToken);
@@ -407,8 +404,41 @@ export default {
 					tenant: CRED.user.tenant._id,
 					uid: CRED.user._id,
 					taskid: "test",
+					instance: false,
 				},
-				{ $set: { content: "写一篇网络热文" } },
+				{
+					$set: {
+						usermsg: "写一篇网络热文",
+						scenid: "t2HdZ83UX6uFaQgVFRjqZv",
+						extras: {
+							extra1: "{https://www.google.com}  {http://baidu.com} {abcd}",
+							extra2: "opqrst",
+						},
+						instance: false,
+						autoask: false,
+					},
+				},
+				{ upsert: true, new: true },
+			);
+			await GptTask.findOneAndUpdate(
+				{
+					tenant: CRED.user.tenant._id,
+					uid: CRED.user._id,
+					taskid: "test",
+					instance: true,
+				},
+				{
+					$set: {
+						usermsg: "写一篇网络热文",
+						scenid: "t2HdZ83UX6uFaQgVFRjqZv",
+						extras: {
+							extra1: "{https://mp.weixin.qq.com/s/rBMojf8EDgGJ8Z_C8iIcNA} {abcd}",
+							extra2: "opqrst",
+						},
+						autoask: false,
+						instance: true,
+					},
+				},
 				{ upsert: true, new: true },
 			);
 		};
@@ -457,15 +487,31 @@ export default {
 	},
 
 	GetTasks: async (req: any, h: ResponseToolkit) => {
-		// const PLD = req.payload as any;
+		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
 		return h.response(
 			await GptTask.find(
-				{ tenant: CRED.user.tenant._id, uid: CRED.user._id },
-				{ _id: 0, taskid: 1, content: 1 },
-			)
-				.sort({ _id: -1 })
-				.lean(),
+				{
+					tenant: CRED.user.tenant._id,
+					uid: CRED.user._id,
+					instance: PLD.instance,
+					deleted: false,
+				},
+				{ _id: 0, taskid: 1, scenid: 1, usermsg: 1, extras: 1 },
+			).lean(),
+		);
+	},
+
+	GetOneInstanceTask: async (req: any, h: ResponseToolkit) => {
+		const PLD = req.payload as any;
+		const CRED = req.auth.credentials as MtcCredentials;
+		return h.response(
+			await GptTask.findOneAndDelete({
+				tenant: CRED.user.tenant._id,
+				uid: CRED.user._id,
+				instance: true,
+				deleted: false,
+			}).lean(),
 		);
 	},
 

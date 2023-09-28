@@ -1,3 +1,6 @@
+import { MozillaReadabilityTransformer } from "langchain/document_transformers/mozilla_readability";
+import { PuppeteerWebBaseLoader } from "langchain/document_loaders/web/puppeteer";
+
 import { Agent } from "https";
 import fetch, { RequestInit as NodeFetchRequestInit } from "node-fetch";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -115,6 +118,8 @@ function getRandomElement(arr: string[]) {
 	return arr[randomIndex];
 }
 
+const regex_url_in_string = /{([^}]+)}/g;
+
 export class Chat {
 	private apiUrl: string;
 
@@ -161,6 +166,50 @@ export class Chat {
 			await redisClient.set(cacheKey, JSON.stringify([summary]));
 		}
 		return ret;
+	};
+
+	private getDocumentsFromUrl = async (url: string, headless: boolean | "new" = "new") => {
+		const loader = new PuppeteerWebBaseLoader(url, {
+			launchOptions: {
+				headless: headless,
+			},
+		});
+
+		const docs = await loader.load();
+		const transformer = new MozillaReadabilityTransformer();
+		const newDocuments = await transformer.transformDocuments(docs);
+		return newDocuments;
+	};
+
+	private getDocumentContentFromUrl = async (url: string): Promise<string> => {
+		const docs = await this.getDocumentsFromUrl(url);
+		let ret = "";
+		for (let d = 0; d < docs.length; d++) {
+			ret += docs[d].pageContent;
+		}
+		return ret;
+	};
+
+	private replaceUrlsWithContent = async (inputStr: string): Promise<string> => {
+		const promises = [];
+		const replacedStr = inputStr.replace(regex_url_in_string, (match, str) => {
+			// Check if str is a valid URL
+			try {
+				new URL(str); // This will throw an error if str is not a valid URL
+			} catch {
+				return match; // Return the original string if it's not a valid URL
+			}
+
+			// If str is a valid URL, fetch its content
+			const promise = this.getDocumentContentFromUrl(str);
+			promises.push(promise);
+			return "{}"; // Temporary placeholder
+		});
+
+		// Wait for all HTTP requests to complete and replace the placeholders with actual content
+		const contents = await Promise.all(promises);
+		let index = 0;
+		return replacedStr.replace(/{}/g, () => contents[index++]);
 	};
 
 	private async generatePrompt(
@@ -226,6 +275,12 @@ export class Chat {
 						a_scenario.content.assistant = a_scenario.content.assistant.replace(x, PLD.extras[key]);
 					}
 				});
+				a_scenario.content.assistant = await this.replaceUrlsWithContent(
+					a_scenario.content.assistant,
+				);
+				console.log("====================");
+				console.log(a_scenario.content.assistant);
+				console.log("====================");
 			}
 		}
 		if (a_scenario.content.assistant.match(/.*{usermsg}.*/gi)) {

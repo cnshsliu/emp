@@ -52,6 +52,23 @@ const internals = {
 					headers: Joi.object({
 						Authorization: Joi.string(),
 					}).unknown(),
+					payload: { instance: Joi.boolean().required() },
+					validator: Joi,
+				},
+			},
+		},
+		{
+			method: "POST",
+			path: "/caishen/getOneInstanceTask",
+			handler: Handlers.GetOneInstanceTask,
+			config: {
+				description: "Get one instance task",
+				tags: ["api"],
+				auth: "token",
+				validate: {
+					headers: Joi.object({
+						Authorization: Joi.string(),
+					}).unknown(),
 					payload: {},
 					validator: Joi,
 				},

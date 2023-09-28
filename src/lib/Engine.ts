@@ -44,6 +44,7 @@ import util from "util";
 // const Exec = util.promisify(require("child_process").exec);
 import { exec as execCb } from "child_process";
 import { promisify } from "util";
+import { GptTask } from "../database/models/GptTask.js";
 const Exec = promisify(execCb);
 import Podium from "@hapi/podium";
 import EmpError from "./EmpError.js";
@@ -373,7 +374,24 @@ const startGptTaskByCron = async (cron: CrontabType) => {
 				await Crontab.deleteOne({ _id: cron._id });
 			} catch (e) {}
 		}
-		console.log(extra);
+		if (extra.taskid) {
+			const task = await GptTask.findOne({ taskid: extra.taskid, instance: false });
+			if (task) {
+				const instanceTask = new GptTask({
+					tenant: task.tenant,
+					uid: task.uid,
+					taskid: task.taskid,
+					scenid: task.scenid,
+					usermsg: task.usermsg,
+					extras: task.extras,
+					autoask: task.autoask,
+					instance: true,
+					deleted: false,
+				});
+				await instanceTask.save();
+				console.log(task.taskid, task.usermsg);
+			}
+		}
 	} catch (e) {
 		console.log(e);
 	}
