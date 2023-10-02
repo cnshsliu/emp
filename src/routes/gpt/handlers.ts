@@ -13,6 +13,7 @@ import { MtcCredentials } from "../../lib/EmpTypes";
 // import { CaishenToken } from "../../database/models/CaishenToken.js";
 // import Cache from "../../lib/Cache.js";
 import { Chat } from "./chat.js";
+import type { scenarioType } from "./chat.js";
 // import { Transform } from "stream";
 import JwtAuth from "../../auth/jwt-strategy.js";
 import { User } from "../../database/models/User.js";
@@ -26,6 +27,7 @@ import { GptScenario } from "../../database/models/GptScenario.js";
 import { GptScenarioGroup } from "../../database/models/GptScenarioGroup.js";
 
 import {
+	getScenarioById,
 	getScenarioListForSelection,
 	getGroups,
 	industries,
@@ -249,6 +251,22 @@ export default {
 				}
 				return "[[Done]]";
 			}
+			const a_scenario: scenarioType = (await getScenarioById(PLD.scenid)) as any as scenarioType;
+			let tmp = a_scenario.content.assistant ?? "";
+			if (tmp.match(/.*{usermsg}.*/gi)) {
+				tmp = tmp.replace(/{userMsg}/gi, PLD.userMsg);
+			}
+			const regex_search_weixin = /getweixin (.+)/i;
+
+			const match = tmp.match(regex_search_weixin);
+			const resultText = match ? match[1] : null;
+			if (resultText) {
+				ws.send(`你要搜索${resultText}\\n`);
+				ws.send("result...1\\n");
+				ws.send("result...2\\n");
+				return "[[Done]]";
+			}
+
 			let lastAnswer = "";
 			//Start check token
 			// let tokenLeft = 0;
@@ -411,7 +429,8 @@ export default {
 						usermsg: "写一篇网络热文",
 						scenid: "t2HdZ83UX6uFaQgVFRjqZv",
 						extras: {
-							extra1: "{https://www.google.com}  {http://baidu.com} {abcd}",
+							extra1:
+								"{https://mp.weixin.qq.com/s/rBMojf8EDgGJ8Z_C8iIcNA}  {http://baidu.com} {abcd}",
 							extra2: "opqrst",
 						},
 						instance: false,
@@ -505,14 +524,24 @@ export default {
 	GetOneInstanceTask: async (req: any, h: ResponseToolkit) => {
 		const PLD = req.payload as any;
 		const CRED = req.auth.credentials as MtcCredentials;
-		return h.response(
-			await GptTask.findOneAndDelete({
+		let ret = await GptTask.findOne({
+			tenant: CRED.user.tenant._id,
+			uid: CRED.user._id,
+			instance: true,
+			deleted: false,
+		}).lean();
+		if (ret) {
+			await GptTask.deleteMany({
 				tenant: CRED.user.tenant._id,
 				uid: CRED.user._id,
 				instance: true,
-				deleted: false,
-			}).lean(),
-		);
+				taskid: ret.taskid,
+				scenid: ret.scenid,
+				usermsg: ret.usermsg,
+				extras: ret.extras,
+			});
+		}
+		return h.response(ret);
 	},
 
 	RestoreGptLogItem: async (req: any, h: ResponseToolkit) => {

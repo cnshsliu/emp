@@ -25,7 +25,7 @@ const TiktokenEncoding = new Tiktoken(
 const tokens = TiktokenEncoding.encode("大家好");
 console.log(tokens);
 
-type scenarioType = {
+export type scenarioType = {
 	groupid: string;
 	scenid: string;
 	content: {
