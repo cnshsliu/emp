@@ -11,9 +11,9 @@ import { Tenant } from "../database/models/Tenant.js";
 import OrgChart from "../database/models/OrgChart.js";
 import { Site, SiteType } from "../database/models/Site.js";
 import { redisClient } from "../database/redis.js";
-import LRU from "lru-cache";
+import { LRUCache } from "lru-cache";
 
-const lruCache = new LRU({ max: 10000 });
+const lruCache = new LRUCache({ max: 10000 });
 
 import type { CoverInfo, AvatarInfo, SmtpInfo, TenantIdType } from "./EmpTypes.js";
 // const PERM_EXPIRE_SECONDS = 60;
@@ -345,7 +345,7 @@ const internals = {
 	},
 
 	getMyPerm: async function (permKey: string): Promise<string> {
-		return lruCache.get(permKey);
+		return lruCache.get(permKey) as string;
 	},
 	setMyPerm: async function (permKey: string, perm: string): Promise<string> {
 		lruCache.set(permKey, perm);

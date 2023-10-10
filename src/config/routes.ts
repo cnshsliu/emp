@@ -11,7 +11,6 @@ import YanaRoutes from "../routes/yana/endpoints.js";
 import SignatureRoutes from "../routes/signature/endpoints.js";
 import DataRoutes from "../routes/data/endpoints.js";
 import SnapshotRoutes from "../routes/snapshot/endpoints.js";
-import GptRoutes from "../routes/gpt/endpoints.js";
 
 const Routes = {
 	//Concatentate the routes into one array
@@ -30,7 +29,6 @@ const Routes = {
 			SignatureRoutes.endpoints,
 			DataRoutes.endpoints,
 			SnapshotRoutes.endpoints,
-			GptRoutes.endpoints,
 		);
 		await server.route(allRoutes);
 	},

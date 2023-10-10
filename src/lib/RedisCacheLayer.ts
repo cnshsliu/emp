@@ -6,10 +6,10 @@ import { Workflow } from "../database/models/Workflow.js";
 import { redisClient, redisConnect } from "../database/redis.js";
 import { Types, ClientSession } from "mongoose";
 import assert from "assert";
-import LRU from "lru-cache";
+import { LRUCache } from "lru-cache";
 
 type WfFilter = { tenant: string | Types.ObjectId; wfid: string };
-const lruCache = new LRU({ max: 2000 });
+const lruCache = new LRUCache({ max: 2000 });
 const CACHE_ELEVEL_MEM = 1;
 const CACHE_ELEVEL_REDIS = 2;
 

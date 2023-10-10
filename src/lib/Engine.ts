@@ -46,7 +46,7 @@ import { exec as execCb } from "child_process";
 import { promisify } from "util";
 import { GptTask } from "../database/models/GptTask.js";
 const Exec = promisify(execCb);
-import Podium from "@hapi/podium";
+import { Podium } from "@hapi/podium";
 import EmpError from "./EmpError.js";
 import Const from "./Const.js";
 import RCL from "./RedisCacheLayer.js";

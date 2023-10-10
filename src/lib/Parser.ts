@@ -277,7 +277,7 @@ const Parser = {
 		wfIO: CheerioAPI,
 	) {
 		let ret = {};
-		const mergeTplVars = async function (elem: Cheerio<CheerioNode>, destVars: any) {
+		const mergeTplVars = async function (elem: any, destVars: any) {
 			let base64_string = elem.text();
 			let code = Parser.base64ToCode(base64_string);
 			let jsonVars = {};
