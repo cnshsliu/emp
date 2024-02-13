@@ -297,6 +297,14 @@ const Tools = {
 		for (var i = length; i > 0; --i) result += chars[Math.floor(Math.random() * chars.length)];
 		return result;
 	},
+	randomNumber: () => {
+		let Num = Math.round(Math.random() * 1000000);
+		if (Num < 100000 || Num > 1000000) {
+			return Tools.randomNumber();
+		} else {
+			return Num;
+		}
+	},
 	getEidsFromText: function (content: string) {
 		let people = [];
 		let m = content.match(/@([\w]+)/g);
