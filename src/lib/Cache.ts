@@ -1,21 +1,21 @@
-import { isMainThread, parentPort } from "worker_threads";
-import { Types } from "mongoose";
-import { expect } from "@hapi/code";
-import fs from "fs";
-import assert from "assert";
-import Tools from "../tools/tools.js";
-import { Employee } from "../database/models/Employee.js";
-import { Template } from "../database/models/Template.js";
-import KsTpl from "../database/models/KsTpl.js";
-import { Tenant } from "../database/models/Tenant.js";
-import OrgChart from "../database/models/OrgChart.js";
-import { Site, SiteType } from "../database/models/Site.js";
-import { redisClient } from "../database/redis.js";
-import { LRUCache } from "lru-cache";
+import { isMainThread, parentPort } from 'worker_threads';
+import { Types } from 'mongoose';
+import { expect } from '@hapi/code';
+import fs from 'fs';
+import assert from 'assert';
+import Tools from '../tools/tools.js';
+import { Employee } from '../database/models/Employee.js';
+import { Template } from '../database/models/Template.js';
+import KsTpl from '../database/models/KsTpl.js';
+import { Tenant } from '../database/models/Tenant.js';
+import OrgChart from '../database/models/OrgChart.js';
+import { Site, SiteType } from '../database/models/Site.js';
+import { redisClient } from '../database/redis.js';
+import { LRUCache } from 'lru-cache';
 
 const lruCache = new LRUCache({ max: 10000 });
 
-import type { CoverInfo, AvatarInfo, SmtpInfo, TenantIdType } from "./EmpTypes.js";
+import type { CoverInfo, AvatarInfo, SmtpInfo, TenantIdType } from './EmpTypes.js';
 // const PERM_EXPIRE_SECONDS = 60;
 
 const internals = {
@@ -26,13 +26,13 @@ const internals = {
 		tenant: TenantIdType,
 		eid: string,
 		nickname: string = null,
-		expire: number = 60,
+		expire: number = 60
 	): Promise<string> {
 		const lruKey = `NICKNAME:${tenant}:${eid}`;
 		if (!nickname) {
 			let employee = await Employee.findOne(
 				{ tenant: tenant, eid: eid },
-				{ nickname: 1, notify: 1 },
+				{ nickname: 1, notify: 1 }
 			);
 			if (employee) {
 				nickname = employee.nickname;
@@ -48,7 +48,7 @@ const internals = {
 	setEmployeeNotify: async function (
 		tenant: TenantIdType,
 		eid: string,
-		expire: number = 60,
+		expire: number = 60
 	): Promise<string> {
 		const lruKey = `NOTIFY:${tenant}:${eid}`;
 		let employee = await Employee.findOne({ tenant: tenant, eid: eid }, { nickname: 1, notify: 1 });
@@ -62,10 +62,10 @@ const internals = {
 	getEmployeeName: async function (
 		tenant: TenantIdType,
 		eid: string,
-		where: string = "unknown",
+		where: string = 'unknown'
 	): Promise<string> {
-		assert(eid, "getEmployeeName should be passed an non-empty email string");
-		expect(eid).to.not.include("@");
+		assert(eid, 'getEmployeeName should be passed an non-empty email string');
+		expect(eid).to.not.include('@');
 		let lruKey = `NICKNAME:${tenant}:${eid}`;
 		let ret = lruCache.get(lruKey) as string;
 		if (!ret) {
@@ -76,11 +76,11 @@ const internals = {
 				ret = employee.nickname;
 			} else {
 				console.warn(
-					isMainThread ? "MainThread:" : "\tChildThread:" + "Cache.getEmployeeName, Eid:",
+					isMainThread ? 'MainThread:' : '\tChildThread:' + 'Cache.getEmployeeName, Eid:',
 					eid,
-					" not found",
+					' not found'
 				);
-				ret = "EMPLOYEE_NOT_FOUND";
+				ret = 'EMPLOYEE_NOT_FOUND';
 			}
 		}
 		return ret;
@@ -88,7 +88,7 @@ const internals = {
 
 	shouldNotifyViaEmail: async function (tenant: TenantIdType, doer: string) {
 		let ew = await internals.getEmployeeNotifyConfig(tenant, doer);
-		return ew && ew.indexOf("e") >= 0;
+		return ew && ew.indexOf('e') >= 0;
 	},
 
 	/* 根据eid去的用户的提醒发送设置 */
@@ -117,7 +117,7 @@ const internals = {
 				lruCache.set(key, employee.signature);
 				return employee.signature;
 			} else {
-				return "";
+				return '';
 			}
 		}
 	},
@@ -146,7 +146,7 @@ const internals = {
 		lruCache.set(key, etag);
 
 		if (!isMainThread) {
-			parentPort.postMessage({ cmd: "worker_reset_etag", msg: key });
+			parentPort.postMessage({ cmd: 'worker_reset_etag', msg: key });
 		}
 
 		return etag;
@@ -158,12 +158,12 @@ const internals = {
 	delETag: async function (key: string) {
 		lruCache.delete(key);
 		if (!isMainThread) {
-			parentPort.postMessage({ cmd: "worker_del_etag", msg: key });
+			parentPort.postMessage({ cmd: 'worker_del_etag', msg: key });
 		}
 	},
 
 	getTplCoverInfo: async function (tenant: TenantIdType, tplid: string): Promise<CoverInfo> {
-		let key = "TPLCOVER:" + tplid;
+		let key = 'TPLCOVER:' + tplid;
 		let cached = lruCache.get(key) as CoverInfo;
 		if (cached) {
 			return cached;
@@ -171,12 +171,12 @@ const internals = {
 			let ret = null;
 			let theTpl = await Template.findOne(
 				{ tenant: tenant, tplid: tplid },
-				{ _id: 0, coverTag: 1 },
+				{ _id: 0, coverTag: 1 }
 			).lean();
 			let theCoverImagePath = Tools.getTemplateCoverPath(tenant.toString(), tplid);
 			let coverinfo = {
 				path: Tools.getTemplateCoverPath(tenant.toString(), tplid),
-				media: "image/png",
+				media: 'image/png',
 				etag: theTpl.coverTag,
 			};
 			lruCache.set(key, coverinfo);
@@ -184,7 +184,7 @@ const internals = {
 		}
 	},
 	delTplCoverInfo: async function (tplid: string) {
-		let key = "TPLCOVER:" + tplid;
+		let key = 'TPLCOVER:' + tplid;
 		lruCache.delete(key);
 	},
 
@@ -199,15 +199,15 @@ const internals = {
 				} else {
 					cached = {
 						path: Tools.getDefaultAvatarPath(),
-						media: "image/png",
-						tag: "nochange",
+						media: 'image/png',
+						tag: 'nochange',
 					} as unknown as AvatarInfo;
 				}
 			} else {
 				cached = {
 					path: Tools.getDefaultAvatarPath(),
-					media: "image/png",
-					tag: "nochange",
+					media: 'image/png',
+					tag: 'nochange',
 				} as unknown as AvatarInfo;
 			}
 			lruCache.set(key, cached);
@@ -235,24 +235,24 @@ const internals = {
 				lruCache.set(key, theStaff.ou);
 				return theStaff.ou;
 			} else {
-				console.warn("Cache.getEmployeeOU from orgchart, Eid:", eid, " not found");
-				return "USER_OU_NOT_FOUND_OC";
+				console.warn('Cache.getEmployeeOU from orgchart, Eid:', eid, ' not found');
+				return 'USER_OU_NOT_FOUND_OC';
 			}
 		}
 	},
 
 	setOnNonExist: async function (
 		key: string,
-		value: string = "v",
-		expire: number = 60,
+		value: string = 'v',
+		expire: number = 60
 	): Promise<boolean> {
 		lruCache.set(key, value);
 		return true;
 	},
 
-	getEmployeeGroup: async function (tenant: TenantIdType, eid: string): Promise<string> {
+	getEmployeeGroup: async function (tenant: TenantIdType, eid: string): Promise<string[]> {
 		let key = `USRGRP:${tenant}:${eid}`;
-		let mygroup = lruCache.get(key) as string;
+		let mygroup = lruCache.get(key) as string[];
 		if (!mygroup) {
 			const employeeFilter = { tenant, eid };
 			let employee = await Employee.findOne(employeeFilter, {
@@ -263,7 +263,7 @@ const internals = {
 				//await redisClient.expire(key, PERM_EXPIRE_SECONDS);
 				mygroup = employee.group;
 			} else {
-				console.error("Get My Group: Employee not found: filter", employeeFilter);
+				console.error('Get My Group: Employee not found: filter', employeeFilter);
 			}
 		}
 
@@ -271,7 +271,7 @@ const internals = {
 	},
 
 	getOrgTimeZone: async function (tenant: TenantIdType): Promise<string> {
-		let key = "OTZ:" + tenant;
+		let key = 'OTZ:' + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
 			let org = await Tenant.findOne({ _id: tenant }, { timezone: 1 });
@@ -279,14 +279,14 @@ const internals = {
 				ret = org.timezone;
 				lruCache.set(key, ret);
 			} else {
-				ret = "CST China";
+				ret = 'CST China';
 			}
 		}
 		return ret;
 	},
 
 	getOrgSmtp: async function (tenant: TenantIdType): Promise<SmtpInfo> {
-		let key = "SMTP:" + tenant;
+		let key = 'SMTP:' + tenant;
 		let ret = lruCache.get(key) as SmtpInfo;
 		if (!ret) {
 			let org = await Tenant.findOne({ _id: tenant }, { smtp: 1 });
@@ -299,23 +299,23 @@ const internals = {
 		}
 		if (!ret) {
 			ret = {
-				from: "fake@fake.com",
-				host: "smtp.google.com",
+				from: 'fake@fake.com',
+				host: 'smtp.google.com',
 				port: 1234,
 				secure: true,
-				username: "fake_name",
-				password: "unknown",
+				username: 'fake_name',
+				password: 'unknown',
 			};
 		}
 		return ret;
 	},
 
 	delOrgTags: async function (tenant: TenantIdType): Promise<void> {
-		await internals.removeOrgRelatedCache(tenant, "ORGTAGS");
+		await internals.removeOrgRelatedCache(tenant, 'ORGTAGS');
 	},
 
 	getOrgTags: async function (tenant: TenantIdType): Promise<string> {
-		let key = "ORGTAGS:" + tenant;
+		let key = 'ORGTAGS:' + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
 			let org = await Tenant.findOne({ _id: tenant }, { tags: 1 });
@@ -326,12 +326,12 @@ const internals = {
 				}
 			}
 		}
-		if (!ret) ret = "";
+		if (!ret) ret = '';
 		return ret;
 	},
 
 	getTenantDomain: async function (tenant: TenantIdType): Promise<string> {
-		let key = "TNTD:" + tenant;
+		let key = 'TNTD:' + tenant;
 		let ret = lruCache.get(key) as string;
 		if (!ret) {
 			let theTenant = await Tenant.findOne({ _id: tenant }, { domain: 1 });
@@ -360,47 +360,47 @@ const internals = {
 	removeKeyByEid: async function (
 		tenant: TenantIdType,
 		eid: string,
-		cacheType: string = null,
+		cacheType: string = null
 	): Promise<string> {
 		let eidKey = `${tenant}:${eid}`;
 		if (cacheType) {
-			lruCache.delete(cacheType + ":" + eidKey);
+			lruCache.delete(cacheType + ':' + eidKey);
 		} else {
-			lruCache.delete("USRGRP:" + eidKey);
-			lruCache.delete("PERM:" + eidKey);
-			lruCache.delete("NICKNAME:" + eidKey);
-			lruCache.delete("NOTIFY:" + eidKey);
-			lruCache.delete("OU:" + eidKey);
-			lruCache.delete("AVATAR:" + eidKey);
-			lruCache.delete("SIGNATURE:" + eidKey);
+			lruCache.delete('USRGRP:' + eidKey);
+			lruCache.delete('PERM:' + eidKey);
+			lruCache.delete('NICKNAME:' + eidKey);
+			lruCache.delete('NOTIFY:' + eidKey);
+			lruCache.delete('OU:' + eidKey);
+			lruCache.delete('AVATAR:' + eidKey);
+			lruCache.delete('SIGNATURE:' + eidKey);
 		}
 		return eid;
 	},
 
 	removeOrgRelatedCache: async function (tenant: TenantIdType, cacheType: string): Promise<string> {
-		if (cacheType) lruCache.delete(cacheType + ":" + tenant);
+		if (cacheType) lruCache.delete(cacheType + ':' + tenant);
 		else {
-			lruCache.delete("OTZ:" + tenant);
-			lruCache.delete("SMTP:" + tenant);
-			lruCache.delete("ORGTAGS:" + tenant);
+			lruCache.delete('OTZ:' + tenant);
+			lruCache.delete('SMTP:' + tenant);
+			lruCache.delete('ORGTAGS:' + tenant);
 		}
 		return tenant.toString();
 	},
 
 	getVisi: async function (tplid: string): Promise<string> {
-		let visiKey = "VISI:" + tplid;
+		let visiKey = 'VISI:' + tplid;
 		let visiPeople = lruCache.get(visiKey) as string;
 		return visiPeople;
 	},
 	setVisi: async function (tplid: string, visiPeople: string): Promise<string> {
-		let visiKey = "VISI:" + tplid;
+		let visiKey = 'VISI:' + tplid;
 		if (visiPeople.length > 0) {
 			lruCache.set(visiKey, visiPeople);
 		}
 		return visiKey;
 	},
 	removeVisi: async function (tplid: string): Promise<string> {
-		let visiKey = "VISI:" + tplid;
+		let visiKey = 'VISI:' + tplid;
 		lruCache.delete(visiKey);
 		return visiKey;
 	},
@@ -422,7 +422,7 @@ const internals = {
 	},
 
 	getKsAdminDomain: async function (): Promise<any> {
-		let key = "KSTPLADMINDOMAIN";
+		let key = 'KSTPLADMINDOMAIN';
 		let contentInRedis = lruCache.get(key);
 		if (contentInRedis) return contentInRedis;
 
@@ -432,7 +432,7 @@ const internals = {
 	},
 
 	getKsConfig: async function (): Promise<any> {
-		let key = "KSCONFIG";
+		let key = 'KSCONFIG';
 		let contentInRedis = lruCache.get(key);
 		if (contentInRedis) return contentInRedis;
 
@@ -444,7 +444,7 @@ const internals = {
 	},
 
 	getSiteInfo: async function (): Promise<any> {
-		let key = "SITEINFO";
+		let key = 'SITEINFO';
 		let contentInLRU = lruCache.get(key);
 		if (contentInLRU) return contentInLRU;
 		//

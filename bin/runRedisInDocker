@@ -1,0 +1,8 @@
+if [ $(docker ps -a --filter "name=myRedis" | grep -w myRedis | wc -l) -eq 1 ]; then
+    echo "Container exists, starting container..."
+    docker start myRedis
+else
+    echo "Container does not exist, running new container..."
+    docker run --name myRedis -p 6379:6379 -d redis
+fi
+

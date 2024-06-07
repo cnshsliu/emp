@@ -1,0 +1,8 @@
+if [ $(docker ps -a --filter "name=myMongo" | grep -w myMongo | wc -l) -eq 1 ]; then
+    echo "Container exists, starting container..."
+    docker start myMongo
+else
+    echo "Container does not exist, running new container..."
+    docker run --name myMongo -d -p  27017:27017 -u $(id -u):$(id -g) -v $HOME/mongodb6:/data/db -e MONGO_INITDB_ARGUMENTS="--dbpath /data/db" mongodb/mongodb-community-server:latest --replSet rs0
+fi
+

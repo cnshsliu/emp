@@ -1,0 +1,4 @@
+{
+	"name": "emp_frontend",
+	"script": "npm run inspect"
+}

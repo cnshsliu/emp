@@ -1,0 +1,76 @@
+#!/bin/bash
+# Capture the status output
+status_output=$(colima status 2>&1)
+
+# Check if Colima is running
+if echo "$status_output" | grep -q "colima is running"; then
+  echo "Colima is already running. No action needed."
+else
+  echo "Starting Colima..."
+  colima start
+fi
+
+LOG_PATH=$HOME/dev/logs
+DEV_HOME="$HOME/dev"
+osascript <<EOF
+tell application "iTerm"
+  set devWindow to (create window with default profile)
+  #set devWindow to current window
+  tell current session of devWindow
+    set name to "Emp Src"
+    write text "cd $DEV_HOME/emp;"
+    tell application "System Events" to keystroke "d" using command down
+    delay 1
+    write text "cd $DEV_HOME/emp; npm run dev.tsc"
+    tell application "System Events" to keystroke "d" using {shift down, command down}
+    delay 1
+    write text "cd $DEV_HOME/emp; ./bin/run.sh;"
+  end tell
+
+  tell devWindow
+    set newTab to (create tab with default profile)
+    tell current session of newTab
+      write text "cd $DEV_HOME/emp/frt;"
+    end tell
+
+    # split vertically
+    tell application "System Events" to keystroke "d" using command down
+    delay 2
+
+    tell current session of newTab
+      write text "cd $DEV_HOME/emp/frt; ./bin/run.sh"
+    end tell
+  end tell
+
+  tell devWindow
+    set newTab to (create tab with default profile)
+    delay 1
+
+    tell current session of newTab
+      write text "$DEV_HOME/emp/bin/runMongoInDocker; sleep 5; mongosh"
+    end tell
+    #
+    # split vertically
+    tell application "System Events" to keystroke "d" using command down
+    delay 1
+
+    tell current session of newTab
+      write text "$DEV_HOME/emp/bin/runRedisInDocker; sleep 5; redis-cli"
+    end tell
+
+    # split vertically
+    tell application "System Events" to keystroke "d" using command down
+    delay 1
+
+    tell current session of newTab
+      write text "$DEV_HOME/emp/bin/updateCaddy.sh"
+      write text "cd $DEV_HOME/caddy; caddy stop >/dev/null 2>&1; caddy run"
+    end tell
+  end tell
+
+end tell
+EOF
+
+#$HOME/bin/startDebug
+
+exit 0;

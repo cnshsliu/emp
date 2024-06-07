@@ -1,7 +1,7 @@
 {
 	"useTabs": true,
-	"singleQuote": false,
-	"trailingComma": "all",
+	"singleQuote": true,
+	"trailingComma": "es5",
 	"printWidth": 100,
 	"htmlWhitespaceSensitivity": "ignore",
 	"vueIndentScriptAndStyle": true,
@@ -9,5 +9,6 @@
 	"singleAttributePerLine": true,
 	"arrowParens": "always",
 	"semi": true,
-	"bracketSameLine": true
+	"bracketSameLine": true,
+	"proseWrap": "always"
 }
